@@ -338,12 +338,12 @@ vi.mock("../../agents/subagents/registry/subagent-registry-runtime.js", () => ({
 }));
 
 vi.mock("../session-reset-service.js", () => ({
-  emitGatewaySessionEndPluginHook: (...args: unknown[]) =>
-    (mocks.emitGatewaySessionEndPluginHook as (...args: unknown[]) => unknown)(...args),
-  emitGatewaySessionStartPluginHook: (...args: unknown[]) =>
-    (mocks.emitGatewaySessionStartPluginHook as (...args: unknown[]) => unknown)(...args),
-  performGatewaySessionReset: (...args: unknown[]) =>
-    (mocks.performGatewaySessionReset as (...args: unknown[]) => unknown)(...args),
+  performGatewaySessionReset: mocks.performGatewaySessionReset,
+}));
+
+vi.mock("../session-lifecycle-plugin-hooks.js", () => ({
+  emitGatewaySessionEndPluginHook: mocks.emitGatewaySessionEndPluginHook,
+  emitGatewaySessionStartPluginHook: mocks.emitGatewaySessionStartPluginHook,
 }));
 
 vi.mock("../../infra/voicewake-routing.js", () => ({

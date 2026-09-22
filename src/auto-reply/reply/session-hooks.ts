@@ -74,6 +74,7 @@ export function buildSessionEndHookPayload(params: {
   sessionKey: string;
   agentId: string;
   messageCount?: number;
+  messages?: unknown[];
   durationMs?: number;
   reason?: PluginHookSessionEndReason;
   sessionFile?: string;
@@ -88,7 +89,8 @@ export function buildSessionEndHookPayload(params: {
     event: {
       sessionId: params.sessionId,
       sessionKey: params.sessionKey,
-      messageCount: params.messageCount ?? 0,
+      messageCount: params.messageCount ?? params.messages?.length ?? 0,
+      messages: params.messages,
       durationMs: params.durationMs,
       reason: params.reason,
       sessionFile: params.sessionFile,

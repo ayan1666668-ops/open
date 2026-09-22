@@ -584,7 +584,7 @@ test("sessions.reset of an incognito session broadcasts a delete, not a reset", 
 
 test("sessions.reset emits enriched session_end and session_start hooks", async () => {
   await createSessionStoreDir();
-  await writeMainTranscriptSession({
+  const sessionFile = await writeMainTranscriptSession({
     sessionId: "sess-main",
     content: "hello from transcript",
   });
@@ -600,9 +600,17 @@ test("sessions.reset emits enriched session_end and session_start hooks", async 
   expect(endEvent.sessionKey).toBe("agent:main:main");
   expect(endEvent.reason).toBe("new");
   // Retained history: reset keeps the SQLite transcript searchable under the
-  // same key, so nothing is archived and no reset artifact file exists.
+  // same key, so nothing is archived and the payload carries the SQLite marker
+  // instead of a JSONL path that no longer exists.
   expect(endEvent.transcriptArchived).toBeUndefined();
-  expect(endEvent.sessionFile).toBeUndefined();
+  expect(endEvent.sessionFile).toBe(sessionFile);
+  // The final transcript is now delivered so session_end hooks can retain it.
+  expect(endEvent.messageCount).toBe(1);
+  expect(endEvent.messages).toHaveLength(1);
+  expect(endEvent.messages?.[0]).toMatchObject({
+    role: "user",
+    content: "hello from transcript",
+  });
   expect(endEvent.nextSessionId).toBe(startEvent.sessionId);
   expect(endEvent.nextSessionId).toBe("sess-main");
   expectMainHookContext(endContext, "sess-main");

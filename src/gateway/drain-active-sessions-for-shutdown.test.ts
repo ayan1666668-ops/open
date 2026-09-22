@@ -39,6 +39,17 @@ vi.mock("./session-transcript-files.fs.js", () => ({
   archiveSessionTranscriptsDetailed: vi.fn(() => []),
 }));
 
+// session_end now resolves its transcript (messages + sessionFile) through the
+// canonical reader; keep the drain tests on a synchronous empty transcript.
+vi.mock("./session-reset-transcript.js", () => ({
+  readGatewayBeforeResetPluginHookMessages: vi.fn(async () => []),
+  readGatewaySessionEndPluginHookTranscript: vi.fn(async () => ({
+    messages: [],
+    sessionFile: undefined,
+    transcriptArchived: false,
+  })),
+}));
+
 vi.mock("../auto-reply/reply/session-hooks.js", () => ({
   buildSessionEndHookPayload: vi.fn(
     (params: { sessionId: string; reason: string; sessionKey: string }) => ({
@@ -50,7 +61,7 @@ vi.mock("../auto-reply/reply/session-hooks.js", () => ({
 }));
 
 const { emitGatewaySessionEndPluginHook, emitGatewaySessionStartPluginHook } =
-  await import("./session-reset-service.js");
+  await import("./session-lifecycle-plugin-hooks.js");
 const { drainActiveSessionsForShutdown } = await import("./active-sessions-shutdown-drain.js");
 const { forgetActiveSessionForShutdown, listActiveSessionsForShutdown } =
   await import("./active-sessions-shutdown-tracker.js");
@@ -144,6 +155,9 @@ describe("drainActiveSessionsForShutdown", () => {
       agentId: "main",
       reason: "reset",
     });
+    // session_end resolution is async now; let the reset-path emission land
+    // before clearing so the assertion below only counts the shutdown drain.
+    await vi.waitFor(() => expect(runSessionEndMock).toHaveBeenCalledTimes(1));
     runSessionEndMock.mockClear();
 
     await drainActiveSessionsForShutdown({ reason: "shutdown" });
@@ -165,13 +179,11 @@ describe("drainActiveSessionsForShutdown", () => {
       return value;
     });
 
-    // Yield twice so the drain can call `runSessionEnd`, then assert that
-    // it is still pending: this is the regression check for the fire-and-
-    // forget bug that the bot flagged on the original PR.
-    await Promise.resolve();
-    await Promise.resolve();
+    // Wait until the drain reaches the handler, then assert it is still
+    // pending: this is the regression check for the fire-and-forget bug that
+    // the bot flagged on the original PR.
+    await vi.waitFor(() => expect(runSessionEndMock).toHaveBeenCalledTimes(1));
     expect(drainSettled).toBe(false);
-    expect(runSessionEndMock).toHaveBeenCalledTimes(1);
 
     resolveHandler?.();
     const result = await drainPromise;

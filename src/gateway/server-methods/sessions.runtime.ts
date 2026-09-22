@@ -4,8 +4,11 @@
 export {
   cleanupSessionBeforeMutation,
   emitGatewayBeforeResetPluginHook,
-  emitGatewaySessionEndPluginHook,
-  emitGatewaySessionStartPluginHook,
   emitSessionUnboundLifecycleEvent,
   performGatewaySessionReset,
 } from "../session-reset-service.js";
+export {
+  emitGatewaySessionEndPluginHook,
+  emitGatewaySessionStartPluginHook,
+} from "../session-lifecycle-plugin-hooks.js";
+export { readGatewaySessionEndPluginHookMessages } from "../session-reset-transcript.js";
