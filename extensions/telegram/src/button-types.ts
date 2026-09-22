@@ -49,6 +49,8 @@ export type TelegramDroppedControl = {
     | "callback_data_too_long"
     | "copy_text_invalid"
     | "invalid_action"
+    | "presentation_action_budget_exceeded"
+    | "presentation_keyboard_precedence"
     | "question_context_unavailable"
     | "web_app_unavailable";
   callbackDataBytes?: number;
@@ -308,6 +310,7 @@ function toTelegramInlineButton(
 function chunkInteractiveButtons(
   buttons: readonly MessagePresentationButton[],
   rows: TelegramInlineButton[][],
+  budget: { remaining: number },
   options?: TelegramButtonBuildOptions,
 ) {
   let row: TelegramInlineButton[] = [];
@@ -318,10 +321,15 @@ function chunkInteractiveButtons(
     }
   };
   for (const button of buttons) {
+    if (budget.remaining === 0) {
+      recordDroppedControl(button, options, "presentation_action_budget_exceeded");
+      continue;
+    }
     const rendered = toTelegramInlineButton(button, options);
     if (!rendered) {
       continue;
     }
+    budget.remaining -= 1;
     if (resolveMessagePresentationButtonAction(button)?.type === "question") {
       flush();
       rows.push([rendered]);
@@ -341,12 +349,13 @@ export function buildTelegramPresentationButtons(
   options?: TelegramButtonBuildOptions,
 ): TelegramInlineButtons | undefined {
   const rows: TelegramInlineButton[][] = [];
+  const budget = { remaining: 100 };
   for (const block of presentation?.blocks ?? []) {
     if (!isMessagePresentationInteractiveBlock(block)) {
       continue;
     }
     if (block.type === "buttons") {
-      chunkInteractiveButtons(block.buttons, rows, options);
+      chunkInteractiveButtons(block.buttons, rows, budget, options);
       continue;
     }
     chunkInteractiveButtons(
@@ -356,6 +365,7 @@ export function buildTelegramPresentationButtons(
         value: option.value,
       })),
       rows,
+      budget,
       options,
     );
   }
@@ -389,6 +399,21 @@ export function resolveTelegramButtonsFromParams(
   presentation = normalizeMessagePresentation(params.presentation),
   options?: TelegramButtonBuildOptions,
 ) {
+  const interactive = normalizeLegacyInteractiveReply(params.interactive);
+  if (interactive && presentation) {
+    for (const block of presentation.blocks) {
+      if (!isMessagePresentationInteractiveBlock(block)) {
+        continue;
+      }
+      const controls = block.type === "buttons" ? block.buttons : block.options;
+      for (const control of controls) {
+        options?.onDroppedControl?.({
+          label: control.label,
+          reason: "presentation_keyboard_precedence",
+        });
+      }
+    }
+  }
   return resolveTelegramInlineButtons(
     {
       presentation,
