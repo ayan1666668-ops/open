@@ -17,6 +17,10 @@ const MAX_SEMANTIC_RANKING_TIMEOUT_MS = 5_000;
 function readToolSearchConfig(config?: OpenClawConfig): Record<string, unknown> {
   const tools = isRecord(config?.tools) ? config.tools : undefined;
   const toolSearch = tools?.toolSearch;
+  // Only the unauthored default changes; explicit shorthand and objects retain their modes.
+  if (toolSearch === undefined) {
+    return { enabled: true, mode: "tools" };
+  }
   if (toolSearch === true) {
     return { enabled: true };
   }

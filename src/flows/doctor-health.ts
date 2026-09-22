@@ -1,10 +1,12 @@
 // Doctor health flow renders interactive health check output.
 import fs from "node:fs";
 import { intro as clackIntro, outro as clackOutro } from "@clack/prompts";
+import { collectNestedErrorCandidates } from "@openclaw/normalization-core/error-coercion";
 import { stylePromptTitle } from "../../packages/terminal-core/src/prompt-style.js";
 import type { DoctorDatabasePreflight } from "../commands/doctor-database-preflight.js";
 import type { DoctorOptions } from "../commands/doctor-prompter.js";
 import { isUpdateDoctorLintPass } from "../commands/doctor/shared/update-phase.js";
+import { ConfigWritePostCommitError } from "../config/io.write-errors.js";
 import { resolveConfigPath, resolveStateDir } from "../config/paths.js";
 import { formatUpdateDoctorConfigChange } from "../infra/update-doctor-config.js";
 import {
@@ -25,6 +27,7 @@ import { withPluginLoadDiagnostics } from "../plugins/load-diagnostics.js";
 import type { PluginDiagnostic } from "../plugins/manifest-types.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { createLazyRuntimeModule } from "../shared/lazy-runtime.js";
+import { UpdateSchemaRefusalError } from "../state/openclaw-update-schema-refusal.js";
 import type { DoctorHealthFlowContext } from "./doctor-health-contributions.js";
 
 // Interactive doctor entrypoint; lazy imports keep normal CLI startup light.
@@ -122,6 +125,31 @@ async function runDoctorHealthFlowWithResult(
   let exitCode: number | undefined;
   let healthContext: DoctorHealthFlowContext | undefined;
   let doctorResult: UpdatePostInstallDoctorResult = { status: "error" };
+  const recordConfigWriteRefusal = (ctx: DoctorHealthFlowContext): boolean => {
+    if (!ctx.configWriteRefusal) {
+      return false;
+    }
+    // Config fixes were computed but refused by the writer; the warning above
+    // already lists the manual work. This failure outranks a recoverable
+    // post-install advisory because the run did not converge.
+    outro(
+      ctx.configResultWriteCommitted === true
+        ? "Doctor finished, but some config fixes were not applied."
+        : "Doctor finished, but config fixes were not applied.",
+    );
+    exitCode = 1;
+    doctorResult = {
+      status: "error",
+      failureFacts: [
+        createUpdateFailureFact({
+          check: "config-write",
+          code: ctx.configWriteRefusal,
+          message: "Doctor config fixes were not applied.",
+        }),
+      ],
+    };
+    return true;
+  };
   try {
     const { beginDoctorMaintenance } = await import("../commands/doctor-maintenance.js");
     maintenance = await beginDoctorMaintenance({
@@ -247,26 +275,7 @@ async function runDoctorHealthFlowWithResult(
       healthContext = ctx;
       const { runDoctorHealthContributions } = await import("./doctor-health-contributions.js");
       await runDoctorHealthContributions(ctx);
-      if (ctx.configWriteRefusal) {
-        // Config fixes were computed but refused by the writer; the warning above
-        // already lists the manual work. This failure outranks a recoverable
-        // post-install advisory because the run did not converge.
-        outro(
-          ctx.configResultWriteCommitted === true
-            ? "Doctor finished, but some config fixes were not applied."
-            : "Doctor finished, but config fixes were not applied.",
-        );
-        exitCode = 1;
-        doctorResult = {
-          status: "error",
-          failureFacts: [
-            createUpdateFailureFact({
-              check: "config-write",
-              code: ctx.configWriteRefusal,
-              message: "Doctor config fixes were not applied.",
-            }),
-          ],
-        };
+      if (recordConfigWriteRefusal(ctx)) {
         return undefined;
       }
       if (options.repair === true || options.yes === true) {
@@ -308,7 +317,14 @@ async function runDoctorHealthFlowWithResult(
     if (!ctx) {
       return;
     }
-    await maintenance?.finish(ctx.cfg);
+    if (maintenance) {
+      const { writeDoctorGatewayConfig } =
+        await import("./doctor-health-contribution-runners.gateway.js");
+      await maintenance.finish(ctx.cfg, (nextConfig) => writeDoctorGatewayConfig(ctx, nextConfig));
+      if (recordConfigWriteRefusal(ctx)) {
+        return;
+      }
+    }
     const pluginWarnings: string[] = [];
     if (diagnostics.length > 0) {
       const { collectPluginLoadHealthFindings } =
@@ -320,6 +336,7 @@ async function runDoctorHealthFlowWithResult(
     }
     const warnings = normalizeUpdatePostInstallDoctorWarnings([
       ...pluginWarnings,
+      ...(ctx.configResult.warnings ?? []),
       ...(maintenance?.warnings ?? []),
       ...(ctx.configResult.stateMigrationStepReceipts ?? []).flatMap((receipt) =>
         receipt.outcome === "warning" ||
@@ -373,17 +390,39 @@ async function runDoctorHealthFlowWithResult(
         recordUpdateDoctorRefusal(error.message);
       }
     }
+    const causes = collectNestedErrorCandidates(error);
+    const unsafeConfigWrite = causes.find(
+      (cause): cause is ConfigWritePostCommitError =>
+        cause instanceof ConfigWritePostCommitError && cause.rollbackStatus !== "restored",
+    );
+    const schemaRefusal = causes.find(
+      (cause): cause is UpdateSchemaRefusalError => cause instanceof UpdateSchemaRefusalError,
+    );
+    const refusalFacts = causes.flatMap((cause) =>
+      cause instanceof UpdateDoctorError || cause instanceof DoctorStateMigrationRefusalError
+        ? cause.failureFacts
+        : [],
+    );
     doctorResult = {
       status: "error",
       ...(!healthContext && refusalWarnings.length > 0 ? { warnings: refusalWarnings } : {}),
       failureFacts:
-        error instanceof UpdateDoctorError || error instanceof DoctorStateMigrationRefusalError
-          ? error.failureFacts
+        !unsafeConfigWrite && !schemaRefusal && refusalFacts.length > 0
+          ? refusalFacts
           : [
               createUpdateFailureFact({
-                check: "doctor",
-                code: "doctor-failed",
-                message: error instanceof Error ? error.message : String(error),
+                check: unsafeConfigWrite
+                  ? "config-write"
+                  : schemaRefusal
+                    ? "database-schema-preflight"
+                    : "doctor",
+                code: unsafeConfigWrite
+                  ? "rollback-state-unverified"
+                  : (schemaRefusal?.code ?? "doctor-failed"),
+                message: unsafeConfigWrite
+                  ? `${unsafeConfigWrite.publication} config publication; rollback ${unsafeConfigWrite.rollbackStatus}. ${unsafeConfigWrite.message}`
+                  : (schemaRefusal?.message ??
+                    (error instanceof Error ? error.message : String(error))),
               }),
             ],
     };

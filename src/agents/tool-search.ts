@@ -20,17 +20,20 @@ import {
   setToolSearchCodeModeSupportedForTest,
   setToolSearchMinCodeTimeoutMsForTest,
 } from "./tool-search-config.js";
+import { renderToolSearchControlText } from "./tool-search-control-result.js";
 import {
   applyToolSchemaDirectoryCatalog,
   MAX_TOOL_SCHEMA_DIRECTORY_PROMPT_CHARS,
 } from "./tool-search-directory.js";
-import { readToolSearchRequest } from "./tool-search-request.js";
 import {
-  formatToolSearchControlError,
-  formatToolSearchControlResult,
   prepareToolSearchDispatcherArguments,
   readToolSearchCallArgs,
   readToolSearchId,
+  readToolSearchRequest,
+} from "./tool-search-request.js";
+import {
+  formatToolSearchControlError,
+  formatToolSearchControlResult,
   ToolSearchRuntime,
 } from "./tool-search-runtime.js";
 import {
@@ -48,7 +51,7 @@ import {
   type ToolSearchMode,
   type ToolSearchToolContext,
 } from "./tool-search-types.js";
-import { jsonResult, textResult, type AnyAgentTool } from "./tools/common.js";
+import { textResult, type AnyAgentTool } from "./tools/common.js";
 
 export {
   clearToolSearchCatalog,
@@ -148,7 +151,10 @@ function compactBatchCandidate(candidate: ToolSearchCandidate): ToolSearchCandid
   };
 }
 
-function formatToolSearchBatchResponse(results: ToolSearchBatchGroup[]): AgentToolResult<{
+function formatToolSearchBatchResponse(
+  results: ToolSearchBatchGroup[],
+  networkContent: boolean,
+): AgentToolResult<{
   results: ToolSearchBatchGroup[];
   truncated?: true;
 }> {
@@ -166,7 +172,7 @@ function formatToolSearchBatchResponse(results: ToolSearchBatchGroup[]): AgentTo
   let truncated = bounded.some((result) => result.truncated);
   const render = () => ({ results: bounded, ...(truncated ? { truncated: true as const } : {}) });
   let payload = render();
-  let text = JSON.stringify(payload, null, 2);
+  let { text } = renderToolSearchControlText(JSON.stringify(payload, null, 2), networkContent);
   while (text.length > MAX_TOOL_SEARCH_BATCH_RESPONSE_CHARS) {
     let removable: ToolSearchBatchGroup | undefined;
     for (const group of bounded) {
@@ -191,7 +197,7 @@ function formatToolSearchBatchResponse(results: ToolSearchBatchGroup[]): AgentTo
     removable.truncated = true;
     truncated = true;
     payload = render();
-    text = JSON.stringify(payload, null, 2);
+    ({ text } = renderToolSearchControlText(JSON.stringify(payload, null, 2), networkContent));
   }
   return textResult(text, payload);
 }
@@ -347,17 +353,20 @@ export function createToolSearchTools(ctx: ToolSearchToolContext): AnyAgentTool[
         ),
       }),
       execute: async (
-        _toolCallId: string,
+        toolCallId: string,
         args: unknown,
         signal?: AbortSignal,
       ): Promise<AgentToolResult<unknown>> => {
         const request = readToolSearchRequest(args, config);
         if (request.kind === "single") {
-          return jsonResult(
+          return formatToolSearchControlResult(
             await runtime.search(request.search.query, {
               limit: request.search.limit,
               signal,
+              parentToolCallId: toolCallId,
             }),
+            runtime,
+            { parentToolCallId: toolCallId },
           );
         }
         // Await every independent search before surfacing a rejection. A
@@ -369,6 +378,7 @@ export function createToolSearchTools(ctx: ToolSearchToolContext): AnyAgentTool[
             candidates: await runtime.search(search.query, {
               limit: search.limit,
               signal,
+              parentToolCallId: toolCallId,
             }),
           })),
         );
@@ -384,7 +394,7 @@ export function createToolSearchTools(ctx: ToolSearchToolContext): AnyAgentTool[
           }
           return result.value;
         });
-        return formatToolSearchBatchResponse(results);
+        return formatToolSearchBatchResponse(results, runtime.hasNetworkContent(toolCallId));
       },
     },
     {
@@ -396,8 +406,12 @@ export function createToolSearchTools(ctx: ToolSearchToolContext): AnyAgentTool[
         id: Type.String({ description: "Tool search result id or tool name." }),
       }),
       prepareArguments: prepareToolSearchDispatcherArguments,
-      execute: async (_toolCallId: string, args: unknown): Promise<AgentToolResult<unknown>> =>
-        jsonResult(await runtime.describe(readToolSearchId(args))),
+      execute: async (toolCallId: string, args: unknown): Promise<AgentToolResult<unknown>> =>
+        formatToolSearchControlResult(
+          await runtime.describe(readToolSearchId(args), { parentToolCallId: toolCallId }),
+          runtime,
+          { parentToolCallId: toolCallId },
+        ),
     },
     {
       name: TOOL_CALL_RAW_TOOL_NAME,

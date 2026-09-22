@@ -96,6 +96,12 @@ async function settleDeliverySettings(
   let current = pendingSettings ? readQueuedMessageById(host, item.id) : item;
 
   while (pendingSettings && !consumed.has(pendingSettings)) {
+    if (
+      current?.sendState === "held" ||
+      (current?.sendState === "unconfirmed" && !current.sendRunId)
+    ) {
+      return "pending";
+    }
     if (current?.sendState !== "waiting-model") {
       current = setState("waiting-model");
       if (!current) {
@@ -109,6 +115,12 @@ async function settleDeliverySettings(
     current = readQueuedMessageById(host, item.id);
     if (!current) {
       return "failed";
+    }
+    if (
+      current.sendState === "held" ||
+      (current.sendState === "unconfirmed" && !current.sendRunId)
+    ) {
+      return "pending";
     }
     if (!ready) {
       const restored =
@@ -475,8 +487,10 @@ async function sendPreparedChatMessage(
           flushStoredChatOutbox(host, chatOutboxDrainDependencies),
         );
       } else if (isNonTerminalAgentRunStatus(ack.status)) {
-        // A steer ACK identifies its client operation, not the active model run.
-        if (prepared.queueMode !== "steer" || !host.chatRunId) {
+        // Accepted steering/queued custody identifies the input, not a replacement
+        // for the active model run. Only an explicit interrupt may replace it here;
+        // otherwise live execution events own adoption when the queued turn starts.
+        if (!host.chatRunId || prepared.queueMode === "interrupt") {
           adoptStartedChatRun(host, ack.runId, startedAt);
         }
         // Hydrate approved custody during setup without changing ordinary send
