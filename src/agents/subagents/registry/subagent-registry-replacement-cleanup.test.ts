@@ -11,10 +11,7 @@ import { useSubagentControlFixture } from "./subagent-control.test-support.js";
 import { subagentRegistryDeps } from "./subagent-registry-deps.js";
 import { subagentRuns } from "./subagent-registry-memory.js";
 import { persistSubagentRunsToDiskOrThrow } from "./subagent-registry-state.js";
-import {
-  settleSubagentRegistryPersistenceWork,
-  writeSubagentSessionEntry,
-} from "./subagent-registry.persistence.test-support.js";
+import { writeSubagentSessionEntry } from "./subagent-registry.persistence.test-support.js";
 import {
   registerSubagentRun,
   replaceSubagentRunAfterSteerCore,
@@ -50,7 +47,7 @@ it.each(["completed", "failed"] as const)(
     };
     previous.execution = { status: "interrupted", transcriptTarget };
     persistSubagentRunsToDiskOrThrow(subagentRuns, [previous.runId]);
-    await settleSubagentRegistryPersistenceWork();
+    await fixture.settle();
 
     const cleanup = createDeferred();
     const remove = vi

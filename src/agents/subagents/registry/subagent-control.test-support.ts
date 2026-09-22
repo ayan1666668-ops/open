@@ -9,9 +9,11 @@ import { flushLogger, resetLogger } from "../../../logging/logger.js";
 import { revokePluginRecord } from "../../../plugins/registry-lifecycle.js";
 import { requireActivePluginRegistry } from "../../../plugins/runtime.js";
 import { createPluginRecord } from "../../../plugins/status.test-helpers.js";
+import { getActiveGatewayRootWorkCount } from "../../../process/gateway-work-admission.js";
 import type { DetachedTaskLifecycleRuntime } from "../../../tasks/detached-task-runtime-contract.js";
 import { resetDetachedTaskLifecycleRuntimeForTests } from "../../../tasks/detached-task-runtime.test-support.js";
 import { resetTaskFlowRegistryForTests } from "../../../tasks/task-flow-registry.test-support.js";
+import { captureTaskDeliveryWork } from "../../../tasks/task-registry-delivery.test-support.js";
 import { resetTaskRegistryForTests } from "../../../tasks/task-registry.test-support.js";
 import { captureEnv, setTestEnvValue } from "../../../test-utils/env.js";
 import { cleanupSessionStateForTest } from "../../../test-utils/session-state-cleanup.js";
@@ -24,6 +26,8 @@ import { resetSubagentRegistryForTests, testing } from "./subagent-registry.test
 export function useSubagentControlFixture() {
   const env = captureEnv(["OPENCLAW_STATE_DIR", "OPENCLAW_CONFIG_PATH"]);
   let stateDir = "";
+  let deliveries: ReturnType<typeof captureTaskDeliveryWork> | undefined;
+  const settle = () => settleSubagentRegistryPersistenceWork(deliveries);
   const persist = vi.fn(persistSubagentRunsToDiskOrThrow);
   const gateway = vi.fn(async (request: { method: string }) => {
     if (request.method !== "agent.wait") {
@@ -46,6 +50,7 @@ export function useSubagentControlFixture() {
     resetSubagentRegistryForTests({ persist: false });
     resetTaskRegistryForTests({ persist: false });
     resetTaskFlowRegistryForTests({ persist: false });
+    deliveries = captureTaskDeliveryWork();
     gateway.mockReset();
     persist.mockReset().mockImplementation(persistSubagentRunsToDiskOrThrow);
     testing.setDepsForTest({
@@ -71,24 +76,46 @@ export function useSubagentControlFixture() {
     });
   });
   afterEach(async () => {
-    vi.restoreAllMocks();
-    await settleSubagentRegistryPersistenceWork();
-    resetSubagentRegistryForTests({ persist: false });
-    resetTaskRegistryForTests({ persist: false });
-    resetTaskFlowRegistryForTests({ persist: false });
-    schedulerTesting.reset();
-    resetDetachedTaskLifecycleRuntimeForTests();
-    await cleanupSessionStateForTest({ stateDir });
-    testing.setDepsForTest();
-    clearRuntimeConfigSnapshot();
-    clearConfigCache();
-    await flushLogger();
-    resetLogger();
-    await rm(stateDir, { recursive: true, force: true });
-    env.restore();
+    const failures: unknown[] = [];
+    try {
+      await settle();
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      deliveries?.[Symbol.dispose]();
+      deliveries = undefined;
+      vi.restoreAllMocks();
+    }
+    // Preserve stores and their environment if detached writers have not settled.
+    if (getActiveGatewayRootWorkCount() === 0) {
+      try {
+        resetSubagentRegistryForTests({ persist: false });
+        resetTaskRegistryForTests({ persist: false });
+        resetTaskFlowRegistryForTests({ persist: false });
+        schedulerTesting.reset();
+        resetDetachedTaskLifecycleRuntimeForTests();
+        await cleanupSessionStateForTest({ stateDir });
+        testing.setDepsForTest();
+        clearRuntimeConfigSnapshot();
+        clearConfigCache();
+        await flushLogger();
+        resetLogger();
+        await rm(stateDir, { recursive: true, force: true });
+        env.restore();
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length === 1) {
+      throw failures[0];
+    }
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Subagent control fixture cleanup failed");
+    }
   });
 
   return {
+    settle,
     get stateDir() {
       return stateDir;
     },

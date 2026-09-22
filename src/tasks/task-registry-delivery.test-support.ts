@@ -63,7 +63,16 @@ export function captureTaskDeliveryWork() {
     });
   return {
     async settle() {
-      await Promise.all(pending);
+      const settled = await Promise.allSettled(pending);
+      const failures = settled.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (failures.length === 1) {
+        throw failures[0];
+      }
+      if (failures.length > 1) {
+        throw new AggregateError(failures, "Task delivery fixture work failed");
+      }
     },
     [Symbol.dispose]() {
       capture.mockRestore();

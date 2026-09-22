@@ -6,7 +6,6 @@ import {
   createManagedTaskFlow,
   getTaskFlowById,
 } from "../../../tasks/task-flow-runtime-internal.js";
-import { captureTaskDeliveryWork } from "../../../tasks/task-registry-delivery.test-support.js";
 import { cancelTaskById, findTaskByRunId, getTaskById } from "../../../tasks/task-registry.js";
 import { useSubagentControlFixture } from "./subagent-control.test-support.js";
 import { subagentRegistryDeps } from "./subagent-registry-deps.js";
@@ -22,7 +21,6 @@ const fixture = useSubagentControlFixture();
 it.each(["canonical", "managed"] as const)(
   "cancels a resumed yielded subagent through its %s task without changing task identity",
   async (selectedKind) => {
-    using deliveries = captureTaskDeliveryWork();
     vi.spyOn(subagentRegistryDeps, "runSubagentAnnounceFlow").mockResolvedValue("delivered");
     const childSessionKey = "agent:main:subagent:task-continuation";
     const requesterSessionKey = "agent:main:main";
@@ -81,7 +79,7 @@ it.each(["canonical", "managed"] as const)(
     const selected = selectedKind === "canonical" ? canonical : managed;
 
     const result = await cancelTaskById({ cfg: getRuntimeConfig(), taskId: selected.taskId });
-    await deliveries.settle();
+    await fixture.settle();
 
     expect(result, result.reason).toMatchObject({ found: true, cancelled: true });
     for (const task of [canonical, managed]) {

@@ -3,7 +3,6 @@ import { getRuntimeConfig } from "../../../config/config.js";
 import { patchSessionEntryCore } from "../../../config/sessions/session-accessor.js";
 import { peekSystemEvents, resetSystemEventsForTest } from "../../../infra/system-events.js";
 import { createDeferredCore } from "../../../shared/deferred.js";
-import { captureTaskDeliveryWork } from "../../../tasks/task-registry-delivery.test-support.js";
 import { tasksWithPendingDelivery } from "../../../tasks/task-registry-state.js";
 import {
   cancelTaskById,
@@ -23,10 +22,7 @@ import {
   registerSubagentRun,
   settleRequesterAfterSessionSpawns,
 } from "../registry/subagent-registry.js";
-import {
-  settleSubagentRegistryPersistenceWork,
-  writeSubagentSessionEntry,
-} from "../registry/subagent-registry.persistence.test-support.js";
+import { writeSubagentSessionEntry } from "../registry/subagent-registry.persistence.test-support.js";
 import { testing as registryTesting } from "../registry/subagent-registry.test-helpers.js";
 import {
   setSubagentAnnounceDeliveryDepsForTest,
@@ -174,7 +170,7 @@ it.each([
       if (!waitBeforeExecution) {
         await registryTesting.sweepOnceForTests();
       }
-      await settleSubagentRegistryPersistenceWork();
+      await fixture.settle();
       if (phase === "unsuppressed" || phase === "failed kill") {
         expect(startedTurns).toEqual([requesterKey]);
       } else {
@@ -187,7 +183,7 @@ it.each([
       expect(subagentRuns.get("nested")?.requesterSettleWake).toBeUndefined();
     } finally {
       execute.resolve();
-      await settleSubagentRegistryPersistenceWork();
+      await fixture.settle();
     }
   },
 );
@@ -195,7 +191,6 @@ it.each([
 it.each(["batch", "ordinary"] as const)(
   "keeps %s cancellation delivery with its current owner",
   async (mode) => {
-    using deliveries = captureTaskDeliveryWork();
     const parentKey = `agent:main:cancel-notification-${mode}`;
     const childKey = `agent:main:subagent:cancel-notification-${mode}`;
     const siblingKey = `agent:main:subagent:cancel-sibling-${mode}`;
@@ -250,7 +245,7 @@ it.each(["batch", "ordinary"] as const)(
     });
     expect(result).toMatchObject({ found: true, cancelled: true });
     // Cancellation owns a detached notification; join it before checking claim release.
-    await deliveries.settle();
+    await fixture.settle();
     expect(tasksWithPendingDelivery.has(task.taskId)).toBe(false);
     // Redrive the public delivery path as well as the immediate cancellation notification.
     await maybeDeliverTaskTerminalUpdate(task.taskId);

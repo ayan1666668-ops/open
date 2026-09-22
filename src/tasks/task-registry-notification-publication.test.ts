@@ -209,7 +209,11 @@ it("reports retired background notification reads without sending or losing thei
       );
       release.resolve();
       await expect(deliveries.settle()).rejects.toMatchObject({
-        code: "STATE_DATABASE_READ_ADMISSION_INVALIDATED",
+        name: "AggregateError",
+        errors: [
+          expect.objectContaining({ code: "STATE_DATABASE_READ_ADMISSION_INVALIDATED" }),
+          expect.objectContaining({ code: "STATE_DATABASE_READ_ADMISSION_INVALIDATED" }),
+        ],
       });
       await setImmediate();
       expect(
