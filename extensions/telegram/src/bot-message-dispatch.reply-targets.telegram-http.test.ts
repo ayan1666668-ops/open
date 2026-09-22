@@ -582,13 +582,30 @@ describe("Telegram quote selection and accepted reply targets through HTTP", () 
                 held.release.resolve();
               }
               await tool;
+              await waitForBotApiCall(
+                (call) =>
+                  call.method === "setMessageReaction" &&
+                  JSON.stringify(call.fields.reaction).includes("🛠️"),
+              );
               await options?.onCompactionStart?.();
               await waitForBotApiCall(
                 (call) =>
                   call.method === "setMessageReaction" &&
                   JSON.stringify(call.fields.reaction).includes("\u{1f5dc}\ufe0f"),
               );
+              const callsBeforeCompactionEnd = calls.length;
+              const acceptedBeforeCompactionEnd = acceptedCalls.length;
               await options?.onCompactionEnd?.({ completed: true });
+              await waitForBotApiCall(
+                (call) =>
+                  calls.indexOf(call) >= callsBeforeCompactionEnd &&
+                  call.method === "setMessageReaction" &&
+                  JSON.stringify(call.fields.reaction).includes("🧠"),
+              );
+              expect(acceptedCalls.slice(acceptedBeforeCompactionEnd)).toContainEqual({
+                method: "setMessageReaction",
+                fields: expect.objectContaining({ reaction: [{ type: "emoji", emoji: "🧠" }] }),
+              });
             } else {
               throw new Error("model failed");
             }
