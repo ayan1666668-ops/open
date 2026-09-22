@@ -628,7 +628,7 @@ describe("agent defaults schema", () => {
         tools: {
           codeMode: {
             enabled: true,
-            runtime: "quickjs-wasi",
+            executor: "quickjs",
             timeoutMs: 5000,
           },
         },
