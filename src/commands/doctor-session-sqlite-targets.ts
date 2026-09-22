@@ -30,32 +30,8 @@ export function resolveDoctorSessionSqliteTargets(params: {
   mode: DoctorSessionSqliteMode;
   store?: string;
 }): SessionStoreTarget[] {
-  const snapshot = readAgentDatabaseDeletionSnapshot(params.env);
-  const classifyDeletion =
-    snapshot &&
-    snapshot.retainedDeletions !== "unavailable" &&
-    snapshot.retainedDeletions.length > 0
-      ? createAgentDatabaseDeletionClassifier({
-          ...snapshot,
-          env: params.env,
-          configuredAgentDatabaseTargets: resolveConfiguredAgentDatabaseTargets(params.cfg, {
-            env: params.env,
-          }),
-        })
-      : undefined;
-  // Omit only recorded retained deletions; unknown history keeps its normal diagnostics.
-  const admit = (targets: SessionStoreTarget[]) =>
-    classifyDeletion
-      ? targets.filter(
-          (target) =>
-            !classifyDeletion(target.storePath, target.agentId) &&
-            !classifyDeletion(resolveTargetSqlitePath(target, params.env), target.agentId),
-        )
-      : targets;
   if (params.store) {
-    return admit(
-      resolveSessionStoreTargets(params.cfg, { store: params.store }, { env: params.env }),
-    );
+    return resolveSessionStoreTargets(params.cfg, { store: params.store }, { env: params.env });
   }
   const discoversHistory =
     params.mode === "dry-run" || params.mode === "import" || params.mode === "validate";
@@ -68,42 +44,49 @@ export function resolveDoctorSessionSqliteTargets(params: {
       env: params.env,
     });
     if (!params.agent) {
-      return admit(candidates);
+      return candidates;
     }
     const requestedAgentId = normalizeAgentId(params.agent);
-    return admit(
-      candidates.filter((target) => normalizeAgentId(target.agentId) === requestedAgentId),
-    );
+    return candidates.filter((target) => normalizeAgentId(target.agentId) === requestedAgentId);
   }
   if (params.agent) {
-    return admit(
-      resolveAgentSessionStoreTargetsSync(params.cfg, params.agent, { env: params.env }),
-    );
+    return resolveAgentSessionStoreTargetsSync(params.cfg, params.agent, { env: params.env });
   }
   if (params.allAgents) {
     // Discovery must admit validated directories even before either registry exists.
-    const targets = discoversHistory
+    const candidates = discoversHistory
       ? resolveAllAgentSessionStoreCandidateTargetsSync(params.cfg, { env: params.env })
       : resolveAllAgentSessionStoreTargetsSync(params.cfg, { env: params.env });
-    if (!discoversHistory) {
-      return admit(targets);
-    }
     const legacyStorePath = path.join(resolveStateDir(params.env), "sessions", "sessions.json");
-    if (!fs.existsSync(legacyStorePath)) {
-      return admit(targets);
-    }
-    const legacyTargets = resolveSessionStoreTargets(
-      params.cfg,
-      { allAgents: true },
-      { env: params.env },
-    ).map((target) => ({
-      agentId: target.agentId,
-      sqlitePath: resolveTargetSqlitePath(target),
-      storePath: legacyStorePath,
-    }));
-    return admit([...legacyTargets, ...targets]);
+    const legacyTargets =
+      discoversHistory && fs.existsSync(legacyStorePath)
+        ? resolveSessionStoreTargets(params.cfg, { allAgents: true }, { env: params.env }).map(
+            (target) => ({
+              agentId: target.agentId,
+              sqlitePath: resolveTargetSqlitePath(target, params.env),
+              storePath: legacyStorePath,
+            }),
+          )
+        : [];
+    // Legacy-only installs can predate shared state; existing history owns retained-store admission.
+    const deletionSnapshot = readAgentDatabaseDeletionSnapshot(params.env);
+    const isRetained =
+      deletionSnapshot &&
+      createAgentDatabaseDeletionClassifier({
+        env: params.env,
+        retainedDeletions: deletionSnapshot.retainedDeletions,
+        registeredAgentDatabases: deletionSnapshot.registeredAgentDatabases,
+        configuredAgentDatabaseTargets: resolveConfiguredAgentDatabaseTargets(params.cfg, {
+          env: params.env,
+        }),
+      });
+    return [...legacyTargets, ...candidates].filter(
+      (target) =>
+        !isRetained?.(target.storePath, target.agentId) &&
+        !isRetained?.(resolveTargetSqlitePath(target, params.env), target.agentId),
+    );
   }
-  return admit(resolveSessionStoreTargets(params.cfg, {}, { env: params.env }));
+  return resolveSessionStoreTargets(params.cfg, {}, { env: params.env });
 }
 
 export function filterLegacySessionStoreTargets(

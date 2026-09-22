@@ -12,12 +12,20 @@ describe("buildBrowserExtensionPairing", () => {
   it("binds native bootstrap to the selected profile instead of the first extension relay", async () => {
     const cfg = {
       browser: {
+        defaultProfile: "work",
         profiles: {
           first: { driver: "extension" as const, cdpPort: 19441 },
           work: { driver: "extension" as const, cdpPort: 19442 },
         },
       },
     };
+    const legacy = await buildBrowserExtensionPairing({
+      cfg,
+      localTransport: "gateway",
+      ensureToken,
+    });
+    expect(legacy.relayPort).toBe(19441);
+    expect(new URL(legacy.pairingString).searchParams.has("profile")).toBe(false);
     const result = await buildBrowserExtensionPairing({
       cfg,
       profile: "work",

@@ -48,7 +48,10 @@ afterEach(() => {
   resetRuntimeCapture();
 });
 
-async function setup(platform: "linux" | "darwin") {
+async function setup(
+  platform: "linux" | "darwin",
+  options: { legacy?: boolean; relocate?: boolean } = {},
+) {
   const f = await fixture(platform);
   const real = await vi.importActual<typeof import("../browser/extension-install.js")>(
     "../browser/extension-install.js",
@@ -67,7 +70,7 @@ async function setup(platform: "linux" | "darwin") {
   const seeded = await real.installChromeExtensionBootstrap({
     ...f,
     deps,
-    browserProfile: "work",
+    browserProfile: options.legacy ? undefined : "work",
     waitMs: 1000,
     requestStoreInstall: false,
   });
@@ -86,6 +89,7 @@ async function setup(platform: "linux" | "darwin") {
   const configPath = path.join(f.stateDir, "openclaw.json");
   const cfg = {
     browser: {
+      defaultProfile: "other",
       profiles: {
         work: { driver: "extension" as const, cdpPort: 19444 },
         other: { driver: "extension" as const, cdpPort: 19555 },
@@ -101,8 +105,10 @@ async function setup(platform: "linux" | "darwin") {
   const preserved = await Promise.all(preservedPaths.map((file) => fs.readFile(file)));
   const keyInode = (await fs.stat(keyPath)).ino;
   // Real package relocation changes the bundle ID and removes the old entrypoint.
-  const nextPackage = path.join(f.root, "package-v2");
-  await fs.rename(path.join(f.root, "package"), nextPackage);
+  const nextPackage = path.join(f.root, options.relocate === false ? "package" : "package-v2");
+  if (options.relocate !== false) {
+    await fs.rename(path.join(f.root, "package"), nextPackage);
+  }
   const bundledDir = path.join(nextPackage, "extensions", "browser", "chrome-extension");
   const pluginRoot = path.dirname(bundledDir);
   const nativeHostPath = path.join(nextPackage, "native-host-entry.js");
@@ -173,14 +179,19 @@ async function setup(platform: "linux" | "darwin") {
 }
 
 describe.each(["linux", "darwin"] as const)("POSIX bundle migration on %s", (platform) => {
-  it.each(["inspect", "verify", "install"])(
-    "retains validated work selection through selector-free %s",
-    async (action) => {
-      const f = await setup(platform);
+  it.each(
+    [false, true].flatMap((legacy) =>
+      ["inspect", "verify", "install"].map((action) => ({ legacy, action })),
+    ),
+  )(
+    "retains validated work selection through selector-free $action (legacy=$legacy)",
+    async ({ legacy, action }) => {
+      const f = await setup(platform, { legacy });
       const nextId = await predictedId(f.bundledDir, platform);
       expect(nextId).not.toBe(f.oldBundleId);
       const beforeManifest = await fs.readFile(f.manifestPath);
       const beforeLauncher = await fs.readFile(f.manifest.path);
+      expect(beforeLauncher.toString().includes("'--browser-profile' 'work'")).toBe(!legacy);
       await f.run(action);
       expect(f.exit).not.toHaveBeenCalled();
       if (action === "install") {
@@ -236,6 +247,24 @@ describe.each(["linux", "darwin"] as const)("POSIX bundle migration on %s", (pla
     expect(await fs.readFile(selected.path, "utf8")).toContain("'--browser-profile' 'other'");
     await f.assertPairingPreserved();
   });
+  it.each(["inspect", "verify"])(
+    "refuses %s for a different profile without rewriting a healthy registration",
+    async (action) => {
+      const f = await setup(platform, { relocate: false });
+      const before = await Promise.all(
+        [f.manifestPath, f.manifest.path].map((file) => fs.readFile(file)),
+      );
+      await expect(f.run(action, "other")).rejects.toThrow("__exit__:1");
+      expect(boundary.install).not.toHaveBeenCalled();
+      expect(boundary.readToken).not.toHaveBeenCalled();
+      expect(boundary.connect).not.toHaveBeenCalled();
+      expect(f.json).not.toHaveBeenCalled();
+      expect(
+        await Promise.all([f.manifestPath, f.manifest.path].map((file) => fs.readFile(file))),
+      ).toEqual(before);
+      await f.assertPairingPreserved();
+    },
+  );
   it.each([
     "malformed-launcher",
     "foreign-manifest",

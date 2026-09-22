@@ -1,7 +1,11 @@
 import type { BrowserConfig, OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { resolveGatewayPort } from "openclaw/plugin-sdk/gateway-config-runtime";
 import { isLoopbackHost } from "openclaw/plugin-sdk/ssrf-runtime";
-import { resolveBrowserConfig, resolveProfile } from "./config.js";
+import {
+  resolveBrowserConfig,
+  resolveFirstExtensionProfileName,
+  resolveProfile,
+} from "./config.js";
 import { ensureExtensionRelayToken } from "./extension-relay/relay-auth.js";
 
 /** Gateway route for extension pairing that must wake Browser control. */
@@ -14,29 +18,6 @@ type BrowserExtensionPairing = {
 };
 
 type PairingConfig = OpenClawConfig & { browser?: BrowserConfig };
-
-function firstExtensionRelayPort(cfg: PairingConfig, profileName?: string): number {
-  const resolved = resolveBrowserConfig(cfg.browser, cfg);
-  if (profileName) {
-    const profile = resolveProfile(resolved, profileName);
-    if (!profile || profile.driver !== "extension") {
-      throw new Error("Native bootstrap requires an existing extension profile");
-    }
-    return (
-      profile.cdpPort ??
-      resolved.extensionRelayPorts[profileName] ??
-      resolved.extensionRelayDefaultPort
-    );
-  }
-  for (const [name, profile] of Object.entries(resolved.profiles)) {
-    if (profile.driver === "extension") {
-      return (
-        profile.cdpPort ?? resolved.extensionRelayPorts[name] ?? resolved.extensionRelayDefaultPort
-      );
-    }
-  }
-  return resolved.extensionRelayDefaultPort;
-}
 
 /** Resolve a safe Gateway relay URL with the v2-bound route path. */
 function buildGatewayExtensionRelayUrl(raw: string): string {
@@ -75,7 +56,13 @@ export async function buildBrowserExtensionPairing(params: {
   profile?: string;
   ensureToken?: typeof ensureExtensionRelayToken;
 }): Promise<BrowserExtensionPairing> {
-  const relayPort = firstExtensionRelayPort(params.cfg, params.profile);
+  const resolved = resolveBrowserConfig(params.cfg.browser, params.cfg);
+  const profileName = params.profile || resolveFirstExtensionProfileName(resolved);
+  const profile = profileName ? resolveProfile(resolved, profileName) : null;
+  if (params.profile && profile?.driver !== "extension") {
+    throw new Error("Native bootstrap requires an existing extension profile");
+  }
+  const relayPort = profile?.cdpPort ?? resolved.extensionRelayDefaultPort;
   const token = await (params.ensureToken ?? ensureExtensionRelayToken)();
   const gateway = params.gatewayUrl?.trim();
   if (gateway) {

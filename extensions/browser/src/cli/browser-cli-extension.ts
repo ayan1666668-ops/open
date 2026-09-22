@@ -5,7 +5,11 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Command } from "commander";
-import { resolveBrowserConfig } from "../browser/config.js";
+import {
+  resolveBrowserConfig,
+  resolveFirstExtensionProfileName,
+  resolveProfile,
+} from "../browser/config.js";
 import {
   FOUNDATION_CHROME_WEB_STORE_URL,
   normalizeExtensionInstallWaitMs,
@@ -52,23 +56,6 @@ function resolveChromeExtensionDir(pluginRoot?: string): string {
 
 function resolveBrowserPluginRoot(pluginRoot?: string): string {
   return pluginRoot ?? path.resolve(resolveChromeExtensionDir(), "..");
-}
-
-function firstExtensionProfile(
-  resolved: ReturnType<typeof resolveBrowserConfig>,
-): { name: string; relayPort: number } | null {
-  for (const [name, profile] of Object.entries(resolved.profiles)) {
-    if (profile.driver === "extension") {
-      return {
-        name,
-        relayPort:
-          profile.cdpPort ??
-          resolved.extensionRelayPorts[name] ??
-          resolved.extensionRelayDefaultPort,
-      };
-    }
-  }
-  return null;
 }
 
 async function buildPairingString(options: {
@@ -123,8 +110,9 @@ async function buildCdpEndpoint(options: {
   const cfg = getRuntimeConfig();
   const resolved = resolveBrowserConfig(cfg.browser, cfg);
   const token = await ensureExtensionRelayToken();
-  const profile = firstExtensionProfile(resolved);
-  const relayPort = profile?.relayPort ?? resolved.extensionRelayDefaultPort;
+  const profileName = resolveFirstExtensionProfileName(resolved);
+  const profile = profileName ? resolveProfile(resolved, profileName) : null;
+  const relayPort = profile?.cdpPort ?? resolved.extensionRelayDefaultPort;
   const browserUrl = `http://127.0.0.1:${relayPort}`;
   const metadata = {
     browserUrl,

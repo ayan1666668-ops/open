@@ -1,6 +1,10 @@
 import os from "node:os";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
-import { resolveBrowserConfig, resolveProfile } from "./config.js";
+import {
+  resolveBrowserConfig,
+  resolveFirstExtensionProfileName,
+  resolveProfile,
+} from "./config.js";
 import {
   browserExtensionStatus,
   installChromeExtensionBootstrap,
@@ -223,11 +227,11 @@ export async function runBrowserExtensionSetup(
   // Omission is not a request to replace an owned launcher selection. Native
   // adapters have no profile picker; resolve their saved local selection before effects.
   let observed =
-    options.profile === undefined
+    options.profile === undefined || options.action !== "install"
       ? await observeBrowserExtensionSetup({ ...options, action: "inspect" })
       : undefined;
   let windowsProfile: string | undefined;
-  if (observed?.platform === "win32") {
+  if (observed?.platform === "win32" && options.profile === undefined) {
     options = { ...options, signal: windowsSignal };
     options.signal?.throwIfAborted();
     const selection = await resolveWindowsSetupSelection(options, observed, resolved);
@@ -241,11 +245,22 @@ export async function runBrowserExtensionSetup(
   ) {
     throw new Error("Chrome setup cannot recover the saved profile from an unverified native host");
   }
+  const legacyProfileName = resolveFirstExtensionProfileName(resolved);
   const savedProfiles = new Set(
     observed?.registrations
       .filter((entry) => entry.state === "owned")
-      .map((entry) => entry.browserProfile ?? "chrome"),
+      .map((entry) => entry.browserProfile ?? legacyProfileName),
   );
+  if (
+    options.action !== "install" &&
+    observed?.platform !== "win32" &&
+    options.profile !== undefined &&
+    [...savedProfiles].some((profile) => profile !== options.profile)
+  ) {
+    throw new Error(
+      "Chrome setup profile does not match the registered native host; use an explicit install to change it",
+    );
+  }
   if (savedProfiles.size > 1) {
     throw new Error("Chrome setup requires an explicit profile when owned registrations disagree");
   }
