@@ -116,7 +116,7 @@ describe("prepared runtime snapshots", () => {
     expect(changes).toHaveBeenCalledExactlyOnceWith({ all: true, scope: "config" });
   });
 
-  it("publishes a session change when only the authored source snapshot moves", () => {
+  it("leaves a source-only republish out of session changes", () => {
     const changes = vi.fn();
     unregister.push(sessionChanges.subscribe(changes));
     const runtime: OpenClawConfig = { gateway: { port: 18789 } };
@@ -125,16 +125,17 @@ describe("prepared runtime snapshots", () => {
       agents: { defaults: { model } },
     });
     setRuntimeConfigSnapshot(runtime, source("unit-test/model"));
+    expect(changes).toHaveBeenCalledExactlyOnceWith({ all: true, scope: "config" });
     changes.mockClear();
 
-    const revision = getRuntimeConfigSnapshotMetadata()?.revision ?? 0;
+    // A newer canonical source does not change the object consumers read.
     expect(
       setRuntimeConfigSourceSnapshotIfCurrent({
-        expectedRevision: revision,
+        expectedRevision: getRuntimeConfigSnapshotMetadata()?.revision ?? 0,
         sourceConfig: source("unit-test/other"),
       }),
     ).toBe(true);
-    expect(changes).toHaveBeenCalledExactlyOnceWith({ all: true, scope: "config" });
+    expect(changes).not.toHaveBeenCalled();
   });
 
   it.each([

@@ -252,25 +252,14 @@ export function setRuntimeConfigSnapshot(
 }
 
 function publishRuntimeConfigSnapshot(config: OpenClawConfig, sourceConfig?: OpenClawConfig): void {
-  // A reload that resolves to the snapshot already published is not session data changing, and
-  // emitting `all/config` for one costs far more than the reload: every projected session row is
-  // invalidated, the projection epoch moves, and the drain that starts is abandoned by the next
-  // reload, so readers wait on a projection that cannot converge. A watcher that republishes
-  // config every few minutes holds it there indefinitely. Compare what consumers actually read
-  // plus its authored source, so a publication that changed nothing is the only one skipped.
-  const republished =
-    runtimeConfigSnapshot !== null && configSnapshotsMatch(runtimeConfigSnapshot, config);
-  const sourceRepublished =
-    runtimeConfigSourceSnapshot === null
-      ? sourceConfig === undefined
-      : sourceConfig !== undefined &&
-        configSnapshotsMatch(runtimeConfigSourceSnapshot, sourceConfig);
+  // A reload that resolves to the published snapshot is not session data changing.
+  const previous = runtimeConfigSnapshot;
   runtimeConfigSnapshotGeneration += 1;
   clearExecutablePathCache();
   runtimeConfigSnapshot = config;
   runtimeConfigSourceSnapshot = sourceConfig ?? null;
   runtimeConfigSnapshotMetadata = createRuntimeConfigSnapshotMetadata(config, sourceConfig);
-  if (!republished || !sourceRepublished) {
+  if (previous === null || !configSnapshotsMatch(previous, config)) {
     sessionChanges.emit({ all: true, scope: "config" });
   }
 }
