@@ -70,11 +70,11 @@ function createPluginRouteRuntimeClient(
     connId: `plugin-http:${clientIp ?? "unknown"}`,
     ...(clientIp ? { clientIp } : {}),
     ...(authenticatedUserProfile ? { authenticatedUserProfile } : {}),
-    ...(operatorRoleActor || operatorAccessAuthority !== undefined
+    ...(operatorRoleActor || operatorAccessAuthority
       ? {
           internal: {
             ...(operatorRoleActor ? { operatorRoleActor } : {}),
-            ...(operatorAccessAuthority !== undefined ? { operatorAccessAuthority } : {}),
+            ...(operatorAccessAuthority ? { operatorAccessAuthority } : {}),
           },
         }
       : {}),
@@ -435,7 +435,7 @@ export function createGatewayPluginUpgradeHandler(params: {
       } catch (err) {
         log.warn(`plugin http upgrade failed (${route.pluginId ?? "unknown"}): ${String(err)}`);
         releaseAccessListener();
-        socket.destroy();
+        rejectWebSocketUpgrade(socket, { status: 503 });
         return true;
       }
     }
