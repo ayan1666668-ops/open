@@ -2,6 +2,7 @@ import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import type { ExtensionAPI, ExtensionContext } from "openclaw/plugin-sdk/agent-sessions";
 import type { Model } from "openclaw/plugin-sdk/llm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setRuntimeConfigSnapshot } from "../../config/config.js";
 import type { CompactionProvider } from "../../plugins/compaction-provider.js";
 import {
   resetPluginRuntimeStateForTest,
@@ -258,24 +259,38 @@ describe("compaction semantic observer wiring", () => {
     [false, true].flatMap((registeredProvider) =>
       [
         { agentId: undefined, persisted: false },
+        { agentId: undefined, persisted: false, noGlobalModel: true },
         { agentId: "inherited", persisted: true },
         { agentId: "specialist", persisted: true },
         { agentId: "disabled", persisted: true },
         { agentId: "specialist", persisted: false },
         { agentId: "disabled", persisted: false },
-      ].map(({ agentId, persisted }) => ({ registeredProvider, agentId, persisted })),
+      ].map(({ agentId, persisted, noGlobalModel }) => ({
+        registeredProvider,
+        agentId,
+        persisted,
+        noGlobalModel,
+      })),
     ),
   )(
-    "preserves output and owner decisions (registered provider=$registeredProvider, agent=$agentId, persisted=$persisted)",
-    async ({ registeredProvider, agentId, persisted }) => {
+    "preserves output and owner decisions (registered provider=$registeredProvider, agent=$agentId, persisted=$persisted, no global model=$noGlobalModel)",
+    async ({ registeredProvider, agentId, persisted, noGlobalModel }) => {
       const { config, builder, requests } = installDecisionFixture();
+      if (noGlobalModel) {
+        delete config.agents?.defaults?.decisionModel;
+        setRuntimeConfigSnapshot(config);
+      }
       mockSummarizeInStages.mockReset();
       mockSummarizeInStages.mockResolvedValue("The report remains pending.");
+      const registeredInputs: unknown[] = [];
       if (registeredProvider) {
         installCompactionProviderForTest({
           id: "summary-fixture",
           label: "Summary fixture",
-          summarize: async () => "The report remains pending.",
+          summarize: async (input) => {
+            registeredInputs.push(structuredClone(input));
+            return "The report remains pending.";
+          },
         });
       }
       const sessionManager = stubSessionManager(persisted ? agentId : undefined);
@@ -316,22 +331,31 @@ describe("compaction semantic observer wiring", () => {
 
       expect(observed.result).toEqual(baseline.result);
       expect(event.preparation.messagesToSummarize).toEqual(sourceBefore);
+      if (registeredProvider) {
+        expect(registeredInputs).toHaveLength(2);
+        expect(registeredInputs[1]).toEqual(registeredInputs[0]);
+      } else {
+        expect(mockSummarizeInStages).toHaveBeenCalledTimes(2);
+        expect(mockSummarizeInStages.mock.calls[1]?.[0].messages).toEqual(
+          mockSummarizeInStages.mock.calls[0]?.[0].messages,
+        );
+      }
       expect(compactionLogger.info).toHaveBeenCalledWith(
         expect.stringContaining(
-          `Compaction semantic shadow${agentId === "disabled" ? " unavailable" : ""}:`,
+          `Compaction semantic shadow${agentId === "disabled" || noGlobalModel ? " unavailable" : ""}:`,
         ),
       );
       expect(compactionLogger.info).toHaveBeenCalledWith(
         expect.stringContaining(
-          `Compaction semantic fidelity${agentId === "disabled" ? " unavailable" : ""}:`,
+          `Compaction semantic fidelity${agentId === "disabled" || noGlobalModel ? " unavailable" : ""}:`,
         ),
       );
       expect(builder.registry.decisionProviders[0]?.host.inspect(config)).toMatchObject({
-        successCount: agentId === "disabled" ? 0 : 2,
+        successCount: agentId === "disabled" || noGlobalModel ? 0 : 2,
         activeRequests: 0,
       });
       expect(requests).toEqual(
-        agentId === "disabled"
+        agentId === "disabled" || noGlobalModel
           ? []
           : Array.from({ length: 2 }, () => ({
               agentId,
