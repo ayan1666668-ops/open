@@ -4,7 +4,9 @@ import { afterEach, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../../test/helpers/temp-dir.js";
 import { bindCloudWorkerSetupCompletion } from "../../infra/device-pairing-cloud-worker.js";
 import * as sqlite from "../../infra/kysely-sync.js";
+import { StateDatabaseCoordinatorContentionError } from "../../infra/state-database-coordinator.js";
 import { createDeferredCore } from "../../shared/deferred.js";
+import { openClawStateDatabaseCache } from "../../state/openclaw-state-db-cache.js";
 import * as stateReads from "../../state/openclaw-state-db-readonly.js";
 import {
   closeOpenClawStateDatabaseAsync,
@@ -349,4 +351,27 @@ it("rejects queued cleanup before it can revoke a successor owner's credential",
     ownerEpoch: previous.ownerEpoch + 1,
   });
   expect(revoked).toEqual([]);
+});
+
+// A transient native-open refusal must not retire an independently admitted inventory.
+it.each([
+  new StateDatabaseCoordinatorContentionError("state-lifecycle"),
+  Object.assign(new Error("database is locked"), { code: "ERR_SQLITE_ERROR", errcode: 5 }),
+])("keeps worker inventory usable after a transient database open failure: %s", async (error) => {
+  const database = openOpenClawStateDatabase({
+    env: { OPENCLAW_STATE_DIR: tempDirs.make("worker-inventory-contention-") },
+  });
+  const store = await createWorkerEnvironmentStore({ database, now: () => 1_000 });
+  openClawStateDatabaseCache.recordOpenClawStateDatabaseLifecycleOpenError(database.path, error);
+  expect(store.listForReconcile()).toEqual([]);
+  const intent = await store.createIntent({
+    environmentId: "after-contention",
+    providerId: "provider",
+    profileId: "profile",
+    profileSnapshot: { settings: {} },
+    provisionOperationId: "after-contention-provision",
+  });
+  expect(store.get(intent.environmentId)).toEqual(intent);
+  await closeOpenClawStateDatabaseByPathAsync(database.path);
+  expect(() => store.get(intent.environmentId)).toThrow("inventory has closed");
 });
