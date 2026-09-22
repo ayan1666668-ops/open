@@ -13,27 +13,18 @@ import {
 } from "../plugins/runtime/gateway-request-scope.js";
 import type { PluginSubagentRequesterContext } from "../plugins/runtime/subagent-requester-context.js";
 import type { RuntimePluginToolGrant } from "../plugins/runtime/tool-grant.js";
-import { intersectOperatorScopes, roleScopesAllow } from "../shared/operator-scope-compat.js";
+import { intersectOperatorScopes } from "../shared/operator-scope-compat.js";
 import type { RequesterSettleWakeReplay } from "./agent-turn/internal-facade.types.js";
 import { readInProcessAgentRuntimeIdentity } from "./in-process-agent-runtime-identity.js";
 import {
   bindInProcessSubagentResume,
   readInProcessSubagentResume,
 } from "./in-process-subagent-resume.js";
-import { projectOperatorScopesForMethod } from "./method-scopes.js";
 import {
   authorizeGatewaySessionCreation,
   resolveGatewayOperatorRoleActor,
 } from "./operator-role-policy.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
-import {
-  ADMIN_SCOPE,
-  READ_SCOPE,
-  SESSION_READ_SCOPE,
-  SESSION_WRITE_SCOPE,
-  WRITE_SCOPE,
-  isOperatorScope,
-} from "./operator-scopes.js";
 import {
   dispatchGatewayRequestInProcessRaw,
   type GatewayMethodDispatchResponse,
@@ -51,6 +42,7 @@ import type {
   GatewayRequestOptions,
   TrustedAgentToolCaller,
 } from "./server-methods/types.js";
+import { resolveInProcessGatewaySyntheticScopes } from "./server-plugin-in-process-scopes.js";
 import {
   createSyntheticPluginRuntimeClient,
   mergePluginRuntimeClientInternal,
@@ -392,54 +384,15 @@ function resolveInProcessGatewayDispatch(
     scopedSystemScopes && sourceScopes
       ? intersectOperatorScopes(sourceScopes, scopedSystemScopes)
       : (scopedSystemScopes ?? sourceScopes);
-  const requestedSyntheticScopes = (
-    options?.syntheticScopes ??
-    (options?.syntheticScopeMode === "exact"
-      ? (operatorScopes ?? scope?.client?.connect.scopes)
-      : undefined) ?? [WRITE_SCOPE]
-  ).map((requested) => {
-    const broad =
-      requested === SESSION_READ_SCOPE
-        ? READ_SCOPE
-        : requested === SESSION_WRITE_SCOPE
-          ? WRITE_SCOPE
-          : undefined;
-    return options?.syntheticScopeMode === "minimum" &&
-      broad &&
-      operatorScopes &&
-      roleScopesAllow({ role: "operator", requestedScopes: [broad], allowedScopes: operatorScopes })
-      ? broad
-      : requested;
+  const syntheticScopes = resolveInProcessGatewaySyntheticScopes({
+    method,
+    requestParams: params,
+    syntheticScopes: options?.syntheticScopes,
+    syntheticScopeMode: options?.syntheticScopeMode,
+    operatorScopes,
+    scopedClientScopes: scope?.client?.connect.scopes,
+    registeredScope: context.getGatewayMethodRegistry?.().getScope(method),
   });
-  // Narrow by authority, not literal membership: write also authorizes reads
-  // and Talk, including tools called by a synthetic continuation.
-  const registeredScope = context.getGatewayMethodRegistry?.().getScope(method);
-  const syntheticScopes = operatorScopes
-    ? options?.syntheticScopeMode === "exact"
-      ? requestedSyntheticScopes.filter((requestedScope) =>
-          roleScopesAllow({
-            role: "operator",
-            requestedScopes: [requestedScope],
-            allowedScopes: operatorScopes,
-          }),
-        )
-      : projectOperatorScopesForMethod({
-          method,
-          requestParams: params,
-          requestedScopes: requestedSyntheticScopes,
-          allowedScopes: operatorScopes,
-          ...(isOperatorScope(registeredScope) ? { requiredScope: registeredScope } : {}),
-        })
-    : options?.syntheticScopeMode === "exact"
-      ? requestedSyntheticScopes
-      : options?.syntheticScopes;
-  if (
-    options?.syntheticScopeMode !== "exact" &&
-    operatorScopes?.includes(ADMIN_SCOPE) &&
-    !syntheticScopes?.includes(ADMIN_SCOPE)
-  ) {
-    syntheticScopes?.push(ADMIN_SCOPE);
-  }
   const baseSyntheticClient = createSyntheticPluginRuntimeClient({
     ...(operatorAuthority
       ? { authenticatedUserProfile: operatorAuthority.authenticatedUserProfile }
