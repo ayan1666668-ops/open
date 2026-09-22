@@ -43,11 +43,7 @@ level; it does not create another reasoning API or automatically spend the token
 ## Generic dynamics contract
 
 ```typescript
-type DynamicsBoundary =
-  | "isolated"
-  | "artifact-only"
-  | "evidence-only"
-  | "summary-only";
+type DynamicsBoundary = "isolated" | "artifact-only" | "evidence-only" | "summary-only";
 
 type DynamicsOptions = {
   boundary: DynamicsBoundary;
