@@ -174,6 +174,7 @@ describeWithLanNodePairingServer("gateway ssh-verified node pairing auto-approve
         // until the pending handshake and retry-hint assertions have finished.
         const probe = createDeferred<NodeIdentityProbeResult>();
         probeMock.mockImplementation(() => probe.promise);
+        let bodyFailure: { error: unknown } | undefined;
         try {
           const first = await connectNode();
           expect(first.ok).toBe(false);
@@ -215,14 +216,27 @@ describeWithLanNodePairingServer("gateway ssh-verified node pairing auto-approve
           const record = await getPairedDevice(loaded.identity.deviceId);
           expect(record?.nodeSurface).toBeDefined();
           expect(record?.pendingNodeSurface).toBeUndefined();
+        } catch (error) {
+          bodyFailure = { error };
+          throw error;
         } finally {
           // Release a failed assertion's probe and join its full approval tail
           // before the next case resets configuration or pairing state.
           probe.resolve({ status: "timeout" });
-          await waitFor(
-            async () => (getActiveGatewayRootWorkCount() === 0 ? true : undefined),
-            "SSH pairing work completion",
-          );
+          try {
+            await waitFor(
+              async () => (getActiveGatewayRootWorkCount() === 0 ? true : undefined),
+              "SSH pairing work completion",
+            );
+          } catch (cleanupError) {
+            if (bodyFailure) {
+              throw new AggregateError(
+                [bodyFailure.error, cleanupError],
+                "SSH pairing fixture and cleanup failed",
+              );
+            }
+            throw cleanupError;
+          }
         }
       },
     });
