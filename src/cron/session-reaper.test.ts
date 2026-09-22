@@ -375,7 +375,11 @@ describe("sweepCronRunSessions", () => {
         storePath: exactStorePath,
         sessionKey: mainKey,
       },
-      { sessionId: "main-run", updatedAt: now - 1 * 3_600_000 },
+      {
+        sessionId: "main-run",
+        updatedAt: now - 1 * 3_600_000,
+        skillsSnapshot: { prompt: "foreground prompt", skills: [] },
+      },
     );
     await replaceSessionEntry(
       {
@@ -420,6 +424,21 @@ describe("sweepCronRunSessions", () => {
       }),
     ).toEqual({ swept: true, pruned: 0 });
     const workersCreated = historyPages.getSnapshot().workersCreated;
+    let foregroundRead:
+      | ReturnType<typeof sessionEntryReader.readSessionEntriesFromStoreInWorker>
+      | undefined;
+    if (!process.versions.bun) {
+      const closeResources = historyPages.closeResources.bind(historyPages);
+      vi.spyOn(historyPages, "closeResources").mockImplementationOnce((key) => {
+        const closing = closeResources(key);
+        foregroundRead = sessionEntryReader.readSessionEntriesFromStoreInWorker({
+          agentId: "main",
+          storePath: exactStorePath,
+          sessionKeys: [mainKey],
+        });
+        return closing;
+      });
+    }
     const result = await sweepCronRunSessionsImpl({
       agentId: "ops",
       sessionStorePath: exactStorePath,
@@ -429,6 +448,18 @@ describe("sweepCronRunSessions", () => {
 
     expect(result).toEqual({ swept: true, pruned: 1 });
     if (!process.versions.bun) {
+      expect(foregroundRead).toBeDefined();
+      expect(await foregroundRead).toMatchObject({
+        entries: [
+          {
+            sessionKey: mainKey,
+            entry: {
+              sessionId: "main-run",
+              skillsSnapshot: { prompt: "foreground prompt", skills: [] },
+            },
+          },
+        ],
+      });
       expect(historyPages.getSnapshot().workersCreated).toBe(workersCreated);
     }
     expect(
