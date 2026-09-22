@@ -1,9 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
+import type { callGateway } from "../../../gateway/call.js";
 import { withPluginRuntimeGatewayRequestScope } from "../../../plugins/runtime/gateway-request-scope.js";
 import {
   cleanupProvisionalSession,
   terminateAcceptedCollectorRun,
 } from "./subagent-spawn-cleanup.js";
+
+// Mirrors the module-local GatewayCall parameter. Declaring it keeps
+// callGateway.mock.calls a one-element tuple so request assertions can
+// destructure it instead of indexing an empty tuple.
+type GatewayRequest = Parameters<typeof callGateway>[0];
 
 function sessionChangedError(): Error {
   return Object.assign(new Error("session changed"), {
@@ -63,7 +69,11 @@ describe("subagent spawn cleanup identity", () => {
   // cleanup, termination makes one bounded attempt and must not delete a
   // successor-owned session or retry.
   it("makes one bounded attempt and deletes nothing once cleanup ownership has flipped", async () => {
-    const callGateway = vi.fn(async () => ({ ok: true, aborted: false, runIds: [] }));
+    const callGateway = vi.fn(async (_request: GatewayRequest) => ({
+      ok: true,
+      aborted: false,
+      runIds: [],
+    }));
 
     await terminateAcceptedCollectorRun({
       childSessionKey: "agent:main:subagent:child",
@@ -201,6 +211,19 @@ describe("subagent spawn cleanup identity", () => {
       .mockResolvedValueOnce({ ok: true, aborted: true, runIds: ["different-run"] })
       .mockRejectedValueOnce(sessionChangedError());
 
+    // BELLED ROPE for an absorb that reverts our return contract. Upstream declares
+    // terminateAcceptedCollectorRun as Promise<void> and this shared case asserted
+    // toBeUndefined(). Our fork returns Promise<boolean> per Ronan's ruling on the
+    // operator-authority merge, and that verdict is load-bearing: it is consumed by
+    // subagent-spawn-rollback, subagent-registry-sweep-kill (both call sites), and
+    // returned by subagent-registry. If this assertion has to go back to
+    // toBeUndefined(), the boolean contract was dropped and those consumers are
+    // silently reading undefined.
+    //
+    // true is the truthful verdict here, not a success claim about deletion: the
+    // abort confirmed a DIFFERENT run, so deletion was attempted and refused with
+    // session-changed, which proves a successor owns the session. The accepted run
+    // is therefore no longer ours to clean up.
     await expect(
       terminateAcceptedCollectorRun({
         childSessionKey: "agent:main:subagent:child",
@@ -209,8 +232,10 @@ describe("subagent spawn cleanup identity", () => {
         expectedLifecycleRevision: "session-revision",
         callGateway,
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(true);
 
+    // Unchanged and the point of the case: bounded at exactly one abort plus one
+    // guarded deletion, and no successor-owned session was deleted.
     expect(callGateway).toHaveBeenCalledTimes(2);
   });
 });
