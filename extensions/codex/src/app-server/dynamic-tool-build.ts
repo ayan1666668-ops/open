@@ -155,6 +155,7 @@ type DynamicToolBuildParams = {
   >[0]["resolve"];
   cronCreatorAuthorityUnavailableReason?: OpenClawCodingToolsOptions["cronCreatorAuthorityUnavailableReason"];
   forceHeartbeatTool?: boolean;
+  /** Build the durable message declaration superset, not per-turn execution authority. */
   ignoreDisableMessageTool?: boolean;
   ignoreRuntimePlan?: boolean;
   /** Host fact resolver; injectable only for focused plugin contract tests. */
@@ -225,8 +226,15 @@ export async function buildDynamicTools(
   input: DynamicToolBuildParams,
 ): Promise<OpenClawDynamicTool[]> {
   const { params } = input;
+  // Delivery ownership can change when a native child completes. Keep the
+  // registered message declaration stable across those turns; the separately
+  // built runtime tools still enforce the actual delivery and deny policy.
   const messagePolicyParams = input.ignoreDisableMessageTool
-    ? { ...params, disableMessageTool: false }
+    ? {
+        ...params,
+        disableMessageTool: false,
+        sourceReplyDeliveryMode: "message_tool_only" as const,
+      }
     : params;
   const toolRunContext = buildEmbeddedAttemptToolRunContext({
     ...params,
