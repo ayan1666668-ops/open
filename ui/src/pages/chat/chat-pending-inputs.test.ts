@@ -80,56 +80,25 @@ afterEach(() => {
 });
 
 describe("server-owned pending input display", () => {
-  it.each([
-    {
-      sourceTool: "main_session_restart_recovery",
-      label: "System · restart recovery",
-      startsTurn: true,
-    },
-    {
-      sourceTool: "cli_harness_context",
-      label: "System · injected context",
-      startsTurn: undefined,
-    },
-    { sourceTool: "unknown_system_source", label: "System", startsTurn: true },
-  ])(
-    "projects pending $sourceTool with the history notice contract",
-    ({ sourceTool, label, startsTurn }) => {
-      const items = buildPendingInputItems([
+  it.each(["held", "failed", "waiting-reconnect"] as const)(
+    "describes interrupted input with a %s browser owner accurately",
+    (sendState) => {
+      const items = buildPendingInputItems([{ ...input, state: "interrupted" }], undefined, [
         {
-          ...input,
-          state: "queued",
-          message: {
-            role: "user",
-            timestamp: 100,
-            content: "[System] Resume safely.",
-            provenance: { kind: "internal_system", sourceTool },
-          },
+          id: "retained-input",
+          text: "Retained input",
+          createdAt: 1,
+          sendRunId: input.runId,
+          sendState,
         },
       ]);
-      expect(items).toEqual([expect.objectContaining({ kind: "notice", label })]);
-      expect(items[0]).toHaveProperty("timestamp", 100);
-      expect(items[0]).toEqual(expect.not.objectContaining({ kind: "message" }));
-      if (items[0]?.kind === "notice") {
-        expect(items[0].startsTurn).toBe(startsTurn);
-        expect(items[0].collapsedBody).toBe(
-          sourceTool === "cli_harness_context" ? true : undefined,
-        );
-        expect(items[0].text).toBe(
-          sourceTool === "main_session_restart_recovery"
-            ? "Turn interrupted by a gateway restart — asked the agent to resume and finish the response."
-            : "Resume safely.",
-        );
-      }
+      expect(items.filter((item) => item.kind === "notice").map((item) => item.text)).toEqual([
+        sendState === "waiting-reconnect"
+          ? "Interrupted by a Gateway restart. This saved message will resume when the session is ready."
+          : "Interrupted before the agent started it. It will not run automatically; copy it and send again.",
+      ]);
     },
   );
-
-  it("does not turn a user's System prefix into system provenance", () => {
-    const message = { role: "user", content: "[System] My quoted example" };
-    expect(buildPendingInputItems([{ ...input, state: "queued", message }])).toEqual([
-      expect.objectContaining({ kind: "message", message }),
-    ]);
-  });
 
   it("shows a durable receipt while an accepted input waits for workspace sync", () => {
     const queued = { ...input, state: "queued" as const };
@@ -891,56 +860,6 @@ describe("server-owned pending input display", () => {
       }
     },
   );
-
-  it.each([false, true])("promotes pending input exactly once (system=%s)", (system) => {
-    const clients = [{ id: "cli", mode: "cli", displayName: "Release helper" }];
-    const promoted = {
-      role: "user",
-      content: "Keep my accepted input",
-      ...(system
-        ? { provenance: { kind: "internal_system", sourceTool: "main_session_restart_recovery" } }
-        : {}),
-      __openclaw: {
-        id: "input-1",
-        seq: 2,
-        idempotencyKey: "run-queued:user",
-        transport: { clients },
-      },
-    };
-    const items = buildChatItems({
-      paneId: "promoted-pane",
-      sessionKey,
-      messages: [promoted],
-      pendingInputs: page.items.map((entry) => ({
-        ...entry,
-        message: {
-          ...promoted,
-          __openclaw: { id: `pending:${entry.id}`, transport: { clients } },
-        },
-      })),
-      queue: [],
-      toolMessages: [],
-      streamSegments: [],
-      stream: null,
-      streamStartedAt: null,
-      showToolCalls: true,
-    });
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject(
-      system
-        ? {
-            kind: "notice",
-            label: "System · restart recovery",
-            boundaryId: "send:run-queued",
-          }
-        : {
-            kind: "group",
-            role: "user",
-            sourceClients: clients,
-            messages: [{ message: promoted }],
-          },
-    );
-  });
 
   it("keeps unconsumed input in order without a generic queue notice", () => {
     const earlier = { role: "assistant", content: "Earlier reply", timestamp: 50 };
