@@ -5,7 +5,11 @@ import path from "node:path";
 import { detectAndLoadAgentHarnessPromptImages } from "openclaw/plugin-sdk/agent-harness-runtime";
 import type { MsgContext } from "openclaw/plugin-sdk/reply-runtime";
 import { describe, expect, it, vi } from "vitest";
-import { readRemoteMediaBufferSpy, setNextSavedMediaPath } from "./bot.media.e2e.test-harness.js";
+import {
+  readRemoteMediaBufferSpy,
+  setNextSavedMediaPath,
+  telegramMediaHarnessGetFileSpy,
+} from "./bot.media.e2e.test-harness.js";
 import {
   TELEGRAM_TEST_TIMINGS,
   createBotHandlerWithOptions,
@@ -265,6 +269,103 @@ describe("telegram reply media source identity", () => {
       } finally {
         setTimeoutSpy.mockRestore();
         clearTimeoutSpy.mockRestore();
+        fetchSpy.mockRestore();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "does not re-fetch media the bot itself sent when an external reply references it",
+    async () => {
+      const runtimeError = vi.fn();
+      const { handler, replySpy } = await createBotHandlerWithOptions({ runtimeError });
+      const fetchSpy = mockTelegramPngDownload();
+
+      try {
+        await handler({
+          message: {
+            message_id: 1401,
+            chat: { id: 1234, type: "private" as const },
+            from: { id: 777, is_bot: false, first_name: "Ada" },
+            text: "what about this?",
+            date: 1736380800,
+            external_reply: {
+              message_id: 1400,
+              chat: { id: -10022, type: "supergroup" as const, title: "Source" },
+              from: { id: 999, is_bot: true, first_name: "OpenClaw" },
+              origin: {
+                type: "user" as const,
+                sender_user: { id: 999, is_bot: true, first_name: "OpenClaw" },
+                date: 1736380700,
+              },
+              photo: [{ file_id: "self-external", file_unique_id: "self-external-unique" }],
+            },
+          },
+          me,
+          getFile: async () => ({ file_path: "photos/self-external.png" }),
+        });
+
+        expect(replySpy).toHaveBeenCalledTimes(1);
+        // The self-authored external reply is dropped before hydration, so the
+        // bot's own output is never re-fetched or re-ingested as a provider image.
+        expect(telegramMediaHarnessGetFileSpy).not.toHaveBeenCalled();
+        const ctx = replySpy.mock.calls[0]?.[0] as MsgContext | undefined;
+        if (!ctx) {
+          throw new Error("expected one reply call");
+        }
+        expect(await loadProviderImages(ctx)).toEqual({ payloads: 0, unique: 0 });
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "dedupes a same-source external reply against the current media",
+    async () => {
+      const runtimeError = vi.fn();
+      const { handler, replySpy } = await createBotHandlerWithOptions({ runtimeError });
+      const fetchSpy = mockTelegramPngDownload();
+      const currentPath = stageInboundPng("shared-source.png");
+
+      try {
+        setNextSavedMediaPath({ path: currentPath, id: "shared-source.png" });
+        await handler({
+          message: {
+            message_id: 1501,
+            chat: { id: 1234, type: "private" as const },
+            from: { id: 777, is_bot: false, first_name: "Ada" },
+            photo: [{ file_id: "current-file", file_unique_id: "shared-telegram-source" }],
+            date: 1736380800,
+            external_reply: {
+              message_id: 1500,
+              chat: { id: -10022, type: "supergroup" as const, title: "Source" },
+              from: { id: 22, is_bot: false, first_name: "Ada" },
+              origin: {
+                type: "user" as const,
+                sender_user: { id: 22, is_bot: false, first_name: "Ada" },
+                date: 1736380700,
+              },
+              photo: [{ file_id: "external-file", file_unique_id: "shared-telegram-source" }],
+            },
+          },
+          me,
+          getFile: async () => ({ file_path: "photos/shared.png" }),
+        });
+
+        expect(replySpy).toHaveBeenCalledTimes(1);
+        // The external copy shares the current media's file_unique_id, so it is
+        // dropped instead of hydrated under a second path (origin is a different
+        // user, so this isolates the dedupe check from the self-authored check).
+        expect(telegramMediaHarnessGetFileSpy).not.toHaveBeenCalled();
+        const ctx = replySpy.mock.calls[0]?.[0] as MsgContext | undefined;
+        if (!ctx) {
+          throw new Error("expected one reply call");
+        }
+        expect(await loadProviderImages(ctx)).toEqual({ payloads: 1, unique: 1 });
+      } finally {
         fetchSpy.mockRestore();
       }
     },

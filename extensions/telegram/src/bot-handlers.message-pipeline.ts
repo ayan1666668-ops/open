@@ -340,12 +340,25 @@ export function createTelegramMessagePipeline({
     // An explicit external reply belongs to this turn, not to the current chat's cache.
     const externalReply =
       chain.length === 0 && !ctx.message.reply_to_message ? ctx.message.external_reply : undefined;
-    const externalFileId = resolveTelegramPrimaryMedia(externalReply)?.fileRef.file_id;
+    const externalPrimaryMedia = resolveTelegramPrimaryMedia(externalReply);
+    const externalFileId = externalPrimaryMedia?.fileRef.file_id;
+    const externalFileUniqueId = externalPrimaryMedia?.fileRef.file_unique_id;
     const externalTarget = externalFileId ? describeReplyTarget(ctx.message) : null;
+    // An external reply carries its author in `origin`, not `from`; drop self-authored
+    // media the same way the chain does so the bot's own output is not re-ingested.
+    const externalAuthor =
+      externalReply && externalReply.origin.type === "user"
+        ? externalReply.origin.sender_user
+        : undefined;
+    const externalFromCurrentBot =
+      externalAuthor != null &&
+      (ctx.me?.id != null ? externalAuthor.id === ctx.me.id : externalAuthor.is_bot);
     if (
       externalReply &&
       externalFileId &&
       externalTarget &&
+      !externalFromCurrentBot &&
+      (!externalFileUniqueId || !seenFileUniqueIds.has(externalFileUniqueId)) &&
       (await shouldHydrateMedia(externalTarget, 0))
     ) {
       const mediaRef = await hydrateMedia(externalReply, externalFileId);
