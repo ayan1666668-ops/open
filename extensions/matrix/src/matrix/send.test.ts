@@ -42,10 +42,6 @@ const mediaKindFromMimeMock = vi.fn((_mime: string | null | undefined) => "image
 const isVoiceCompatibleAudioMock = vi.fn(
   (_options: { contentType?: string | null; fileName?: string | null }) => false,
 );
-const resolveTextChunkLimitMock = vi.fn<
-  (cfg: unknown, channel: unknown, accountId?: unknown) => number
->(() => 4000);
-const resolveMarkdownTableModeMock = vi.fn((_params?: unknown) => "code");
 const chunkMarkdownTextWithModeMock = vi.fn<
   (text: string, limit?: number, mode?: unknown) => string[]
 >((text) => (text ? [text] : []));
@@ -59,6 +55,21 @@ vi.mock("openclaw/plugin-sdk/plugin-config-runtime", async () => {
     requireRuntimeConfig: vi.fn((cfg: unknown) => cfg ?? loadConfigMock()),
   };
 });
+
+const { resolveMarkdownTableModeMock, resolveTextChunkLimitMock } = vi.hoisted(() => ({
+  resolveMarkdownTableModeMock: vi.fn((_params?: unknown) => "code"),
+  resolveTextChunkLimitMock: vi.fn<(cfg: unknown, channel: unknown, accountId?: unknown) => number>(
+    () => 4000,
+  ),
+}));
+
+vi.mock("openclaw/plugin-sdk/config-runtime", () => ({
+  resolveMarkdownTableMode: resolveMarkdownTableModeMock,
+}));
+
+vi.mock("openclaw/plugin-sdk/reply-chunking", () => ({
+  resolveTextChunkLimit: resolveTextChunkLimitMock,
+}));
 
 vi.mock("./outbound-media-runtime.js", () => ({
   loadOutboundMediaFromUrl: loadOutboundMediaFromUrlMock,
