@@ -4,6 +4,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { normalizeLowercaseStringOrEmpty } from "openclaw/plugin-sdk/string-coerce-runtime";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import type { CloseTrackedCdpTargetResult } from "./cdp.helpers.js";
 import type { ResolvedBrowserConfig } from "./config.js";
 import { BROWSER_TAB_UNREACHABLE_RETIRE_MS } from "./constants.js";
@@ -16,6 +17,8 @@ import {
   sameBrowserSessionTabRecord,
   updateBrowserSessionTab,
 } from "./session-tab-store.js";
+
+const log = createSubsystemLogger("browser").child("service").child("session-tabs");
 
 type DurableTab = BrowserSessionTabRecord & {
   kind: "durable";
@@ -45,7 +48,98 @@ export type CloseParams = {
     | null
     | Promise<ResolvedBrowserConfig | null>;
   onWarn?: (message: string) => void;
+  onDebug?: (message: string) => void;
 };
+
+/**
+ * The deferral a tracked tab row already reported. A stopped managed browser can
+ * defer cleanup for the whole 24h retire window while the sweep ticks every few
+ * minutes, so the same unreachable state must warn once per row rather than once
+ * per sweep. Row identity is part of the key so a retracked or re-owned tab can
+ * report again. Owned by `globalThis` because the Browser plugin can run from
+ * more than one bundle instance inside the same Gateway process.
+ */
+type DeferredTabDiagnostic = {
+  reason: string;
+  trackedAt: number;
+  profileFingerprint: string;
+  browserInstanceFingerprint: string;
+};
+
+const deferredTabDiagnosticsSymbol = Symbol.for(
+  "openclaw.browser.session-tabs.deferred-diagnostics",
+);
+
+/** Defensive bound: live deferrals are already forgotten as their rows settle. */
+const MAX_DEFERRED_TAB_DIAGNOSTICS = 512;
+
+function deferredTabDiagnostics(): Map<string, DeferredTabDiagnostic> {
+  // SAFETY: symbol-keyed extension only adds our own process-local map; the Browser plugin can run from multiple bundle instances sharing globalThis.
+  const state = globalThis as typeof globalThis & {
+    [deferredTabDiagnosticsSymbol]?: Map<string, DeferredTabDiagnostic>;
+  };
+  state[deferredTabDiagnosticsSymbol] ??= new Map();
+  return state[deferredTabDiagnosticsSymbol];
+}
+
+function sameDeferredTabRow(previous: DeferredTabDiagnostic, tab: DurableTab): boolean {
+  return (
+    previous.trackedAt === tab.trackedAt &&
+    previous.profileFingerprint === tab.profileFingerprint &&
+    previous.browserInstanceFingerprint === tab.browserInstanceFingerprint
+  );
+}
+
+/** Records a deferral, returning true when the row has not reported it yet. */
+function recordDeferredTabDiagnostic(tab: DurableTab, reason: string): boolean {
+  const diagnostics = deferredTabDiagnostics();
+  const previous = diagnostics.get(tab.storageKey);
+  if (previous?.reason === reason && sameDeferredTabRow(previous, tab)) {
+    return false;
+  }
+  // Re-insert so the least recently reported deferral is evicted first.
+  diagnostics.delete(tab.storageKey);
+  diagnostics.set(tab.storageKey, {
+    reason,
+    trackedAt: tab.trackedAt,
+    profileFingerprint: tab.profileFingerprint,
+    browserInstanceFingerprint: tab.browserInstanceFingerprint,
+  });
+  if (diagnostics.size > MAX_DEFERRED_TAB_DIAGNOSTICS) {
+    const oldest = diagnostics.keys().next();
+    if (!oldest.done) {
+      diagnostics.delete(oldest.value);
+    }
+  }
+  return true;
+}
+
+/** Lets a settled row report the next outage instead of staying muted forever. */
+function forgetDeferredTabDiagnostic(tab: DurableTab): void {
+  const diagnostics = deferredTabDiagnostics();
+  const previous = diagnostics.get(tab.storageKey);
+  if (previous && sameDeferredTabRow(previous, tab)) {
+    diagnostics.delete(tab.storageKey);
+  }
+}
+
+/**
+ * Reports a tab whose cleanup could not complete yet. The first deferral of a row
+ * warns; later identical deferrals stay observable at debug level so a stopped
+ * browser cannot flood the warning stream for the full retire window.
+ */
+function reportDeferredTab(params: CloseParams, tab: DurableTab, reason: string): void {
+  const message = `deferred tracked browser tab ${tab.nativeTargetId}: ${reason}`;
+  if (recordDeferredTabDiagnostic(tab, reason)) {
+    params.onWarn?.(message);
+    return;
+  }
+  if (params.onDebug) {
+    params.onDebug(message);
+    return;
+  }
+  log.debug(message);
+}
 
 export function isIgnorableTabCloseError(error: unknown): boolean {
   const message = normalizeLowercaseStringOrEmpty(String(error));
@@ -101,6 +195,7 @@ function ownsCleanupAttempt(tab: DurableTab): boolean {
 }
 
 function deleteClaimedTab(tab: DurableTab, onWarn?: (message: string) => void): void {
+  forgetDeferredTabDiagnostic(tab);
   try {
     if (tab.dashboard?.state === "stopping") {
       updateBrowserSessionTab(tab.storageKey, (current) => {
@@ -215,9 +310,7 @@ export async function closeDurableTab(
   }
   if (outcome.status === "unavailable") {
     if (outcome.reason === "extension-relay-unavailable") {
-      params.onWarn?.(
-        `deferred tracked browser tab ${tab.nativeTargetId}: extension relay runtime unavailable`,
-      );
+      reportDeferredTab(params, tab, "extension relay runtime unavailable");
       return 0;
     }
     // Expire unreachable ordinary tabs before they fill the bounded tracking store.
@@ -229,7 +322,7 @@ export async function closeDurableTab(
       deleteClaimedTab(tab, params.onWarn);
       return 0;
     }
-    params.onWarn?.(`deferred tracked browser tab ${tab.nativeTargetId}: ${outcome.reason}`);
+    reportDeferredTab(params, tab, outcome.reason);
     return 0;
   }
   if (outcome.status === "ownership-mismatch") {

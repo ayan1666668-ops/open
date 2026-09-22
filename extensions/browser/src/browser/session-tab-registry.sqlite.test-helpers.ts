@@ -49,6 +49,7 @@ type CleanupParams = {
   ) => Promise<CloseTrackedCdpTargetResult>;
   getResolvedBrowserConfig?: () => ResolvedBrowserConfig | null;
   onWarn?: (message: string) => void;
+  onDebug?: (message: string) => void;
 };
 
 export type RegistryModule = {
