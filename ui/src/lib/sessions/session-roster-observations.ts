@@ -89,7 +89,7 @@ export function createSessionRosterObservations(
   const matchesTarget = (row: GatewaySessionRow, target: SessionRowTarget) => {
     const parsedAgent = parseAgentSessionKey(row.key)?.agentId;
     return (
-      identity(row, target.agentId) !== null &&
+      Boolean(row.sessionId?.trim()) &&
       areUiSessionKeysEquivalent(row.key, target.key) &&
       owner(row, target.agentId) === normalizeAgentId(target.agentId) &&
       (!parsedAgent ||
