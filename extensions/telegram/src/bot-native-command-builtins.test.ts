@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
+import type { SessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   executorTestMocks,
@@ -175,41 +176,132 @@ describe("Telegram native command built-ins", () => {
     expect(menuRecord.catalog).toEqual(runtimeCatalog);
   });
 
-  it("inherits the parent session model when building DM thread native argument menus", async () => {
-    const cfg: OpenClawConfig = {};
-    sessionMocks.sessionStoreEntries.mockReturnValue({
-      "agent:main:main": {
-        providerOverride: "anthropic",
-        modelOverride: "claude-opus-4-7",
-        modelOverrideSource: "user",
-        updatedAt: 0,
+  it.each<{
+    name: string;
+    topic: Partial<SessionEntry>;
+    channelModel?: string;
+    channelModels?: Record<string, string>;
+    model: string;
+    provider: string;
+    thinking: string;
+  }>([
+    {
+      name: "channel-mapped",
+      topic: {},
+      channelModel: "openai/gpt-5.4",
+      provider: "openai",
+      model: "gpt-5.4",
+      thinking: "medium",
+    },
+    {
+      name: "channel alias with historical metadata",
+      topic: { modelProvider: "anthropic", model: "claude-opus-4-7" },
+      channelModel: "topic-model",
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      thinking: "medium",
+    },
+    {
+      name: "prefixed channel-mapped",
+      topic: {},
+      channelModels: { "telegram:100": "topic-model" },
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      thinking: "medium",
+    },
+    {
+      name: "prefixed mapping ahead of bare and wildcard mappings",
+      topic: {},
+      channelModels: {
+        "telegram:100": "topic-model",
+        "100": "openai/gpt-5.4",
+        "*": "openai/gpt-5.5",
       },
-    });
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      thinking: "medium",
+    },
+    { name: "fresh", topic: {}, provider: "openai", model: "gpt-5.5", thinking: "low" },
+    {
+      name: "previously used",
+      topic: { modelProvider: "anthropic", model: "claude-opus-4-7" },
+      provider: "openai",
+      model: "gpt-5.5",
+      thinking: "low",
+    },
+    {
+      name: "explicitly pinned",
+      channelModel: "openai/gpt-5.4",
+      topic: { providerOverride: "anthropic", modelOverride: "claude-opus-4-7" },
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      thinking: "high",
+    },
+    {
+      name: "explicitly parented",
+      channelModel: "openai/gpt-5.4",
+      topic: { parentSessionKey: "agent:main:main" },
+      provider: "anthropic",
+      model: "claude-opus-4-7",
+      thinking: "high",
+    },
+  ])(
+    "uses the effective model for a $name DM topic menu",
+    async ({ topic, provider, model, thinking, channelModel, channelModels }) => {
+      const cfg: OpenClawConfig = {
+        agents: {
+          defaults: {
+            model: "openai/gpt-5.5",
+            models: {
+              "openai/gpt-5.5": { params: { thinking: "low" } },
+              "openai/gpt-5.4": { params: { thinking: "medium" } },
+              "anthropic/claude-sonnet-4-6": {
+                alias: "topic-model",
+                params: { thinking: "medium" },
+              },
+              "anthropic/claude-opus-4-7": { params: { thinking: "high" } },
+            },
+          },
+        },
+      };
+      if (channelModels) {
+        cfg.channels = { modelByChannel: { telegram: channelModels } };
+      } else if (channelModel) {
+        cfg.channels = { modelByChannel: { telegram: { "100": channelModel } } };
+      }
+      sessionMocks.sessionStoreEntries.mockReturnValue({
+        "agent:main:main": {
+          providerOverride: "anthropic",
+          modelOverride: "claude-opus-4-7",
+          modelOverrideSource: "user",
+          updatedAt: 0,
+        },
+        "agent:main:main:thread:100:77": { ...topic, updatedAt: 1 },
+      });
 
-    const { handler, sendMessage } = registerAndResolveCommandHandler({
-      commandName: "think",
-      cfg,
-      allowFrom: ["*"],
-    });
-    await handler(createTelegramPrivateCommandContext({ threadId: 77 }));
+      const { handler, sendMessage } = registerAndResolveCommandHandler({
+        commandName: "think",
+        cfg,
+        allowFrom: ["*"],
+      });
+      await handler(
+        createTelegramPrivateCommandContext({ threadId: 77, botHasTopicsEnabled: true }),
+      );
 
-    const menuCall = commandAuthMocks.resolveCommandArgMenu.mock.calls.find(
-      ([params]) => params.command.key === "think" && params.provider === "anthropic",
-    )?.[0];
-    expectRecordFields(
-      menuCall,
-      { provider: "anthropic", model: "claude-opus-4-7" },
-      "thread thinking menu call",
-    );
-    expectSendMessageCall({
-      sendMessage,
-      chatId: 100,
-      textIncludes: "Choose level for /think.",
-      requireReplyMarkup: true,
-      label: "thread thinking menu",
-    });
-    expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
-  });
+      const menuCall = commandAuthMocks.resolveCommandArgMenu.mock.calls.find(
+        ([params]) => params.command.key === "think",
+      )?.[0];
+      expectRecordFields(menuCall, { provider, model }, "thread thinking menu call");
+      expectSendMessageCall({
+        sendMessage,
+        chatId: 100,
+        textIncludes: `Current thinking level: ${thinking}.\nChoose level for /think.`,
+        requireReplyMarkup: true,
+        label: "thread thinking menu",
+      });
+      expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+    },
+  );
 
   it("uses the configured default model instead of temporary auto fallback overrides", async () => {
     const cfg = {
@@ -256,63 +348,72 @@ describe("Telegram native command built-ins", () => {
     expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
   });
 
-  it("uses configured model defaults instead of runtime auth metadata for the fast menu", async () => {
-    const cfg = {
-      agents: {
-        defaults: {
-          model: { primary: "openai/gpt-5.5" },
-          models: {
-            "openai/gpt-5.5": {
-              params: { fastMode: "auto", fastAutoOnSeconds: 30 },
+  it.each([
+    { threadId: undefined, model: "gpt-5.5" },
+    { threadId: 77, model: "gpt-5.4" },
+  ])(
+    "uses the configured $model default instead of runtime metadata for the fast menu",
+    async ({ threadId, model }) => {
+      const cfg = {
+        agents: {
+          defaults: {
+            model: { primary: "openai/gpt-5.5" },
+            models: {
+              [`openai/${model}`]: {
+                params: { fastMode: "auto", fastAutoOnSeconds: 30 },
+              },
             },
           },
         },
-      },
-    } as OpenClawConfig;
-    sessionMocks.sessionStoreEntries.mockReturnValue({
-      "agent:main:main": {
-        modelProvider: "openai-codex",
-        model: "gpt-5.5",
-        updatedAt: 0,
-      },
-    });
+      } as OpenClawConfig;
+      if (threadId) {
+        cfg.channels = { modelByChannel: { telegram: { "100": "openai/gpt-5.4" } } };
+      }
+      sessionMocks.sessionStoreEntries.mockReturnValue({
+        "agent:main:main": {
+          modelProvider: "openai-codex",
+          model: "gpt-5.5",
+          updatedAt: 0,
+        },
+      });
 
-    const { handler, sendMessage } = registerAndResolveCommandHandler({
-      commandName: "fast",
-      cfg,
-      allowFrom: ["*"],
-    });
-    await handler(createTelegramPrivateCommandContext());
+      const { handler, sendMessage } = registerAndResolveCommandHandler({
+        commandName: "fast",
+        cfg,
+        allowFrom: ["*"],
+      });
+      await handler(
+        createTelegramPrivateCommandContext({ threadId, botHasTopicsEnabled: Boolean(threadId) }),
+      );
 
-    const menuCall = commandAuthMocks.resolveCommandArgMenu.mock.calls.find(
-      ([params]) => params.command.key === "fast" && params.cfg === cfg,
-    )?.[0];
-    expectRecordFields(menuCall, { cfg }, "fast menu call");
-    expect(
-      commandAuthMocks.resolveCommandArgMenu.mock.calls.some(
-        ([params]) =>
-          params.command.key === "fast" &&
-          params.provider === "openai" &&
-          params.model === "gpt-5.5",
-      ),
-    ).toBe(true);
-    const options = expectSendMessageCall({
-      sendMessage,
-      chatId: 100,
-      textIncludes:
-        "Current fast mode: auto (30 sec) (default: model).\nOptions: on, off, auto (30 sec), default, status.",
-      requireReplyMarkup: true,
-      label: "fast menu",
-    });
-    const replyMarkup = options.reply_markup as
-      | { inline_keyboard?: Array<Array<{ text?: string }>> }
-      | undefined;
-    const labels = (replyMarkup?.inline_keyboard ?? []).flatMap((row) =>
-      row.map((button) => button.text),
-    );
-    expect(labels).toContain("auto (30 sec)");
-    expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
-  });
+      const menuCall = commandAuthMocks.resolveCommandArgMenu.mock.calls.find(
+        ([params]) => params.command.key === "fast" && params.cfg === cfg,
+      )?.[0];
+      expectRecordFields(menuCall, { cfg }, "fast menu call");
+      expect(
+        commandAuthMocks.resolveCommandArgMenu.mock.calls.some(
+          ([params]) =>
+            params.command.key === "fast" && params.provider === "openai" && params.model === model,
+        ),
+      ).toBe(true);
+      const options = expectSendMessageCall({
+        sendMessage,
+        chatId: 100,
+        textIncludes:
+          "Current fast mode: auto (30 sec) (default: model).\nOptions: on, off, auto (30 sec), default, status.",
+        requireReplyMarkup: true,
+        label: "fast menu",
+      });
+      const replyMarkup = options.reply_markup as
+        | { inline_keyboard?: Array<Array<{ text?: string }>> }
+        | undefined;
+      const labels = (replyMarkup?.inline_keyboard ?? []).flatMap((row) =>
+        row.map((button) => button.text),
+      );
+      expect(labels).toContain("auto (30 sec)");
+      expect(replyMocks.dispatchReplyWithBufferedBlockDispatcher).not.toHaveBeenCalled();
+    },
+  );
 
   it("uses the read-only catalog for Claude CLI thinking menus", async () => {
     const cfg = {

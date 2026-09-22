@@ -14,6 +14,7 @@ import { markChatAbortTerminalPersistenceError } from "./chat-abort-lifecycle-in
 import { registerChatAbortController, removeChatAbortControllerEntry } from "./chat-abort.js";
 import { createChatRunState } from "./server-chat-state.js";
 import type { GatewayClient, GatewayRequestContext, RespondFn } from "./server-methods/types.js";
+import { placementReader, workerPlacement } from "./server.sessions.archive.test-helpers.js";
 import {
   resolveSessionMutationAuthorization,
   resolveSessionSharingTarget,
@@ -61,6 +62,8 @@ function activeRunContext(params: {
     throw new Error("expected active run registration");
   }
   const entry = registration.entry;
+  const aborted = createDeferredCore();
+  registration.controller.signal.addEventListener("abort", () => aborted.resolve(), { once: true });
   const unsubscribe = onAgentEvent((event) => {
     if (
       event.runId !== params.runId ||
@@ -102,6 +105,7 @@ function activeRunContext(params: {
       })),
     },
     controller: registration.controller,
+    aborted: aborted.promise,
     unsubscribe,
   };
 }
@@ -131,71 +135,6 @@ function identifiedClient(profileId: string): GatewayClient {
   };
 }
 
-function workerPlacement(params: {
-  sessionId: string;
-  sessionKey: string;
-  state: WorkerSessionPlacementRecord["state"];
-  agentId?: string;
-  environmentId?: string | null;
-}): WorkerSessionPlacementRecord {
-  return {
-    sessionId: params.sessionId,
-    sessionKey: params.sessionKey,
-    agentId: params.agentId ?? "main",
-    state: params.state,
-    generation: 2,
-    turnClaim: null,
-    createdAtMs: 1,
-    updatedAtMs: 2,
-    stateChangedAtMs: 2,
-    environmentId:
-      params.environmentId !== undefined
-        ? params.environmentId
-        : params.state === "local" || params.state === "requested"
-          ? null
-          : "worker-environment",
-    activeOwnerEpoch: ["active", "draining", "reconciling", "reclaimed", "failed"].includes(
-      params.state,
-    )
-      ? 1
-      : null,
-    workspaceBaseManifestRef:
-      params.state === "local" ||
-      params.state === "requested" ||
-      params.state === "provisioning" ||
-      params.state === "syncing"
-        ? null
-        : "manifest-ref",
-    remoteWorkspaceDir:
-      params.state === "local" ||
-      params.state === "requested" ||
-      params.state === "provisioning" ||
-      params.state === "syncing"
-        ? null
-        : "/workspace",
-    workerBundleHash:
-      params.state === "local" || params.state === "requested" || params.state === "provisioning"
-        ? null
-        : "bundle-hash",
-    lastTranscriptAckCursor: null,
-    lastLiveEventAckCursor: null,
-    recoveryError: params.state === "failed" ? "worker recovery stopped" : null,
-  } as WorkerSessionPlacementRecord;
-}
-
-function placementReader(current: () => WorkerSessionPlacementRecord | undefined) {
-  return {
-    getMany(sessionIds: readonly string[]) {
-      const placement = current();
-      return new Map(
-        placement && sessionIds.includes(placement.sessionId)
-          ? [[placement.sessionId, placement]]
-          : [],
-      );
-    },
-  };
-}
-
 async function archiveLifecycleRequestContext(
   overrides: Record<string, unknown>,
 ): Promise<GatewayRequestContext> {
@@ -220,6 +159,16 @@ type LifecycleHandlerResponse = {
   payload?: unknown;
   error?: Parameters<RespondFn>[2];
 };
+
+async function waitForArchivePhase(phase: Promise<unknown>, archive: Promise<unknown>) {
+  // Observe the lifecycle event; request preparation can exceed waitFor's polling window.
+  await Promise.race([
+    phase,
+    archive.then((response) => {
+      throw new Error(`Archive RPC completed before the held phase: ${JSON.stringify(response)}`);
+    }),
+  ]);
+}
 
 function archivePatch(key: string, expectedSessionId: string) {
   return { key, archived: true, expectedSessionId };
@@ -308,21 +257,23 @@ test("sessions.patch cancels active work and commits only after admission and te
     persistence,
     ownerConnId: "different-connection",
   });
+  let replacement: Promise<unknown> | undefined;
+  let replacementAdmission: Awaited<ReturnType<typeof beginSessionWorkAdmission>> | undefined;
+  const archive = directSessionReq(
+    "sessions.patch",
+    { key: sessionKey, archived: true, expectedSessionId: sessionId },
+    {
+      context: active.context,
+      client: { connId: "archive-writer", connect: { scopes: ["operator.write"] } } as never,
+    },
+  );
   try {
-    const archive = directSessionReq(
-      "sessions.patch",
-      { key: sessionKey, archived: true, expectedSessionId: sessionId },
-      {
-        context: active.context,
-        client: { connId: "archive-writer", connect: { scopes: ["operator.write"] } } as never,
-      },
-    );
-    await interrupted.promise;
+    await waitForArchivePhase(interrupted.promise, archive);
     expect(active.controller.signal.aborted).toBe(true);
     expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
 
     let replacementAdmitted = false;
-    const replacement = beginSessionWorkAdmission({
+    replacement = beginSessionWorkAdmission({
       scope: storePath,
       identities: [sessionKey, sessionId],
       assertAllowed: () => {
@@ -332,7 +283,10 @@ test("sessions.patch cancels active work and commits only after admission and te
         }
       },
     }).then(
-      (lease) => lease,
+      (lease) => {
+        replacementAdmission = lease;
+        return lease;
+      },
       (error: unknown) => error,
     );
     await Promise.resolve();
@@ -349,6 +303,8 @@ test("sessions.patch cancels active work and commits only after admission and te
     expect(await replacement).toBeInstanceOf(Error);
   } finally {
     admission.release();
+    persistence.resolve();
+    await Promise.allSettled([archive, replacement?.then(() => replacementAdmission?.release())]);
     active.unsubscribe();
   }
 });
@@ -506,7 +462,9 @@ test.each(["owner", "viewer"] as const)(
     const requestContext = await archiveLifecycleRequestContext(active.context);
     let placement = workerPlacement({ sessionId, sessionKey, state: "active" });
     const reclaimGate = createDeferredCore();
+    const reclaimEntered = createDeferredCore();
     const reclaim = vi.fn(async () => {
+      reclaimEntered.resolve();
       await reclaimGate.promise;
       placement = workerPlacement({ sessionId, sessionKey, state: "reclaimed" });
       return placement as Extract<WorkerSessionPlacementRecord, { state: "reclaimed" }>;
@@ -534,7 +492,8 @@ test.each(["owner", "viewer"] as const)(
         sessionKey,
         expectedSessionId: sessionId,
       });
-      await vi.waitFor(() => expect(active.controller.signal.aborted).toBe(true));
+      await waitForArchivePhase(active.aborted, archive);
+      expect(active.controller.signal.aborted).toBe(true);
 
       sharing = invokeVisibilityHandler({
         client: owner,
@@ -557,7 +516,8 @@ test.each(["owner", "viewer"] as const)(
         expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
         return;
       }
-      await vi.waitFor(() => expect(reclaim).toHaveBeenCalledOnce());
+      await waitForArchivePhase(reclaimEntered.promise, archive);
+      expect(reclaim).toHaveBeenCalledOnce();
       expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
       reclaimGate.resolve();
       expect(await archive).toMatchObject({ ok: true });
@@ -857,11 +817,16 @@ test("sessions.patchMany prepares independent archive drains concurrently and re
   const firstDrained = createDeferredCore();
   const firstRelease = vi.fn();
   const secondRelease = vi.fn();
-  const beginInferenceSessionDrain = vi.fn((sessionId: string) => ({
-    drained: sessionId === firstSessionId ? firstDrained.promise : Promise.resolve(),
-    hasWork: () => false,
-    release: sessionId === firstSessionId ? firstRelease : secondRelease,
-  }));
+  const firstEntered = createDeferredCore();
+  const secondEntered = createDeferredCore();
+  const beginInferenceSessionDrain = vi.fn((sessionId: string) => {
+    (sessionId === firstSessionId ? firstEntered : secondEntered).resolve();
+    return {
+      drained: sessionId === firstSessionId ? firstDrained.promise : Promise.resolve(),
+      hasWork: () => false,
+      release: sessionId === firstSessionId ? firstRelease : secondRelease,
+    };
+  });
 
   const archive = directSessionReq<{ outcomes: Array<{ key: string; ok: boolean }> }>(
     "sessions.patchMany",
@@ -876,27 +841,33 @@ test("sessions.patchMany prepares independent archive drains concurrently and re
     },
   );
 
-  await vi.waitFor(() => expect(beginInferenceSessionDrain).toHaveBeenCalledTimes(2));
-  expect(beginInferenceSessionDrain.mock.calls.map(([sessionId]) => sessionId)).toEqual([
-    firstSessionId,
-    secondSessionId,
-  ]);
-  expect(firstRelease).not.toHaveBeenCalled();
-  expect(secondRelease).not.toHaveBeenCalled();
-  firstDrained.resolve();
+  try {
+    await waitForArchivePhase(Promise.all([firstEntered.promise, secondEntered.promise]), archive);
+    expect(beginInferenceSessionDrain).toHaveBeenCalledTimes(2);
+    expect(beginInferenceSessionDrain.mock.calls.map(([sessionId]) => sessionId)).toEqual([
+      firstSessionId,
+      secondSessionId,
+    ]);
+    expect(firstRelease).not.toHaveBeenCalled();
+    expect(secondRelease).not.toHaveBeenCalled();
+    firstDrained.resolve();
 
-  const result = await archive;
-  expect(result.payload?.outcomes).toEqual([
-    { key: firstKey, ok: true },
-    { key: secondKey, ok: true },
-  ]);
-  expect(firstRelease).toHaveBeenCalledOnce();
-  expect(secondRelease).toHaveBeenCalledOnce();
-  expect(firstRelease.mock.invocationCallOrder[0]).toBeLessThan(
-    secondRelease.mock.invocationCallOrder[0]!,
-  );
-  expectArchived(storePath, firstKey);
-  expectArchived(storePath, secondKey);
+    const result = await archive;
+    expect(result.payload?.outcomes).toEqual([
+      { key: firstKey, ok: true },
+      { key: secondKey, ok: true },
+    ]);
+    expect(firstRelease).toHaveBeenCalledOnce();
+    expect(secondRelease).toHaveBeenCalledOnce();
+    expect(firstRelease.mock.invocationCallOrder[0]).toBeLessThan(
+      secondRelease.mock.invocationCallOrder[0]!,
+    );
+    expectArchived(storePath, firstKey);
+    expectArchived(storePath, secondKey);
+  } finally {
+    firstDrained.resolve();
+    await archive;
+  }
 });
 
 test("sessions.patchMany attempts every archive drain release without masking success", async () => {
@@ -995,19 +966,20 @@ test("sessions.patch rejects a generation replaced after the exact preparation r
     placement = workerPlacement({ sessionId, sessionKey, state: "reclaimed" });
     return placement as Extract<WorkerSessionPlacementRecord, { state: "reclaimed" }>;
   });
-  try {
-    const archive = directSessionReq(
-      "sessions.patch",
-      { key: sessionKey, archived: true, expectedSessionId: sessionId },
-      {
-        context: {
-          ...active.context,
-          workerSessionPlacementService: placementReader(() => placement),
-          workerPlacementDispatchService: { dispatch, reclaim },
-        },
+  const archive = directSessionReq(
+    "sessions.patch",
+    { key: sessionKey, archived: true, expectedSessionId: sessionId },
+    {
+      context: {
+        ...active.context,
+        workerSessionPlacementService: placementReader(() => placement),
+        workerPlacementDispatchService: { dispatch, reclaim },
       },
-    );
-    await vi.waitFor(() => expect(active.controller.signal.aborted).toBe(true));
+    },
+  );
+  try {
+    await waitForArchivePhase(active.aborted, archive);
+    expect(active.controller.signal.aborted).toBe(true);
     await upsertSessionEntryCore(
       { storePath, sessionKey },
       { sessionId: "session-archive-generation-replacement", updatedAt: 2 },
@@ -1028,6 +1000,11 @@ test("sessions.patch rejects a generation replaced after the exact preparation r
     expect(placement.state).toBe("active");
     expect(dispatch).not.toHaveBeenCalled();
   } finally {
-    active.unsubscribe();
+    persistence.resolve();
+    try {
+      await archive;
+    } finally {
+      active.unsubscribe();
+    }
   }
 });
