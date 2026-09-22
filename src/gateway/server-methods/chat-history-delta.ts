@@ -163,6 +163,7 @@ function projectChatHistoryDelta(
       transcriptPosition: row.displayPosition,
       projectionState,
       projectCurrentUserProfile,
+      redactInlineMedia: true,
       subagentCoordination,
       sessionKey: params.sessionKey,
       sessionSnapshot: params.sessionSnapshot,

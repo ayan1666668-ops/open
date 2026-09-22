@@ -315,6 +315,7 @@ export async function readChatHistoryPageKernel(
         subagentCoordination: options.readers.subagentCoordination,
         includeCommentaryFallbacks: true,
         maxChars: effectiveMaxChars,
+        redactInlineMedia: true,
         resolveCronJobName: options.resolveCronJobName,
         ...(options.deferProfileDisplay
           ? {}
