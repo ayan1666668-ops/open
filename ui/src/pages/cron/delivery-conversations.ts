@@ -1,140 +1,205 @@
 import type { ConversationListItem, ConversationListResult } from "@openclaw/gateway-protocol";
-import type { ReactiveController, ReactiveControllerHost } from "lit";
-import type { GatewayBrowserClient } from "../../api/gateway.ts";
-import type { CronState } from "../../lib/cron/types.ts";
+import type { CronFormState, CronState } from "../../lib/cron/types.ts";
 import { formatUiError } from "../../lib/format-error.ts";
+import type { GatewayConnectionScope } from "../../lib/gateway-connection-lifecycle.ts";
 
-// A separator that can never appear in an accountId/threadId pair.
-const ROUTE_KEY_SEPARATOR = String.fromCharCode(0);
-
-function conversationRouteKey(conversation: ConversationListItem): string {
-  return `${conversation.accountId}${ROUTE_KEY_SEPARATOR}${conversation.threadId ?? ""}`;
+/**
+ * Drops a delivery topic that the incoming patch has orphaned.
+ *
+ * A topic only means anything for the exact route it was authored against, so
+ * changing any part of that route -- the mode, the channel, the sending
+ * account, the agent, or the recipient itself -- invalidates it unless the
+ * same patch supplies a replacement.
+ */
+export function invalidateStaleDeliveryRoute(
+  current: CronFormState,
+  patch: Partial<CronFormState>,
+): Partial<CronFormState> {
+  const deliveryIdentityChanged =
+    ("deliveryMode" in patch && patch.deliveryMode !== current.deliveryMode) ||
+    ("deliveryChannel" in patch && patch.deliveryChannel !== current.deliveryChannel) ||
+    ("deliveryAccountId" in patch && patch.deliveryAccountId !== current.deliveryAccountId) ||
+    ("deliveryTo" in patch && patch.deliveryTo !== current.deliveryTo) ||
+    ("agentId" in patch && patch.agentId !== current.agentId);
+  return deliveryIdentityChanged && patch.deliveryThreadId === undefined
+    ? { ...patch, deliveryThreadId: undefined }
+    : patch;
 }
 
 /**
- * Resolves the configured account/thread route for a chosen delivery target.
+ * Reports whether a form change invalidates the cached directory itself.
  *
- * Returns undefined when the target is unknown or ambiguous (the same target
- * string resolves to more than one distinct account/thread route) -- the
- * caller keeps whatever route the operator already had rather than guessing.
+ * Only the fields the `conversations.list` request is keyed on qualify. The
+ * sending account is applied to the cached rows locally, so editing it must
+ * never re-read the Gateway -- otherwise every keystroke in the Account ID
+ * field launches another directory discovery across configured accounts.
  */
-export function resolveDeliveryConversationRoute(
-  conversations: ConversationListItem[],
-  target: string,
-  requestedAccountId: string | undefined,
-  currentAccountId: string,
-): { accountId: string; threadId?: string } | undefined {
-  const accountId = (
-    typeof requestedAccountId === "string" ? requestedAccountId : currentAccountId
-  ).trim();
-  const matches = conversations.filter(
-    (conversation) =>
-      conversation.target === target && (!accountId || conversation.accountId === accountId),
+export function requiresDirectoryReload(current: CronFormState, next: CronFormState): boolean {
+  return (
+    next.deliveryMode !== current.deliveryMode ||
+    next.deliveryChannel !== current.deliveryChannel ||
+    next.agentId !== current.agentId
   );
-  const routes = new Map(
-    matches.map((conversation) => [conversationRouteKey(conversation), conversation]),
-  );
-  return routes.size === 1 ? routes.values().next().value : undefined;
 }
 
-/**
- * Filters a conversation directory down to targets with exactly one
- * account/thread route, scoped to an optional configured account.
- *
- * A target reachable through more than one route is dropped: suggesting it
- * would silently pick one of several possible destinations.
- */
-function filterUnambiguousDeliveryConversations(
-  conversations: ConversationListItem[],
-  accountId: string,
-): ConversationListItem[] {
-  const eligible = conversations.filter(
-    (conversation) => !accountId || conversation.accountId === accountId,
-  );
-  const routesByTarget = new Map<string, ConversationListItem[]>();
-  for (const conversation of eligible) {
-    const routes = routesByTarget.get(conversation.target) ?? [];
-    routes.push(conversation);
-    routesByTarget.set(conversation.target, routes);
-  }
-  return eligible.filter((conversation) => {
-    const routes = new Set(
-      (routesByTarget.get(conversation.target) ?? []).map(conversationRouteKey),
-    );
-    return routes.size === 1;
-  });
-}
-
-export type DeliveryConversationsScope = {
-  client: GatewayBrowserClient;
-  /** Re-checked after the request settles: connection/agent/permission identity may have moved on. */
-  isCurrent: () => boolean;
+export type DeliveryConversationsHost = {
+  /** The page state that currently owns the editor. */
+  currentCronState: () => CronState;
+  /** Admin access is revalidated per request because it can drop mid-flight. */
+  canManage: () => boolean;
+  captureConnection: () => GatewayConnectionScope | null;
+  isCurrentConnection: (scope: GatewayConnectionScope) => boolean;
+  /** Re-render the page for the state that published the change. */
+  notify: (cronState: CronState) => void;
 };
 
 /**
- * Owns the "configured delivery targets" directory for the cron editor's
- * announce-mode recipient field: fetches `conversations.list`, keeps only
- * unambiguous account/thread routes, and discards any response that settles
- * after a newer request superseded it.
+ * Owns the Automations editor's recipient directory: the cached conversations,
+ * the published error, and the request generation. This state is page-owned
+ * rather than CronState-owned, so a continuation that outlived the editor it
+ * started in must prove ownership before clearing the cache or reading again.
+ *
+ * The directory is a bounded read, so it is only ever a source of **target**
+ * suggestions. Account and topic routing stay operator-authored; nothing here
+ * infers them.
  */
-export class DeliveryConversationsController implements ReactiveController {
+export class DeliveryConversationsController {
   conversations: ConversationListItem[] = [];
   error: string | null = null;
   private requestId = 0;
+  /**
+   * Identifies the editor session that owns the cache. A continuation captures
+   * it before awaiting and presents it back, which is the only way to tell "my
+   * editor exited" from "a replacement editor owns discovery now": the page,
+   * the connection, and the admin scope all survive an editor swap.
+   */
+  private editorGeneration = 0;
 
-  constructor(private readonly host: ReactiveControllerHost) {
-    host.addController(this);
-  }
+  constructor(private readonly host: DeliveryConversationsHost) {}
 
-  hostDisconnected() {
-    this.reset();
-  }
-
-  reset() {
+  /** Retire every in-flight read and drop the cached suggestions and error. */
+  clear(cronState: CronState = this.host.currentCronState()) {
     this.requestId += 1;
     this.conversations = [];
     this.error = null;
+    this.host.notify(cronState);
   }
 
-  async load(
+  /** The generation a deferred continuation must present back to own the cache. */
+  get generation(): number {
+    return this.editorGeneration;
+  }
+
+  /** An editor session ended: retire its directory and stop answering for it. */
+  retireEditor(cronState: CronState = this.host.currentCronState()) {
+    this.editorGeneration += 1;
+    this.clear(cronState);
+  }
+
+  /** An editor session began: it owns discovery from here, so read for it. */
+  openEditor() {
+    this.editorGeneration += 1;
+    void this.load();
+  }
+
+  /**
+   * Retire the directory for a continuation whose own editor confirmed its
+   * exit. A continuation that no longer owns the cache — replaced page,
+   * dropped connection, lost admin access, or a replacement editor — leaves it
+   * alone rather than retiring someone else's in-flight read.
+   */
+  retireExitedEditor(
     cronState: CronState,
-    canManageCron: boolean,
-    capture: () => DeliveryConversationsScope | null,
+    connectionScope: GatewayConnectionScope | null,
+    editorGeneration: number,
   ) {
+    if (this.ownedBy(cronState, connectionScope, editorGeneration)) {
+      this.retireEditor(cronState);
+    }
+  }
+
+  /**
+   * Resettle the directory after a save. A save that still owns discovery
+   * drops the cache it read against, then reads again only when its editor
+   * stayed open; a create hands off to the overview instead.
+   */
+  afterSave(
+    cronState: CronState,
+    connectionScope: GatewayConnectionScope | null,
+    editorGeneration: number,
+    stillEditing: boolean,
+  ) {
+    if (!this.ownedBy(cronState, connectionScope, editorGeneration)) {
+      return;
+    }
+    this.clear(cronState);
+    if (stillEditing) {
+      void this.load(cronState);
+    } else {
+      this.editorGeneration += 1;
+    }
+  }
+
+  /**
+   * A continuation owns the directory only while its page, its connection, its
+   * admin access, and the editor session it started in all survive.
+   */
+  ownedBy(
+    cronState: CronState,
+    connectionScope: GatewayConnectionScope | null,
+    editorGeneration?: number,
+  ): boolean {
+    return (
+      this.host.currentCronState() === cronState &&
+      connectionScope !== null &&
+      this.host.isCurrentConnection(connectionScope) &&
+      this.host.canManage() &&
+      (editorGeneration === undefined || this.editorGeneration === editorGeneration)
+    );
+  }
+
+  async load(cronState: CronState = this.host.currentCronState()) {
     const requestId = ++this.requestId;
     this.conversations = [];
     this.error = null;
-    this.host.requestUpdate();
+    this.host.notify(cronState);
+    const client = cronState.client;
     const mode = cronState.cronForm.deliveryMode;
     const channel = cronState.cronForm.deliveryChannel.trim();
     const agentId = cronState.cronForm.agentId.trim() || cronState.cronAgentId?.trim() || "";
-    if (!canManageCron || mode !== "announce" || !agentId || channel === "last") {
+    if (
+      !this.host.canManage() ||
+      !client ||
+      mode !== "announce" ||
+      !agentId ||
+      channel === "last"
+    ) {
       return;
     }
-    const scope = capture();
-    if (!scope) {
+    const connectionScope = this.host.captureConnection();
+    if (!connectionScope) {
       return;
     }
-    const isCurrent = () => requestId === this.requestId && scope.isCurrent();
+    const isCurrent = () =>
+      requestId === this.requestId && this.ownedBy(cronState, connectionScope);
     try {
-      const result = await scope.client.request<ConversationListResult>("conversations.list", {
+      const result = await client.request<ConversationListResult>("conversations.list", {
         agentId,
         channel,
         limit: 100,
       });
       if (isCurrent()) {
-        this.conversations = filterUnambiguousDeliveryConversations(
-          result.conversations,
-          cronState.cronForm.deliveryAccountId.trim(),
-        );
+        // The directory is bounded, so it is authoritative only as a source of
+        // target suggestions. Never infer hidden account or topic routing from it.
+        this.conversations = result.conversations;
         this.error = null;
-        this.host.requestUpdate();
+        this.host.notify(cronState);
       }
     } catch (error) {
       if (isCurrent()) {
         this.conversations = [];
         this.error = `Could not load recipient suggestions: ${formatUiError(error)}`;
-        this.host.requestUpdate();
+        this.host.notify(cronState);
       }
     }
   }
