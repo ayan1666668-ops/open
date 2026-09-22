@@ -263,7 +263,6 @@ describe("Code Mode live VM", () => {
     const workers = pool();
     const entered = Promise.withResolvers<void>();
     const yielded = vi.fn();
-    const start = performance.now();
     const waiting = workers.run(await payload(`${sleep} return 1;`), {
       timeoutMs: 15_000,
       onRequest: async (_value, { yieldSignal }) => {
@@ -278,6 +277,7 @@ describe("Code Mode live VM", () => {
       },
     });
     await entered.promise;
+    const start = performance.now();
     const quick = workers.run(await payload("return 2;"), { timeoutMs: 2000 });
     expect(await waiting).toMatchObject({ status: "waiting" });
     expect(await quick).toMatchObject({ status: "completed", value: { json: "2" } });
