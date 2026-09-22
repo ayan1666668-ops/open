@@ -168,6 +168,52 @@ describe("Codex Computer Use setup", () => {
     );
   });
 
+  it("keeps the computer-use deadline monotonic when the wall clock rewinds", async () => {
+    // inspectCodexComputerUse seeds its operation deadline from the clock, then
+    // hands remainingTimeoutMs() to the leased client. That budget must stay on
+    // the monotonic clock used by client.ts. When the wall clock rewinds (NTP
+    // correction / sleep resume / manual time change) between the deadline seed
+    // and the remainingTimeoutMs() read, a wall-clock deadline would inflate the
+    // remaining budget far beyond operationTimeoutMs; the monotonic seed does not.
+    let monotonic = 0;
+    const wallSeed = 10_000;
+    let dateCalls = 0;
+    const performanceSpy = vi.spyOn(performance, "now").mockImplementation(() => monotonic);
+    // First Date.now() call seeds the deadline (returns wallSeed); every later
+    // call returns a wall clock that rewound 120s, so a wall-clock deadline would
+    // compute remaining = wallSeed + budget - (wallSeed - 120000) = budget + 120000.
+    const dateSpy = vi.spyOn(Date, "now").mockImplementation(() => {
+      dateCalls += 1;
+      return dateCalls === 1 ? wallSeed : wallSeed - 120_000;
+    });
+
+    const capturedTimeouts: number[] = [];
+    sharedClientMocks.getLeasedSharedCodexAppServerClient.mockImplementationOnce(
+      async (options: { timeoutMs?: number }) => {
+        capturedTimeouts.push(options.timeoutMs ?? -1);
+        monotonic += 5;
+        throw new Error("captured lease timeout");
+      },
+    );
+
+    await expect(
+      installCodexComputerUse({
+        pluginConfig: {},
+        agentDir: "/tmp/openclaw-computer-use-deadline-agent",
+        timeoutMs: 1_000,
+      }),
+    ).rejects.toThrow("captured lease timeout");
+
+    expect(capturedTimeouts).toHaveLength(1);
+    // Budget must never exceed operationTimeoutMs (1000ms) regardless of wall
+    // clock movement. Before the fix the rewound wall clock yielded ~121000ms.
+    expect(capturedTimeouts[0]).toBeLessThanOrEqual(1_000);
+    expect(capturedTimeouts[0]).toBeGreaterThan(900);
+
+    performanceSpy.mockRestore();
+    dateSpy.mockRestore();
+  });
+
   it("holds the Codex-home fence until an install request settles", async () => {
     const agentDir = "/tmp/openclaw-computer-use-fence-agent";
     let rejectInstallRequest: (error: Error) => void = () => undefined;
