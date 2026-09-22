@@ -61,15 +61,17 @@ export function isRestrictiveToolPolicySupported(
       return false;
     }
     if (
-      explicitHarness !== "openclaw" &&
-      explicitHarness !== "embedded" &&
-      explicitHarness !== "pi" &&
-      explicitHarness !== "auto" &&
-      explicitHarness !== "default" &&
-      explicitHarness !== "copilot"
+      explicitHarness === "openclaw" ||
+      explicitHarness === "embedded" ||
+      explicitHarness === "pi" ||
+      explicitHarness === "auto" ||
+      explicitHarness === "default" ||
+      explicitHarness === "copilot"
     ) {
-      return false;
+      return true;
     }
+    // Any other or unknown explicit harness does not support turn-scoped pruning
+    return false;
   }
 
   // 2. Provider / model indicators on hook context
@@ -96,7 +98,6 @@ export function isRestrictiveToolPolicySupported(
   }
 
   // 4. Authoritative host runtime policy resolution (via api.runtime.modelConfig)
-  let authoritativePolicyId: string | undefined;
   const runtimeModelConfig = (
     api as unknown as { runtime?: { modelConfig?: { resolveModelRuntimePolicy?: Function } } }
   )?.runtime?.modelConfig;
@@ -110,129 +111,28 @@ export function isRestrictiveToolPolicySupported(
         sessionKey: ctx?.sessionKey,
       });
       if (resolved?.policy?.id) {
-        authoritativePolicyId = String(resolved.policy.id).trim().toLowerCase();
+        const policyId = String(resolved.policy.id).trim().toLowerCase();
+        if (
+          policyId === "openclaw" ||
+          policyId === "embedded" ||
+          policyId === "pi" ||
+          policyId === "copilot"
+        ) {
+          return true;
+        }
+        return false;
       }
     } catch {
-      // Fall through to configuration inspection
+      // Fall through to agent configuration check
     }
   }
 
-  if (authoritativePolicyId) {
-    if (
-      authoritativePolicyId === "codex" ||
-      authoritativePolicyId === "codex-app-server" ||
-      authoritativePolicyId === "acpx"
-    ) {
-      return false;
-    }
-    if (
-      authoritativePolicyId !== "openclaw" &&
-      authoritativePolicyId !== "embedded" &&
-      authoritativePolicyId !== "pi" &&
-      authoritativePolicyId !== "auto" &&
-      authoritativePolicyId !== "default" &&
-      authoritativePolicyId !== "copilot"
-    ) {
-      return false;
-    }
-  }
-
-  // 5. Configuration checks (model-scoped, agent-scoped, or global runtime settings)
-  let modelScopedRuntime: string | undefined;
-  let agentRuntimeId: string | undefined;
-
+  // 5. Agent-level runtime configuration fallback
   if (config) {
-    // Check model-scoped runtime in agent entries and defaults
-    const candidateModelKeys: string[] = [];
-    if (ctx?.modelId) {
-      const rawModel = ctx.modelId.trim();
-      candidateModelKeys.push(rawModel, rawModel.toLowerCase());
-      if (ctx?.modelProviderId) {
-        const prov = ctx.modelProviderId.trim();
-        candidateModelKeys.push(
-          `${prov}/${rawModel}`,
-          `${prov.toLowerCase()}/${rawModel.toLowerCase()}`,
-        );
-      }
-      const slashIndex = rawModel.indexOf("/");
-      if (slashIndex > 0) {
-        const afterSlash = rawModel.slice(slashIndex + 1).trim();
-        candidateModelKeys.push(afterSlash, afterSlash.toLowerCase());
-      }
-    }
-
-    const checkModelDict = (dict: unknown): string | undefined => {
-      if (!dict || typeof dict !== "object") {
-        return undefined;
-      }
-      const record = dict as Record<string, unknown>;
-      for (const key of candidateModelKeys) {
-        const entry = record[key];
-        if (entry && typeof entry === "object") {
-          const entryObj = entry as Record<string, unknown>;
-          const runtime =
-            (entryObj.agentRuntime as { id?: string } | undefined)?.id ??
-            (entryObj.runtime as { id?: string } | undefined)?.id ??
-            (typeof entryObj.agentRuntime === "string" ? entryObj.agentRuntime : undefined);
-          if (typeof runtime === "string") {
-            return runtime;
-          }
-        }
-      }
-      return undefined;
-    };
-
-    if (ctx?.agentId) {
-      const rawAgents = (config as Record<string, unknown>).agents as
-        | Record<string, unknown>
-        | undefined;
-      const rawEntries = rawAgents?.entries as Record<string, unknown> | undefined;
-      const agentEntry = rawEntries?.[ctx.agentId] ?? rawAgents?.[ctx.agentId];
-      if (agentEntry && typeof agentEntry === "object") {
-        modelScopedRuntime = checkModelDict((agentEntry as Record<string, unknown>).models);
-      }
-    }
-
-    if (!modelScopedRuntime) {
-      modelScopedRuntime = checkModelDict(config.agents?.defaults?.models);
-    }
-
-    if (!modelScopedRuntime && provider && (config as Record<string, unknown>).models) {
-      const modelsConfig = (config as Record<string, unknown>).models as Record<string, unknown>;
-      const provObj = (modelsConfig.providers as Record<string, unknown> | undefined)?.[provider];
-      if (provObj && typeof provObj === "object") {
-        modelScopedRuntime =
-          checkModelDict((provObj as Record<string, unknown>).models) ??
-          ((provObj as Record<string, unknown>).agentRuntime as { id?: string } | undefined)?.id ??
-          (typeof (provObj as Record<string, unknown>).agentRuntime === "string"
-            ? ((provObj as Record<string, unknown>).agentRuntime as string)
-            : undefined);
-      }
-    }
-
-    if (modelScopedRuntime) {
-      const normalized = modelScopedRuntime.trim().toLowerCase();
-      if (normalized === "codex" || normalized === "codex-app-server" || normalized === "acpx") {
-        return false;
-      }
-      if (
-        normalized &&
-        normalized !== "openclaw" &&
-        normalized !== "embedded" &&
-        normalized !== "pi" &&
-        normalized !== "auto" &&
-        normalized !== "default" &&
-        normalized !== "copilot"
-      ) {
-        return false;
-      }
-    }
-
-    // Agent-level runtime settings
     if (ctx?.agentId) {
       try {
         const agentConfig = resolveAgentConfig(config, ctx.agentId);
-        agentRuntimeId =
+        const agentRuntimeId =
           agentConfig?.agentRuntime?.id ??
           (agentConfig?.runtime as { id?: string } | undefined)?.id;
 
@@ -247,6 +147,19 @@ export function isRestrictiveToolPolicySupported(
           if (m.provider?.toLowerCase() === "codex" || m.id?.toLowerCase().includes("codex")) {
             return false;
           }
+        }
+
+        if (typeof agentRuntimeId === "string") {
+          const normalized = agentRuntimeId.trim().toLowerCase();
+          if (
+            normalized === "openclaw" ||
+            normalized === "embedded" ||
+            normalized === "pi" ||
+            normalized === "copilot"
+          ) {
+            return true;
+          }
+          return false;
         }
       } catch {
         // Fail-safe if resolveAgentConfig encounters unexpected configuration shape
@@ -268,65 +181,45 @@ export function isRestrictiveToolPolicySupported(
             )
           : undefined);
 
-      if (!agentRuntimeId && directAgent) {
+      if (directAgent) {
         const agentRuntimeObj = directAgent.agentRuntime as { id?: string } | undefined;
         const runtimeObj = directAgent.runtime as { id?: string } | undefined;
-        agentRuntimeId = agentRuntimeObj?.id ?? runtimeObj?.id;
+        const directRuntimeId = agentRuntimeObj?.id ?? runtimeObj?.id;
+        if (typeof directRuntimeId === "string") {
+          const normalized = directRuntimeId.trim().toLowerCase();
+          if (
+            normalized === "openclaw" ||
+            normalized === "embedded" ||
+            normalized === "pi" ||
+            normalized === "copilot"
+          ) {
+            return true;
+          }
+          return false;
+        }
       }
     }
 
-    if (!agentRuntimeId) {
-      const rawConfig = config as Record<string, unknown>;
-      const rawAgentRuntime = rawConfig.agentRuntime;
-      agentRuntimeId =
-        config.agents?.defaults?.agentRuntime?.id ??
-        (typeof rawAgentRuntime === "object" && rawAgentRuntime !== null
-          ? (rawAgentRuntime as { id?: string }).id
-          : typeof rawAgentRuntime === "string"
-            ? rawAgentRuntime
-            : undefined);
-    }
-
-    if (typeof agentRuntimeId === "string") {
-      const normalized = agentRuntimeId.trim().toLowerCase();
-      if (normalized === "codex" || normalized === "codex-app-server" || normalized === "acpx") {
-        return false;
-      }
+    const defaultRuntimeId = config.agents?.defaults?.agentRuntime?.id;
+    if (typeof defaultRuntimeId === "string") {
+      const normalized = defaultRuntimeId.trim().toLowerCase();
       if (
-        normalized &&
-        normalized !== "openclaw" &&
-        normalized !== "embedded" &&
-        normalized !== "pi" &&
-        normalized !== "auto" &&
-        normalized !== "default" &&
-        normalized !== "copilot"
+        normalized === "openclaw" ||
+        normalized === "embedded" ||
+        normalized === "pi" ||
+        normalized === "copilot"
       ) {
-        return false;
+        return true;
       }
+      return false;
     }
   }
 
-  // 6. Implicit OpenAI provider routing:
-  // OpenAI routes to Codex by default in OpenClaw unless an explicit supported runtime is set.
-  const isExplicitlySupported =
-    authoritativePolicyId === "openclaw" ||
-    authoritativePolicyId === "embedded" ||
-    authoritativePolicyId === "pi" ||
-    authoritativePolicyId === "copilot" ||
-    modelScopedRuntime === "openclaw" ||
-    modelScopedRuntime === "embedded" ||
-    modelScopedRuntime === "pi" ||
-    modelScopedRuntime === "copilot" ||
-    agentRuntimeId === "openclaw" ||
-    agentRuntimeId === "embedded" ||
-    agentRuntimeId === "pi" ||
-    agentRuntimeId === "copilot";
-
-  if ((provider === "openai" || provider === "openai-codex") && !isExplicitlySupported) {
-    return false;
-  }
-
-  return true;
+  // 6. Unknown runtime fallback:
+  // When the active harness cannot be positively identified as supporting turn-scoped tool policy
+  // (such as native-owned Codex attempts where model identity is omitted), PRESERVE TOOLS (fail-open)
+  // instead of assuming supported pruning.
+  return false;
 }
 
 export default definePluginEntry({

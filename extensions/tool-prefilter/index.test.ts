@@ -43,6 +43,13 @@ describe("tool-prefilter plugin", () => {
 
     const mockApi = {
       pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+      config: {
+        agents: {
+          defaults: {
+            agentRuntime: { id: "openclaw" },
+          },
+        },
+      },
       runtime: {
         decisions: {
           evaluate: mockEvaluate,
@@ -162,6 +169,13 @@ describe("tool-prefilter plugin", () => {
 
     const mockApi = {
       pluginConfig: { enabled: true },
+      config: {
+        agents: {
+          defaults: {
+            agentRuntime: { id: "openclaw" },
+          },
+        },
+      },
       runtime: {
         decisions: {
           evaluate: mockEvaluate,
@@ -266,23 +280,29 @@ describe("tool-prefilter plugin", () => {
   });
 
   describe("isRestrictiveToolPolicySupported helper", () => {
-    it("returns true for default/embedded agent contexts", () => {
-      expect(isRestrictiveToolPolicySupported()).toBe(true);
-      expect(isRestrictiveToolPolicySupported({ agentId: "agent-1" })).toBe(true);
+    it("preserves tools (returns false) when active runtime cannot be identified from unknown context", () => {
+      expect(isRestrictiveToolPolicySupported()).toBe(false);
+      expect(isRestrictiveToolPolicySupported({ agentId: "agent-1" })).toBe(false);
+    });
+
+    it("returns true when agent config or explicit context specifies openclaw or copilot runtime", () => {
       expect(
         isRestrictiveToolPolicySupported({ agentId: "agent-1" }, {
           agents: { entries: { "agent-1": { agentRuntime: { id: "openclaw" } } } },
         } as any),
       ).toBe(true);
-    });
-
-    it("returns true for copilot harness", () => {
+      expect(
+        isRestrictiveToolPolicySupported({ agentId: "agent-1" }, {
+          agents: { defaults: { agentRuntime: { id: "openclaw" } } },
+        } as any),
+      ).toBe(true);
       expect(
         isRestrictiveToolPolicySupported({ agentId: "agent-1" }, {
           agents: { entries: { "agent-1": { agentRuntime: { id: "copilot" } } } },
         } as any),
       ).toBe(true);
       expect(isRestrictiveToolPolicySupported({ agentRuntimeId: "copilot" })).toBe(true);
+      expect(isRestrictiveToolPolicySupported({ harnessId: "openclaw" })).toBe(true);
     });
 
     it("returns false when modelProviderId is codex or acpx", () => {
@@ -343,22 +363,23 @@ describe("tool-prefilter plugin", () => {
       expect(isRestrictiveToolPolicySupported({ agentHarnessId: "codex-app-server" })).toBe(false);
     });
 
-    it("returns false when model-scoped defaults specify codex runtime", () => {
-      const config = {
-        agents: {
-          defaults: {
-            models: {
-              "openai/gpt-5.4": {
-                agentRuntime: { id: "codex" },
-              },
-            },
+    it("returns false when model-scoped defaults specify codex runtime via authoritative resolver", () => {
+      const mockResolve = vi.fn().mockReturnValue({
+        policy: { id: "codex" },
+        source: "model",
+      });
+      const mockApi = {
+        runtime: {
+          modelConfig: {
+            resolveModelRuntimePolicy: mockResolve,
           },
         },
-      } as any;
+      };
       expect(
         isRestrictiveToolPolicySupported(
           { modelProviderId: "openai", modelId: "gpt-5.4", agentId: "agent-1" },
-          config,
+          undefined,
+          mockApi as any,
         ),
       ).toBe(false);
     });
@@ -699,6 +720,190 @@ describe("tool-prefilter plugin", () => {
         modelProviderId: "openai",
         modelId: "gpt-5.4",
         trigger: "user",
+      };
+
+      const result = await hookHandler(event, ctx);
+
+      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ toolsAllow: [] });
+    });
+
+    it("preserves tools for native-owned Codex attempts where model identity is omitted", async () => {
+      let hookHandler: Function = () => {};
+      const mockEvaluate = vi.fn().mockResolvedValue({
+        status: "ok",
+        result: {
+          model: "typesafe-ai/jev",
+          answers: {
+            any_tool_needed: {
+              type: "boolean",
+              probabilityTrue: 0.04,
+            },
+          },
+        },
+      });
+
+      const mockApi = {
+        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+        config: {},
+        runtime: {
+          decisions: {
+            evaluate: mockEvaluate,
+          },
+          modelConfig: {
+            resolveModelRuntimePolicy: vi.fn().mockReturnValue({}),
+          },
+        },
+        on: vi.fn((_name: string, handler: Function) => {
+          hookHandler = handler;
+        }),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+        },
+      };
+
+      pluginEntry.register(mockApi as any);
+
+      // Native-owned Codex attempts omit modelProviderId and modelId when using supervision or preserveNativeModel
+      const event = { currentUserMessage: "Hello from native-owned session" };
+      const ctx = {
+        runId: "run-attempt-native-1",
+        agentId: "default",
+        sessionKey: "agent:default:main",
+        sessionId: "session-native-1",
+        workspaceDir: "/repo/workspace",
+        trigger: "user",
+      };
+
+      const result = await hookHandler(event, ctx);
+
+      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(result).toBeUndefined(); // MUST preserve tools when runtime cannot be identified
+      expect(mockApi.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining("active harness does not support turn-scoped tool pruning"),
+      );
+    });
+
+    it("honors canonical model-over-provider precedence through the registered hook", async () => {
+      let hookHandler: Function = () => {};
+      const mockEvaluate = vi.fn().mockResolvedValue({
+        status: "ok",
+        result: {
+          model: "typesafe-ai/jev",
+          answers: {
+            any_tool_needed: {
+              type: "boolean",
+              probabilityTrue: 0.04,
+            },
+          },
+        },
+      });
+
+      // Provider-level runtime is "codex", but model override is "openclaw".
+      // The canonical resolveModelRuntimePolicy correctly resolves { policy: { id: "openclaw" }, source: "model" }.
+      const mockResolve = vi.fn().mockReturnValue({
+        policy: { id: "openclaw" },
+        source: "model",
+      });
+
+      const mockApi = {
+        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+        config: {
+          models: {
+            providers: {
+              custom: {
+                agentRuntime: { id: "codex" },
+                models: [{ id: "model-a", agentRuntime: { id: "openclaw" } }],
+              },
+            },
+          },
+        },
+        runtime: {
+          decisions: {
+            evaluate: mockEvaluate,
+          },
+          modelConfig: {
+            resolveModelRuntimePolicy: mockResolve,
+          },
+        },
+        on: vi.fn((_name: string, handler: Function) => {
+          hookHandler = handler;
+        }),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+        },
+      };
+
+      pluginEntry.register(mockApi as any);
+
+      const event = { currentUserMessage: "Explain recursion" };
+      const ctx = {
+        agentId: "default",
+        modelProviderId: "custom",
+        modelId: "model-a",
+      };
+
+      const result = await hookHandler(event, ctx);
+
+      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(mockResolve).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: "custom",
+          modelId: "model-a",
+        }),
+      );
+      expect(result).toEqual({ toolsAllow: [] }); // Supported model override prunes tools!
+    });
+
+    it("honors canonical wildcard precedence through the registered hook", async () => {
+      let hookHandler: Function = () => {};
+      const mockEvaluate = vi.fn().mockResolvedValue({
+        status: "ok",
+        result: {
+          model: "typesafe-ai/jev",
+          answers: {
+            any_tool_needed: {
+              type: "boolean",
+              probabilityTrue: 0.04,
+            },
+          },
+        },
+      });
+
+      const mockResolve = vi.fn().mockReturnValue({
+        policy: { id: "openclaw" },
+        source: "provider",
+      });
+
+      const mockApi = {
+        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+        config: {},
+        runtime: {
+          decisions: {
+            evaluate: mockEvaluate,
+          },
+          modelConfig: {
+            resolveModelRuntimePolicy: mockResolve,
+          },
+        },
+        on: vi.fn((_name: string, handler: Function) => {
+          hookHandler = handler;
+        }),
+        logger: {
+          info: vi.fn(),
+          warn: vi.fn(),
+        },
+      };
+
+      pluginEntry.register(mockApi as any);
+
+      const event = { currentUserMessage: "Explain recursion" };
+      const ctx = {
+        agentId: "default",
+        modelProviderId: "custom",
+        modelId: "model-wildcard-123",
       };
 
       const result = await hookHandler(event, ctx);
