@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { runNodeScript } from "../../test/helpers/run-node-script.js";
 import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
+import { resolveTestNodeExecPath } from "../test-utils/node-process.js";
+import { runtimeProcessEntrypoints } from "./runtime-process-entrypoints.js";
+import { resolveRuntimeWorkerArgv, resolveRuntimeWorkerUrl } from "./runtime-worker-url.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 
@@ -18,9 +20,11 @@ describe.each(["sync", "async", "scoped"] as const)("SQLite child compile cache 
   ] as const)("preserves $label through the real worker", async (testCase) => {
     const root = tempDirs.make("openclaw-sqlite-child-cache-");
     const script = path.join(root, "parent.mjs");
-    const ownerUrl = pathToFileURL(path.resolve("src/entry.compile-cache.ts")).href;
-    const snapshotUrl = pathToFileURL(path.resolve("src/infra/sqlite-snapshot-source.ts")).href;
-    const workerUrl = pathToFileURL(path.resolve("src/infra/sqlite-readonly-worker.ts")).href;
+    const entrypoint = resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.sqliteReadOnly);
+    const extension = entrypoint.pathname.endsWith(".ts") ? ".ts" : ".js";
+    const ownerUrl = new URL(`../entry.compile-cache${extension}`, entrypoint).href;
+    const snapshotUrl = new URL(`./sqlite-snapshot-source${extension}`, entrypoint).href;
+    const workerUrl = new URL(`./sqlite-readonly-worker${extension}`, entrypoint).href;
     fs.writeFileSync(
       script,
       `import assert from "node:assert/strict";
@@ -112,7 +116,7 @@ describe.each(["sync", "async", "scoped"] as const)("SQLite child compile cache 
     delete env.NODE_DISABLE_COMPILE_CACHE;
     delete env.NODE_OPTIONS;
     const result = await runNodeScript(
-      ["--import", import.meta.resolve("tsx"), script],
+      [...resolveRuntimeWorkerArgv(entrypoint, resolveTestNodeExecPath()).slice(0, -1), script],
       env,
       10_000,
       { requireProcessTreeExit: process.platform !== "win32", maxBuffer: 1024 * 1024 },

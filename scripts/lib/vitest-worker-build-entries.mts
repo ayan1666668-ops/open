@@ -145,6 +145,8 @@ export const vitestWorkerBuildEntries = {
   ]),
   // The real ulimit fixture must import its parent before imposing a file-size limit.
   "infra/sqlite-snapshot-source": "src/infra/sqlite-snapshot-source.ts",
+  "entry.compile-cache": "src/entry.compile-cache.ts",
+  "infra/sqlite-readonly-worker": "src/infra/sqlite-readonly-worker.ts",
   // Keep provider preparation in the same compiled graph as payload rendering;
   // a source-injected plugin would miss duplicated registry scope state.
   "plugins/provider-hook-runtime": "src/plugins/provider-hook-runtime.ts",
