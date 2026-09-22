@@ -134,6 +134,21 @@ type SqliteReadOnlyWorkerScope = {
 };
 const readOnlyWorkerScope = new AsyncLocalStorage<SqliteReadOnlyWorkerScope>();
 
+/** Carry the owning readers into callbacks without retaining startup or request authority. */
+export function captureSqliteReadOnlyWorkerScope(): <T>(operation: () => T) => T {
+  const scope = readOnlyWorkerScope.getStore();
+  return (operation) => {
+    if (!scope) {
+      return readOnlyWorkerScope.exit(operation);
+    }
+    if (!scope.active) {
+      throw new Error("SQLite read-only worker scope closed");
+    }
+    scope.controller.signal.throwIfAborted();
+    return readOnlyWorkerScope.run(scope, operation);
+  };
+}
+
 /** Reuse child imports until the lifecycle owner closes; reads reacquire source admission. */
 export function createSqliteReadOnlyWorkerScope(options?: {
   signal: AbortSignal;
