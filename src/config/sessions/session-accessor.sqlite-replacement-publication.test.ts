@@ -392,7 +392,7 @@ it("fences inline maintenance rows and preserves a newer native publication for 
     });
     const stopObserver = sessionChanges.subscribe((change) => {
       if ("sessionKey" in change && replacementKeys.includes(change.sessionKey)) {
-        observerFacts.push([...factKeys].sort());
+        observerFacts.push([...factKeys].toSorted());
       }
     });
     let whileWaiting: ReturnType<typeof sharing.readCurrent>;
