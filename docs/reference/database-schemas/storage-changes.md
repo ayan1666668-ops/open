@@ -684,6 +684,16 @@ fallback counts share that read owner, preserving visibility, ordering, and rece
 task windows. The caller revalidates the captured owner before formatting; a
 retired owner or failed preparation cannot render task data.
 
+Gateway `tasks.list` records each requester-session lookup with the existing
+access-revision owner before reading metadata, including missing or denied
+targets. Matching identity changes invalidate the selection across physical
+stores; ambiguous or retired-agent aliases retain global invalidation. Unrelated
+child-session creation can preserve a fresh canonical selection, while role,
+profile-alias, and policy changes still invalidate it. Carried cursors keep their
+global access revision. A fresh cursor receives the final revision only after
+the registry, page identity, and current visibility checks pass. The request
+scope records dependencies; it never grants access and is disposed on every exit.
+
 Synchronous task creation and managed-flow worker creation share one create/reuse
 operation. Each adapter keeps its selection order and transaction boundaries.
 Filling a missing delivery origin commits before optional metadata changes; that
