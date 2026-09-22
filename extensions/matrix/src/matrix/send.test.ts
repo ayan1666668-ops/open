@@ -63,7 +63,7 @@ const { resolveMarkdownTableModeMock, resolveTextChunkLimitMock } = vi.hoisted((
   ),
 }));
 
-vi.mock("openclaw/plugin-sdk/config-runtime", () => ({
+vi.mock("openclaw/plugin-sdk/markdown-table-runtime", () => ({
   resolveMarkdownTableMode: resolveMarkdownTableModeMock,
 }));
 
