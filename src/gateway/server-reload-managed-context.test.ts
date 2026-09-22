@@ -7,6 +7,7 @@ import {
 } from "../agents/auth-profiles/runtime-snapshots.js";
 import type { ChannelPlugin } from "../channels/plugins/types.public.js";
 import type { ConfigWriteNotification } from "../config/config.js";
+import { clearRuntimeConfigSnapshot } from "../config/runtime-snapshot.js";
 import {
   attachRuntimeConfigWriteApplication,
   createRuntimeConfigWriteApplication,
@@ -14,20 +15,29 @@ import {
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { requestGatewayRestartWithSignalAdmission } from "../infra/restart.js";
 import {
+  getLegacyPluginSdkResourceHost,
+  LegacyPluginSdkResourceHost,
+} from "../plugins/legacy-sdk-resource-host.js";
+import {
   captureActivePluginRegistrySnapshot,
   requireActivePluginChannelRegistry,
   restoreActivePluginRegistrySnapshot,
   setActivePluginRegistry,
 } from "../plugins/runtime.js";
 import { createEmptyRuntimeWebToolsMetadata } from "../secrets/runtime-fast-path.js";
-import type { PreparedSecretsRuntimeSnapshot } from "../secrets/runtime.js";
+import {
+  clearSecretsRuntimeSnapshot,
+  type PreparedSecretsRuntimeSnapshot,
+} from "../secrets/runtime.js";
 import { AsyncWorkScope, getAsyncWorkSignal } from "../shared/async-work-scope.js";
 import { createChannelTestPluginBase, createTestRegistry } from "../test-utils/channel-plugins.js";
 import type { GatewayCronState } from "./server-cron.js";
 import type { GatewayPluginReloadResult } from "./server-reload-contracts.js";
-import { startManagedGatewayConfigReloader as startManagedGatewayConfigReloaderImpl } from "./server-reload-managed.js";
+import type { startManagedGatewayConfigReloader as StartManagedGatewayConfigReloader } from "./server-reload-managed.js";
+import { SharedGatewaySessionGenerationState } from "./server-shared-auth-generation.js";
+import { createTestRuntimeSecretsActivator } from "./server-startup-config.test-support.js";
 
-type ManagedReloaderParams = Parameters<typeof startManagedGatewayConfigReloaderImpl>[0];
+type ManagedReloaderParams = Parameters<typeof StartManagedGatewayConfigReloader>[0];
 type ConfigWriteListener = (event: ConfigWriteNotification) => void;
 type ConfigWriteListenerRef = { current: ConfigWriteListener | null };
 type ManagedReloaderTestParams = Pick<
@@ -49,6 +59,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  clearSecretsRuntimeSnapshot();
+  clearRuntimeConfigSnapshot();
   restoreActivePluginRegistrySnapshot(pluginRegistrySnapshot);
   if (skipChannels === undefined) {
     delete process.env.OPENCLAW_SKIP_CHANNELS;
@@ -95,7 +107,10 @@ function makePreparedSecretsSnapshot(config: OpenClawConfig): PreparedSecretsRun
   };
 }
 
-function startManagedGatewayConfigReloader(params: ManagedReloaderTestParams) {
+function startManagedGatewayConfigReloader(
+  startManagedGatewayConfigReloaderImpl: typeof StartManagedGatewayConfigReloader,
+  params: ManagedReloaderTestParams,
+) {
   let state: ReturnType<ManagedReloaderParams["getState"]> = {
     hooksConfig: {} as never,
     hookClientIpConfig: {} as never,
@@ -132,11 +147,14 @@ function startManagedGatewayConfigReloader(params: ManagedReloaderTestParams) {
       pruneInactiveChannelAccountState: vi.fn(),
       releaseChannelRouteHandoffs: vi.fn(),
     } as never,
-    activateRuntimeSecrets: vi.fn(async (config: OpenClawConfig) =>
+    activateRuntimeSecrets: createTestRuntimeSecretsActivator(async ({ config }) =>
       makePreparedSecretsSnapshot(config),
-    ) as never,
+    ),
     resolveSharedGatewaySessionGenerationForConfig: () => undefined,
-    sharedGatewaySessionGenerationState: { current: undefined, required: null },
+    sharedGatewaySessionGenerationState: new SharedGatewaySessionGenerationState({
+      current: undefined,
+      required: null,
+    }),
     clients: [],
     reconcileRuntimePolicy: vi.fn(),
     commitRuntimePolicy: vi.fn(),
@@ -206,7 +224,7 @@ function captureConfigWriteListener(ref: ConfigWriteListenerRef) {
 }
 
 describe("managed gateway reload context", () => {
-  it("starts channel replacements outside the config writer's async context", async () => {
+  it("starts replacement channels with the current Gateway owner after a writer settles", async () => {
     // Real timers retain the writer's async context; advancing fake timers
     // outside it would hide the context leak this regression checks.
     const initialConfig: OpenClawConfig = {
@@ -221,41 +239,46 @@ describe("managed gateway reload context", () => {
     };
     setActivePluginRegistry(createTestRegistry([{ pluginId: "telegram", plugin, source: "test" }]));
     const writerContext = new AsyncLocalStorage<string>();
-    const staleStartupContext = new AsyncLocalStorage<string>();
+    const previousGateway = new LegacyPluginSdkResourceHost();
+    const currentGateway = new LegacyPluginSdkResourceHost();
     const writerWork = new AsyncWorkScope();
     const writeListenerRef: ConfigWriteListenerRef = { current: null };
     const channelContexts: Array<
-      [string | undefined, string | undefined, AbortSignal | undefined]
+      [string | undefined, LegacyPluginSdkResourceHost, AbortSignal | undefined]
     > = [];
     const logReloadError = vi.fn<(message: string) => void>();
     const startChannel = vi.fn(async () => {
-      channelContexts.push([
-        writerContext.getStore(),
-        staleStartupContext.getStore(),
-        getAsyncWorkSignal(),
-      ]);
-      return new Map();
+      const host = getLegacyPluginSdkResourceHost();
+      channelContexts.push([writerContext.getStore(), host, getAsyncWorkSignal()]);
+      return host.invoke(() => new Map());
     });
     const startupWork = new AsyncWorkScope();
-    const reloader = staleStartupContext.run("stale-owner", () =>
-      startupWork.run(() =>
-        startManagedGatewayConfigReloader({
-          initialConfig,
-          readSnapshot: async () => createValidConfigSnapshot(nextConfig, "profile-change"),
-          subscribeToWrites: captureConfigWriteListener(writeListenerRef),
-          startChannel,
-          logReload: { info: vi.fn(), warn: vi.fn(), error: logReloadError },
-        }),
-      ),
-    );
-    await reloader.ready;
-    await startupWork.drain();
-    const application = createRuntimeConfigWriteApplication();
-    const listener = writeListenerRef.current;
-    if (!listener) {
-      throw new Error("Expected managed config write listener");
-    }
+    let reloader: ReturnType<typeof StartManagedGatewayConfigReloader> | undefined;
     try {
+      // Production lazily imports this module inside the first Gateway's SDK host.
+      // Keep that module instance when the replacement Gateway takes ownership.
+      const { startManagedGatewayConfigReloader: startReloader } = await previousGateway.run(
+        () => import("./server-reload-managed.js"),
+      );
+      await previousGateway.close();
+      reloader = currentGateway.run(() =>
+        startupWork.run(() =>
+          startManagedGatewayConfigReloader(startReloader, {
+            initialConfig,
+            readSnapshot: async () => createValidConfigSnapshot(nextConfig, "profile-change"),
+            subscribeToWrites: captureConfigWriteListener(writeListenerRef),
+            startChannel,
+            logReload: { info: vi.fn(), warn: vi.fn(), error: logReloadError },
+          }),
+        ),
+      );
+      await reloader.ready;
+      await startupWork.drain();
+      const application = createRuntimeConfigWriteApplication();
+      const listener = writeListenerRef.current;
+      if (!listener) {
+        throw new Error("Expected managed config write listener");
+      }
       writerContext.run("channel-turn", () =>
         writerWork.run(() => {
           listener(
@@ -275,15 +298,19 @@ describe("managed gateway reload context", () => {
       await writerWork.drain();
 
       const status = await application.result;
-      expect(status, logReloadError.mock.calls.flat().join("\n")).toBe("applied");
       expect(startChannel).toHaveBeenCalled();
-      for (const [writer, startup, signal] of channelContexts) {
+      for (const [writer, host, signal] of channelContexts) {
         expect(writer).toBeUndefined();
-        expect(startup).toBeUndefined();
+        expect(host === currentGateway, "reload must use the current Gateway SDK host").toBe(true);
         expect(signal).toBeUndefined();
       }
+      expect(status, logReloadError.mock.calls.flat().join("\n")).toBe("applied");
     } finally {
-      await reloader.stop();
+      try {
+        await reloader?.stop();
+      } finally {
+        await Promise.all([previousGateway.close(), currentGateway.close()]);
+      }
     }
   });
 });
