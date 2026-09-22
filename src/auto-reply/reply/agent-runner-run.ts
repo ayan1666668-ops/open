@@ -30,6 +30,7 @@ import {
   createReplyAgentRestartRecoveryController,
   executePreparedReplyAgentRun,
 } from "./agent-runner-execute.js";
+import { resolveReplyFallbackSteeringAuthority } from "./agent-runner-fallback-authority.js";
 import {
   createShouldEmitToolOutput,
   createShouldEmitToolResult,
@@ -58,10 +59,7 @@ import * as replyRunState from "./reply-operation-run-state.js";
 import { type ReplyOperation, replyRunRegistry } from "./reply-run-registry.js";
 import { bindReplyOperationTyping } from "./reply-run-typing.js";
 import { createReplyToModeFilterForChannel, resolveReplyToMode } from "./reply-threading.js";
-import {
-  prepareReplyToolAuthority,
-  resolveFollowupRunToolAuthorityFingerprint,
-} from "./reply-tool-authority.js";
+import { prepareReplyToolAuthority } from "./reply-tool-authority.js";
 import { admitReplyTurn, resolveReplyTurnKind } from "./reply-turn-admission.js";
 import {
   isDuplicateRestartRecoverySource,
@@ -168,26 +166,22 @@ export async function runReplyAgent(
   const effectiveShouldSteer = !isHeartbeat && !effectiveResetTriggered && shouldSteer;
   const effectiveShouldFollowup = !effectiveResetTriggered && shouldFollowup;
   const messageInjectionDisposition = opts?.messageInjectionDisposition ?? "none";
-  const incomingToolAuthorityFingerprint = resolveFollowupRunToolAuthorityFingerprint(followupRun);
   const activeReplyOperation = sessionKey
     ? (replyRunRegistry.get(sessionKey) ?? providedReplyOperation)
     : providedReplyOperation;
-  const activeToolAuthorityFingerprint = activeReplyOperation?.toolAuthorityFingerprint;
-  const incomingAuthorityAtActiveRoute = activeReplyOperation?.toolAuthorityRoute
-    ? resolveFollowupRunToolAuthorityFingerprint(
-        followupRun,
-        activeReplyOperation.toolAuthorityRoute,
-      )
-    : undefined;
-  const hasAuthorityMismatch =
-    activeReplyOperation !== undefined &&
-    activeToolAuthorityFingerprint !== incomingToolAuthorityFingerprint;
-  const hasRouteOnlyAuthorityMismatch =
-    hasAuthorityMismatch &&
-    activeToolAuthorityFingerprint !== undefined &&
-    incomingAuthorityAtActiveRoute === activeToolAuthorityFingerprint;
-  const shouldQueueAuthorityMismatch =
-    effectiveShouldSteer && isActive && hasAuthorityMismatch && !hasRouteOnlyAuthorityMismatch;
+  const {
+    incomingToolAuthorityFingerprint,
+    activeToolAuthorityFingerprint,
+    incomingAuthorityAtActiveRoute,
+    hasRouteOnlyAuthorityMismatch,
+    automaticFallbackRoute,
+    shouldQueueAuthorityMismatch,
+  } = resolveReplyFallbackSteeringAuthority({
+    followupRun,
+    activeReplyOperation,
+    shouldSteer: effectiveShouldSteer,
+    isActive,
+  });
   if (shouldQueueAuthorityMismatch) {
     logVerbose(
       `queue: active session ${activeReplyOperation?.sessionId ?? followupRun.run.sessionId} has different or unknown tool authority; queuing instead of steering`,
@@ -346,7 +340,7 @@ export async function runReplyAgent(
     const result = await runActiveReplySteer({
       followupRun,
       opts,
-      providedReplyOperation,
+      providedReplyOperation: activeReplyOperation,
       queueKey,
       releaseAdmissionTicket,
       replyOperationRunState,
@@ -360,7 +354,10 @@ export async function runReplyAgent(
       touchActiveSessionEntry,
       typing,
       typingSignals,
-      toolAuthorityFingerprint: incomingToolAuthorityFingerprint,
+      toolAuthorityFingerprint: automaticFallbackRoute
+        ? (incomingAuthorityAtActiveRoute ?? incomingToolAuthorityFingerprint)
+        : incomingToolAuthorityFingerprint,
+      automaticFallbackRoute,
       pendingInputAuthorityFingerprint: hasRouteOnlyAuthorityMismatch
         ? activeToolAuthorityFingerprint
         : undefined,
