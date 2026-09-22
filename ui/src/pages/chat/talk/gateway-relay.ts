@@ -5,6 +5,7 @@ import {
 } from "../../../../../packages/gateway-protocol/src/index.js";
 import { t } from "../../../i18n/index.ts";
 import { formatUiError } from "../../../lib/format-error.ts";
+import { RealtimeTalkAudioInputBudget } from "./audio-input-budget.ts";
 import {
   bytesToBase64,
   floatToPcm16,
@@ -29,7 +30,6 @@ import {
 const BARGE_IN_RMS_THRESHOLD = 0.02;
 const BARGE_IN_PEAK_THRESHOLD = 0.08;
 const BARGE_IN_CONSECUTIVE_SPEECH_FRAMES = 2;
-const MAX_PENDING_AUDIO_MS = 3_000;
 const AUDIO_APPEND_TIMEOUT_MS = 8_000;
 const RELAY_CLOSE_TIMEOUT_MS = 8_000;
 const MAX_PENDING_ACTIVATION_EVENTS = 32;
@@ -56,7 +56,9 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
   private closed = false;
   private closeCompletion: Promise<void> = Promise.resolve();
   private audioAppendAbortController: AbortController | null = null;
-  private pendingAudioMs = 0;
+  private readonly audioInputBudget = new RealtimeTalkAudioInputBudget((status, detail) =>
+    this.ctx.callbacks.onStatus?.(status, detail),
+  );
   private readonly outputQueue = new RealtimeTalkPcmOutputQueue();
   private readonly toolAbortControllers = new Map<string, AbortController>();
   private readonly completedToolCalls = new Set<string>();
@@ -226,17 +228,14 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
       }
       const abortController = this.audioAppendAbortController;
       const frameMs = (samples.length / this.session.audio.inputSampleRateHz) * 1000;
-      // A stalled Gateway or a busy page makes live frames stale. Drop frames past the
-      // budget instead of ending the call; the append timeout still fails a dead relay.
-      if (
-        !abortController ||
-        abortController.signal.aborted ||
-        this.pendingOutputCancellations ||
-        this.pendingAudioMs + frameMs > MAX_PENDING_AUDIO_MS
-      ) {
+      // Drop stale frames past the budget without ending the call, but make the loss
+      // visible so the user repeats it. The append timeout still fails a dead relay.
+      if (!abortController || abortController.signal.aborted || this.pendingOutputCancellations) {
         return;
       }
-      this.pendingAudioMs += frameMs;
+      if (!this.audioInputBudget.reserve(frameMs)) {
+        return;
+      }
       const pcm = floatToPcm16(samples);
       void this.ctx.client
         .request(
@@ -253,7 +252,9 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
         )
         .catch((error: unknown) => this.failAudioAppend(error))
         .finally(() => {
-          this.pendingAudioMs = Math.max(0, this.pendingAudioMs - frameMs);
+          if (!this.closed) {
+            this.audioInputBudget.settle(frameMs);
+          }
         });
     });
   }
@@ -261,7 +262,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
   private abortPendingAudioAppends(): void {
     this.audioAppendAbortController?.abort();
     this.audioAppendAbortController = null;
-    this.pendingAudioMs = 0;
+    this.audioInputBudget.reset();
   }
 
   private failAudioAppend(error: unknown): void {

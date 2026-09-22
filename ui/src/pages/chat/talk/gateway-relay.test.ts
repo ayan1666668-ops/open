@@ -652,7 +652,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     expect(requestCallsFor(client, "talk.session.close")).toHaveLength(1);
   });
 
-  it("drops stale microphone frames past the budget instead of ending the call", async () => {
+  it("reports dropped microphone frames and recovery without ending the call", async () => {
     const onStatus = vi.fn();
     const client = createClient();
     const resolvers: Array<() => void> = [];
@@ -672,7 +672,17 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     }
 
     expect(requestCallsFor(client, "talk.session.appendAudio")).toHaveLength(17);
-    expect(onStatus).not.toHaveBeenCalledWith("error", expect.anything());
+    expect(onStatus).toHaveBeenCalledWith(
+      "error",
+      "Realtime Talk audio input fell behind; repeat the last part",
+    );
+    expect(
+      onStatus.mock.calls.filter(
+        ([status, detail]) =>
+          status === "error" &&
+          detail === "Realtime Talk audio input fell behind; repeat the last part",
+      ),
+    ).toHaveLength(1);
     expect(requestCallsFor(client, "talk.session.close")).toHaveLength(0);
 
     for (const resolve of resolvers.splice(0)) {
@@ -681,6 +691,10 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     for (let tick = 0; tick < 4; tick += 1) {
       await Promise.resolve();
     }
+    expect(onStatus).toHaveBeenCalledWith(
+      "listening",
+      "Microphone input recovered; repeat the last part",
+    );
     pumpMicrophone(samples);
     expect(requestCallsFor(client, "talk.session.appendAudio")).toHaveLength(18);
     void transport.stop();
