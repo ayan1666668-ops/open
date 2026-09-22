@@ -155,7 +155,7 @@ async function pruneOwnershipIndex(index: OwnershipIndex): Promise<OwnershipInde
   if (Object.keys(index).length <= MAX_OWNERSHIP_ENTRIES) {
     return index;
   }
-  const oldestFirst = Object.entries(index).sort(
+  const oldestFirst = Object.entries(index).toSorted(
     ([, left], [, right]) => left.stagedAt - right.stagedAt,
   );
   const kept: OwnershipIndex = { ...index };
