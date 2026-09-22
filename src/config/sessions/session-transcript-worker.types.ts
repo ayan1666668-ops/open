@@ -45,6 +45,7 @@ import type { CanonicalSessionReaderContinuation } from "./session-canonical-key
 import type {
   SessionHistoryWorkerRequest,
   SessionHistoryWorkerResult,
+  SessionHistoryDelta,
 } from "./session-history-types.js";
 import type { SessionMembershipFacts } from "./session-membership-facts.types.js";
 import type { SessionMember } from "./session-sharing-store.kernel.js";
@@ -354,6 +355,18 @@ export type SessionTranscriptWorkerValues = {
   };
 };
 
+export type SessionTranscriptWorkerReadError =
+  | { kind: "read-error"; message: string; payload: OpenClawStateWorkerErrorPayload }
+  | { kind: "cold"; sessionId: string }
+  | { kind: "projection"; sessionId: string }
+  | { kind: "fence"; message: string }
+  | { kind: "syntax"; message: string }
+  | { kind: "storage"; reason?: SessionTranscriptStorageUnavailableError["reason"] };
+
+type SessionTranscriptWorkerError =
+  | SessionTranscriptWorkerReadError
+  | { kind: "delta-visibility"; partial: SessionHistoryDelta };
+
 export type SessionTranscriptWorkerReply<Kind extends keyof SessionTranscriptWorkerValues> =
   | {
       ok: true;
@@ -362,13 +375,7 @@ export type SessionTranscriptWorkerReply<Kind extends keyof SessionTranscriptWor
     }
   | {
       ok: false;
-      error:
-        | { kind: "read-error"; message: string; payload: OpenClawStateWorkerErrorPayload }
-        | { kind: "cold"; sessionId: string }
-        | { kind: "projection"; sessionId: string }
-        | { kind: "fence"; message: string }
-        | { kind: "syntax"; message: string }
-        | { kind: "storage"; reason?: SessionTranscriptStorageUnavailableError["reason"] };
+      error: SessionTranscriptWorkerError;
     };
 
 export type SessionHistoryWorkerDatabase = {
