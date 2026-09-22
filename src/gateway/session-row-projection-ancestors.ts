@@ -115,6 +115,12 @@ export function createSessionRowAncestorReads(owner: {
   describe: SessionRowReadView["describe"];
   inOwnerContext: ReturnType<typeof AsyncLocalStorage.snapshot>;
   placementFacts: ReturnType<typeof createSessionRowPlacementProjection>;
+  membership: {
+    prepare: () => Promise<void>;
+    needsPreparation: (
+      queries: (config: records.Inputs["cfg"]) => readonly records.Lookup[],
+    ) => boolean;
+  };
   isActive: () => boolean;
   projection: () => SessionRowReadView & { isCurrent(row: records.Row): boolean };
 }) {
@@ -124,7 +130,11 @@ export function createSessionRowAncestorReads(owner: {
         ...owner.state(),
         referenced: owner.referenced,
         prepare: (row) =>
-          records.hasEntry(row) && owner.placementFacts.isPrepared(row.entry.sessionId)
+          records.hasEntry(row) &&
+          owner.placementFacts.isPrepared(row.entry.sessionId) &&
+          !owner.membership.needsPreparation(() => [
+            { ...row, storePath: row.storeTarget.storePath },
+          ])
             ? owner.describe({ ...row, storePath: row.storeTarget.storePath }, row)
             : undefined,
       }),
@@ -159,37 +169,58 @@ export function createSessionRowAncestorReads(owner: {
           }
         : queries;
       const archivedRows = owner.retainArchiveRows();
+      const membershipPending = Symbol("session-membership-pending");
       try {
-        return await owner.placementFacts.withPreparedRows(
-          owner.projection(),
-          owner.isActive,
-          owner.lookup,
-          selected,
-          (targets) => {
-            archivedRows.update(
-              targets.flatMap((query) => {
-                if (
-                  isIncognitoSessionKey(
-                    resolveStoredSessionKeyForAgentStore({
-                      cfg: owner.state().cfg,
-                      sessionKey: query.key,
-                      agentId: query.agentId,
-                    }),
-                  )
-                ) {
-                  return [];
-                }
-                const row = owner.lookup(query);
-                return row?.entry?.archivedAt !== undefined ? [records.identity(row)] : [];
-              }),
-            );
-            return owner.prepareExactRows(targets);
-          },
-          (read) => {
-            owner.assertExactRowsPrepared(selected(read.state.cfg));
-            return consume(read);
-          },
-        );
+        while (owner.isActive()) {
+          while (owner.isActive() && owner.membership.needsPreparation(selected)) {
+            await owner.membership.prepare();
+          }
+          const prepared = await owner.placementFacts.withPreparedRows<
+            T | typeof membershipPending
+          >(
+            owner.projection(),
+            owner.isActive,
+            owner.lookup,
+            selected,
+            (targets) => {
+              archivedRows.update(
+                targets.flatMap((query) => {
+                  if (
+                    isIncognitoSessionKey(
+                      resolveStoredSessionKeyForAgentStore({
+                        cfg: owner.state().cfg,
+                        sessionKey: query.key,
+                        agentId: query.agentId,
+                      }),
+                    )
+                  ) {
+                    return [];
+                  }
+                  const row = owner.lookup(query);
+                  return row?.entry?.archivedAt !== undefined ? [records.identity(row)] : [];
+                }),
+              );
+              if (owner.membership.needsPreparation(() => targets)) {
+                return owner.membership.prepare();
+              }
+              return owner.prepareExactRows(targets);
+            },
+            (read) => {
+              if (owner.membership.needsPreparation(selected)) {
+                return membershipPending;
+              }
+              owner.assertExactRowsPrepared(selected(read.state.cfg));
+              return consume(read);
+            },
+          );
+          if (prepared.kind === "pending") {
+            return prepared;
+          }
+          if (prepared.value !== membershipPending) {
+            return { kind: "complete", value: prepared.value };
+          }
+        }
+        throw new Error("Session row projection is no longer active");
       } finally {
         archivedRows.release();
       }

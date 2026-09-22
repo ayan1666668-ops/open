@@ -26,6 +26,7 @@ export function createSessionRowRefresh(
     topology: () => void;
     catalog: { needsInitialRead: boolean; refresh: () => Promise<unknown> };
     placementFacts: { prepare: () => Promise<void>; needsPreparation: boolean };
+    membership: { prepare: () => Promise<void>; needsPreparation: boolean };
     retainArchived: (row: records.MaterializedRow) => void;
   },
 ) {
@@ -105,6 +106,7 @@ export function createSessionRowRefresh(
     if (owner.state().topologyDirty) {
       owner.topology();
     }
+    await owner.membership.prepare();
     if (owner.catalog.needsInitialRead) {
       await owner.catalog.refresh();
     }
@@ -116,7 +118,11 @@ export function createSessionRowRefresh(
     ) {
       await pending;
     }
-    if (owner.placementFacts.needsPreparation) {
+    if (
+      owner.state().topologyDirty ||
+      owner.membership.needsPreparation ||
+      owner.placementFacts.needsPreparation
+    ) {
       return;
     }
     await withSessionRowDatabaseFacts(
