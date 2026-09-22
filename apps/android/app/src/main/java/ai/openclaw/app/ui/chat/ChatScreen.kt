@@ -108,6 +108,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.Interaction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -567,6 +570,14 @@ internal fun ChatScreen(
         viewModel.isCurrentChatComposerOwner(expected) && (canChangeThinking() || canChangeFastMode(expected))
       }
     }
+  var effortPreview by remember(
+    composerOwner,
+    selectionGeneration,
+    selectedModelRef,
+    thinkingLevel,
+    thinkingLevelSelection.options,
+    effortPicker.visible,
+  ) { mutableStateOf<String?>(null) }
   val backgroundTasks =
     remember(viewModel, pickerActivity, pickerView, lifecycleOwner) {
       ChatModelPickerSessionOwner(pickerActivity, pickerView, lifecycleOwner.lifecycle) { expected ->
@@ -1081,7 +1092,7 @@ internal fun ChatScreen(
         inputDrafts[composerOwner] = it
       },
       attachments = attachments,
-      thinkingLevel = thinkingLevel,
+      thinkingLevel = effortPreview ?: thinkingLevel,
       thinkingOptions = thinkingLevelSelection.options,
       thinkingSupported = thinkingSupported,
       thinkingLevelEnabled = canAdminSessionSettings,
@@ -1264,7 +1275,7 @@ internal fun ChatScreen(
   }
 
   effortPicker.visible?.let { opening ->
-    key(opening) {
+    key(opening, selectedModelRef, selectionGeneration) {
       ChatEffortSheet(
         opening = opening,
         options = thinkingLevelSelection.options,
@@ -1273,6 +1284,9 @@ internal fun ChatScreen(
         thinkingLevelEnabled = canAdminSessionSettings,
         fastMode = fastMode,
         fastModeEnabled = canChangeFastMode(opening.composerOwner),
+        onPreviewChange = { level ->
+          if (level == null || (effortPicker.admit(opening) && canChangeThinking())) effortPreview = level
+        },
         onSelect = { level ->
           if (effortPicker.admit(opening) && canChangeThinking()) {
             viewModel.setChatThinkingLevel(level)
@@ -3557,29 +3571,53 @@ internal fun ChatEffortSliderControl(
   options: List<ChatThinkingLevelOption>,
   selectedId: String,
   enabled: Boolean,
+  onPreviewChange: (String?) -> Unit = {},
   onSelect: (String) -> Unit,
 ) {
   val languageTag = currentAppLanguage().languageTag
   val selectedPosition = resolveChatEffortPosition(selectedId, options)
-  var previewing by remember(selectedId, options) { mutableStateOf(false) }
+  var previewing by remember(selectedId, options, enabled) { mutableStateOf(false) }
   val sliderState =
-    remember(selectedId, options) {
+    remember(selectedId, options, enabled) {
       SliderState(
         value = selectedPosition.optionIndex.coerceAtLeast(0).toFloat(),
         steps = (options.size - 2).coerceAtLeast(0),
         valueRange = 0f..options.lastIndex.coerceAtLeast(0).toFloat(),
       )
     }
+  val interactionSource =
+    remember(sliderState) {
+      val source = MutableInteractionSource()
+      object : MutableInteractionSource by source {
+        var dragCancelled = false
+
+        override suspend fun emit(interaction: Interaction) {
+          // Draggable invokes the finish callback after emitting Cancel as well as Stop.
+          // Record cancellation synchronously; a flow collector can run after the callback.
+          if (interaction is DragInteraction.Cancel) dragCancelled = true
+          source.emit(interaction)
+        }
+      }
+    }
+  val currentOnPreviewChange by rememberUpdatedState(onPreviewChange)
+  DisposableEffect(sliderState) {
+    onDispose { currentOnPreviewChange(null) }
+  }
   sliderState.onValueChange = { value ->
+    interactionSource.dragCancelled = false
     sliderState.value = value
     previewing = true
+    onPreviewChange(options.getOrNull(value.roundToInt())?.id)
   }
   sliderState.onValueChangeFinished = {
-    options.getOrNull(sliderState.value.roundToInt())?.let { option ->
-      if (!option.id.equals(selectedId, ignoreCase = true)) onSelect(option.id)
+    if (!interactionSource.dragCancelled) {
+      options.getOrNull(sliderState.value.roundToInt())?.let { option ->
+        if (!option.id.equals(selectedId, ignoreCase = true)) onSelect(option.id)
+      }
     }
     sliderState.value = selectedPosition.optionIndex.coerceAtLeast(0).toFloat()
     previewing = false
+    onPreviewChange(null)
   }
   val sliderIndex = sliderState.value.roundToInt()
   val selectedLabel =
@@ -3607,6 +3645,7 @@ internal fun ChatEffortSliderControl(
       Slider(
         state = sliderState,
         enabled = enabled,
+        interactionSource = interactionSource,
         modifier =
           Modifier.padding(horizontal = 20.dp).semantics {
             contentDescription = nativeString("Thinking")
@@ -3700,6 +3739,7 @@ private fun ChatEffortSheet(
   thinkingLevelEnabled: Boolean,
   fastMode: Boolean,
   fastModeEnabled: Boolean,
+  onPreviewChange: (String?) -> Unit,
   onSelect: (String) -> Unit,
   onFastModeChange: (Boolean) -> Unit,
   onDismiss: () -> Unit,
@@ -3725,6 +3765,7 @@ private fun ChatEffortSheet(
           options = thinkingOptions,
           selectedId = selectedId,
           enabled = thinkingLevelEnabled,
+          onPreviewChange = onPreviewChange,
           onSelect = onSelect,
         )
       }

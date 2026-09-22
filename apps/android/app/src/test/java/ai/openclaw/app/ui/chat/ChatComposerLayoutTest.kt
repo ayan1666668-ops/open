@@ -3441,6 +3441,90 @@ class ChatComposerLayoutTest {
       assertTrue("An admitted A request completes without closing or retargeting B", fresh.isShowing)
     }
 
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi")
+  fun effortGaugeFollowsHeldDragAndCommitsOnlyOnRelease() =
+    withEffortRequests { model, requests, release ->
+      val dialog = openEffortSheet()
+      val gauge = composeRule.onNodeWithTag("chat-thinking-gauge", useUnmergedTree = true)
+      val before = gauge.captureToImage().asAndroidBitmap()
+      val (x, y, time) = startEffortDrag(dialog)
+      val preview = gauge.captureToImage().asAndroidBitmap()
+      captureComposerProof("effort-held-drag")
+      System.getenv("OPENCLAW_CHAT_WORK_PROOF_DIR")?.let { directory ->
+        val image = composeRule.onNode(isDialog()).captureToImage().asAndroidBitmap()
+        File(directory, "effort-slider.png").outputStream().use { assertTrue(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+      }
+      assertFalse("The gauge needle must follow the held slider", before.sameAs(preview))
+      assertEquals("low", model.chatThinkingLevel.value)
+      assertEquals("Preview must not dispatch a request", 0, requests.size)
+      composeRule.runOnUiThread { sheetTouch(dialog, MotionEvent.ACTION_UP, x, y, time, time + 80) }
+      composeRule.waitUntil { requests.size == 1 }
+      assertEquals(JsonPrimitive("high"), requests.single().second["thinkingLevel"])
+      composeRule.runOnIdle { release.complete(Unit) }
+      composeRule.waitUntil { model.chatThinkingLevel.value == "high" }
+      assertTrue("Committed high must match the previewed needle", preview.sameAs(gauge.captureToImage().asAndroidBitmap()))
+    }
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi")
+  fun effortGaugeClearsCancelledDragWithoutCommitting() =
+    withEffortRequests { model, requests, release ->
+      val dialog = openEffortSheet()
+      val gauge = composeRule.onNodeWithTag("chat-thinking-gauge", useUnmergedTree = true)
+      val before = gauge.captureToImage().asAndroidBitmap()
+      val (x, y, time) = startEffortDrag(dialog)
+      assertFalse(before.sameAs(gauge.captureToImage().asAndroidBitmap()))
+      composeRule.runOnUiThread { sheetTouch(dialog, MotionEvent.ACTION_CANCEL, x, y, time, time + 80) }
+      composeRule.waitForIdle()
+      assertEquals("Cancellation must not dispatch a request", 0, requests.size)
+      assertEquals("low", model.chatThinkingLevel.value)
+      effortSlider().assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, nativeString("Low")))
+      assertTrue(before.sameAs(gauge.captureToImage().asAndroidBitmap()))
+      val (nextX, nextY, nextTime) = startEffortDrag(dialog)
+      composeRule.runOnUiThread { sheetTouch(dialog, MotionEvent.ACTION_UP, nextX, nextY, nextTime, nextTime + 80) }
+      composeRule.waitUntil { requests.size == 1 }
+      assertEquals(JsonPrimitive("high"), requests.single().second["thinkingLevel"])
+      composeRule.runOnIdle { release.complete(Unit) }
+      composeRule.waitUntil { model.chatThinkingLevel.value == "high" }
+    }
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi")
+  fun effortGaugeClearsPreviewWhenTheSheetIsDismissed() =
+    withEffortRequests { model, requests, _ ->
+      val dialog = openEffortSheet()
+      val gauge = composeRule.onNodeWithTag("chat-thinking-gauge", useUnmergedTree = true)
+      val before = gauge.captureToImage().asAndroidBitmap()
+      startEffortDrag(dialog)
+      assertFalse(before.sameAs(gauge.captureToImage().asAndroidBitmap()))
+      composeRule.runOnUiThread { dialog.onBackPressedDispatcher.onBackPressed() }
+      composeRule.onNode(isDialog()).assertDoesNotExist()
+      assertTrue("Dismissal restores the authoritative needle", before.sameAs(gauge.captureToImage().asAndroidBitmap()))
+      assertEquals("low", model.chatThinkingLevel.value)
+      assertEquals(0, requests.size)
+      openEffortSheet()
+      effortSlider().assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, nativeString("Low")))
+    }
+
+  @Test
+  @Config(qualifiers = "w800dp-h800dp-mdpi")
+  fun effortGaugeRestoresAuthoritativeLevelAfterRejectedCommit() =
+    withEffortRequests(rejectUpdate = true) { model, requests, release ->
+      val dialog = openEffortSheet()
+      val gauge = composeRule.onNodeWithTag("chat-thinking-gauge", useUnmergedTree = true)
+      val before = gauge.captureToImage().asAndroidBitmap()
+      val (x, y, time) = startEffortDrag(dialog)
+      assertFalse(before.sameAs(gauge.captureToImage().asAndroidBitmap()))
+      composeRule.runOnUiThread { sheetTouch(dialog, MotionEvent.ACTION_UP, x, y, time, time + 80) }
+      composeRule.waitUntil { requests.size == 1 }
+      composeRule.runOnIdle { release.complete(Unit) }
+      composeRule.waitUntil { composeRule.runOnIdle { controller.sessionKey.value !in model.chatPendingSessionSettingsKeys.value } }
+      assertEquals("low", model.chatThinkingLevel.value)
+      effortSlider().assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, nativeString("Low")))
+      assertTrue("A rejected update restores the needle as well as the slider", before.sameAs(gauge.captureToImage().asAndroidBitmap()))
+    }
+
   private fun effortSlider() = composeRule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo))
 
   private fun openEffortSheet(): ComponentDialog {
@@ -3467,6 +3551,7 @@ class ChatComposerLayoutTest {
   }
 
   private fun withEffortRequests(
+    rejectUpdate: Boolean = false,
     assertions: (MainViewModel, ConcurrentLinkedQueue<Pair<String, JsonObject>>, CompletableDeferred<Unit>) -> Unit,
   ) {
     prefs.gatewayRegistry.upsert(
@@ -3502,6 +3587,7 @@ class ChatComposerLayoutTest {
             val payload = Json.parseToJsonElement(checkNotNull(params)).jsonObject
             withEnqueue { requests.add(lease.endpointStableId to payload) }
             release.await()
+            if (rejectUpdate) error("Effort update rejected")
             buildJsonObject { put("entry", payload) }.toString()
           } else {
             lease.request(method, params, timeout, withEnqueue)
