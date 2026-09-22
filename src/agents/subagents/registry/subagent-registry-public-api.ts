@@ -11,7 +11,10 @@ import {
   getLatestSubagentRunByChildSessionKeyFromRuns,
 } from "./subagent-registry-queries.js";
 import type { PreparedSubagentRunsRead } from "./subagent-registry-read-snapshot.js";
-import { markRequesterTurnYieldedInRuns } from "./subagent-registry-requester-yield.js";
+import {
+  listUnsettledRequesterChildrenInRuns,
+  markRequesterTurnYieldedInRuns,
+} from "./subagent-registry-requester-yield.js";
 import {
   getSubagentRunsSnapshotForRead,
   prepareSubagentRunsSnapshotForRunIds,
@@ -210,6 +213,18 @@ export function createSubagentRegistryPublicApi(config: {
     });
   }
 
+  /** Lists announcing children whose completion this requester session still awaits. */
+  function listUnsettledRequesterChildren(params: {
+    requesterSessionKey: string;
+    requesterAgentId?: string;
+    excludeRequesterTurnRunId?: string;
+  }) {
+    restoreOnce();
+    // Same live-map view as the yield claim: rows this turn just registered
+    // count, and rows the registry already retired do not.
+    return listUnsettledRequesterChildrenInRuns({ ...params, runs });
+  }
+
   return {
     leasePendingAgentSteeringItems,
     ackPendingAgentSteeringItems,
@@ -223,5 +238,6 @@ export function createSubagentRegistryPublicApi(config: {
     countActiveRunsForSession,
     settleRequesterAfterSessionSpawns: settleRequesterTurn,
     markRequesterTurnYielded,
+    listUnsettledRequesterChildren,
   };
 }
