@@ -74,6 +74,8 @@
 .chat-group.chat-group--with-footer > .chat-group-messages {
   grid-column: var(--chat-group-content-column);
   grid-row: 1;
+  /* A taller avatar may grow this row, but never the bubble-to-footer gap. */
+  align-self: end;
   max-width: none;
 }
 
@@ -135,10 +137,10 @@
    instead of painting over the next message. */
 .chat-group-footer {
   display: flex;
-  align-self: stretch;
+  align-self: start;
   flex-wrap: wrap;
   gap: 8px;
-  align-items: center;
+  align-items: flex-start;
   width: 100%;
   min-width: 0;
   min-height: 24px;
@@ -790,22 +792,38 @@ img.chat-avatar {
     --chat-persistent-footer-opacity: 1;
   }
 
-  :where(.chat-thread)
-    .chat-group.user.chat-group--peer:not(.chat-group--meta-revealed, :focus-within) {
-    --chat-footer-detail-position: absolute;
+  /* Reserve the compact row on reveal; turn spacing belongs below the footer,
+     not between the sender and their controls. */
+  .chat-group.user.chat-group--peer {
+    --chat-footer-detail-position: static;
+  }
+
+  .chat-group.user.chat-group--peer .chat-group-footer {
+    flex-wrap: nowrap;
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  .chat-group.user.chat-group--peer .chat-group-footer__meta {
+    flex: 0 1 auto;
+    flex-wrap: wrap;
+    gap: 0 8px;
   }
 
   .chat-group.user.chat-group--peer .chat-group-footer-actions {
-    flex-basis: 100%;
+    flex: 0 0 auto;
     justify-content: flex-end;
   }
 
   .chat-group-footer-actions .chat-copy-btn,
   .chat-group-footer-actions .chat-reply-btn,
+  .chat-group-footer-actions .chat-group-rewind,
   .chat-message-actions-row .chat-copy-btn,
   .chat-message-actions-row .chat-reply-btn {
     min-width: 44px;
     min-height: 44px;
+    /* Grow touch targets downward without pushing labels away from bubbles. */
+    align-items: flex-start;
   }
 }
 
