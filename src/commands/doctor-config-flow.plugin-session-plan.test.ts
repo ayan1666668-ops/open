@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
@@ -127,6 +128,7 @@ module.exports = { stateMigrations: [{
           for (const pluginId of pluginIds) {
             expect(fs.existsSync(path.join(stateDir, `${pluginId}-migrated`))).toBe(false);
           }
+          assert.ok(ctx.runWithPluginMetadataSnapshot);
           await ctx.runWithPluginMetadataSnapshot({ config: ctx.cfg }, () =>
             runSessionTranscriptsHealth(ctx),
           );
