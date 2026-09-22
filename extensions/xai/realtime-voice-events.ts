@@ -22,7 +22,7 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
   private inputSpeechSequence = 0;
   private inputResponseStarted = false;
   private inputResponseFinished = false;
-  private inputResponseId: string | undefined;
+  private outputResponse: { id?: string; ended: boolean } | undefined;
   private finalizedToolCallItems = new Set<string>();
   private inputTranscriptReplacements = new Map<string, string>();
 
@@ -30,11 +30,34 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
   protected abstract onSessionUpdated(connection: RealtimeVoiceSessionConnection): void;
 
   protected handleEvent(event: XaiRealtimeEvent, connection: RealtimeVoiceSessionConnection): void {
+    const responseId = event.response_id ?? event.response?.id;
+    // A terminal retires all output from that response. Fence late deltas and
+    // duplicate terminals before they reach the relay or mutate the next response.
+    if (
+      event.type.startsWith("response.") &&
+      event.type !== "response.created" &&
+      this.outputResponse &&
+      (this.outputResponse.ended ||
+        (responseId && this.outputResponse.id && responseId !== this.outputResponse.id))
+    ) {
+      return;
+    }
     if (event.type === "response.created" && this.acceptsEvent(connection)) {
       // Publish the response owner before observers can interrupt its first PCM.
       this.inputResponseStarted = true;
       this.inputResponseFinished = false;
-      this.inputResponseId = event.response_id ?? event.response?.id;
+      // Cancellation before response.created belongs to that pending response.
+      // Only an identified successor can retire an older live response's fence.
+      if (
+        this.outputResponse &&
+        !this.outputResponse.ended &&
+        responseId &&
+        this.outputResponse.id &&
+        responseId !== this.outputResponse.id
+      ) {
+        this.responseCancelInFlight = false;
+      }
+      this.outputResponse = { id: responseId, ended: false };
       this.outputAudioGeneration += 1;
       this.responseActive = true;
       this.responseCreateInFlight = false;
@@ -257,6 +280,9 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
               .join("");
             this.flushAssistantTranscript(terminalTranscript);
           });
+          if (this.outputResponse) {
+            this.outputResponse.ended = true;
+          }
           invoke(() => this.config.onResponseDone?.(outcome));
           invoke(emitBridgeEvent);
         } finally {
@@ -323,6 +349,7 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
     this.finalizedInputTranscriptKeys.clear();
     this.inputResponseStarted = false;
     this.inputResponseFinished = false;
+    this.outputResponse = undefined;
     this.finalizedToolCallItems.clear();
   }
 
@@ -330,7 +357,7 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
     const responseId = event.response_id ?? event.response?.id;
     return (
       this.inputResponseStarted &&
-      (!responseId || !this.inputResponseId || responseId === this.inputResponseId)
+      (!responseId || !this.outputResponse?.id || responseId === this.outputResponse.id)
     );
   }
 
@@ -417,6 +444,13 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
       return;
     }
     if (detail === XAI_REALTIME_NO_ACTIVE_RESPONSE_CANCEL_ERROR) {
+      // A late error for an older response.cancel must not retire a successor
+      // response or flush another response.create. The successor's
+      // response.created clears this flag; only an in-flight cancellation may
+      // settle the cancellation error.
+      if (!this.responseCancelInFlight) {
+        return;
+      }
       this.responseActive = false;
       this.responseCancelInFlight = false;
       this.flushPendingResponseCreate();

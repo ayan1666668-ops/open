@@ -188,6 +188,134 @@ async function openRealtimeBridge(bridge: TestBridge, index = 0, conversationId?
 }
 
 describe("buildXaiRealtimeVoiceProvider", () => {
+  it("accepts successor audio when the cancelled response terminal arrives late", async () => {
+    const onAudio = vi.fn();
+    const onResponseDone = vi.fn();
+    const bridge = createTestBridge({ onAudio, onResponseDone });
+    const socket = await openRealtimeBridge(bridge);
+    socket.emitServer({ type: "response.created", response: { id: "interrupted" } });
+    bridge.handleBargeIn?.();
+    socket.emitServer({ type: "response.created", response: { id: "successor" } });
+    socket.emitServer({
+      type: "response.done",
+      response: { id: "interrupted", status: "cancelled" },
+    });
+    socket.emitServer({
+      type: "response.output_audio.delta",
+      response_id: "successor",
+      delta: "AAA=",
+    });
+    expect(onAudio).toHaveBeenCalledOnce();
+    expect(onResponseDone).not.toHaveBeenCalled();
+    socket.emitServer({
+      type: "response.done",
+      response: { id: "successor", status: "completed" },
+    });
+    expect(onResponseDone).toHaveBeenCalledExactlyOnceWith({
+      responseId: "successor",
+      status: "completed",
+    });
+    await bridge.close();
+  });
+
+  it("ignores a late cancellation error after a successor response starts", async () => {
+    const bridge = createTestBridge();
+    const socket = await openRealtimeBridge(bridge);
+    socket.emitServer({ type: "response.created", response: { id: "interrupted" } });
+    bridge.handleBargeIn?.();
+    socket.emitServer({ type: "response.created", response: { id: "successor" } });
+    bridge.sendUserMessage?.("queued while successor is active");
+    const responseCreatesBeforeError = parseSent(socket).filter(
+      (event) => event.type === "response.create",
+    ).length;
+    socket.emitServer({
+      type: "error",
+      error: { message: "Cancellation failed: no active response found" },
+    });
+    expect(parseSent(socket).filter((event) => event.type === "response.create")).toHaveLength(
+      responseCreatesBeforeError,
+    );
+    socket.emitServer({
+      type: "response.done",
+      response: { id: "successor", status: "completed" },
+    });
+    await bridge.close();
+  });
+
+  it.each([true, false])(
+    "fences retired response output and preserves the next consult response (keyed=%s)",
+    async (keyed) => {
+      const onAudio = vi.fn();
+      const onTranscript = vi.fn();
+      const onResponseDone = vi.fn();
+      const onToolCall = vi.fn();
+      const onEvent = vi.fn();
+      const bridge = createTestBridge({
+        onAudio,
+        onTranscript,
+        onResponseDone,
+        onToolCall,
+        onEvent,
+      });
+      const socket = await openRealtimeBridge(bridge);
+      socket.emitServer({ type: "response.created", response: { id: "consult" } });
+      socket.emitServer({
+        type: "response.done",
+        response: { id: "consult", status: "completed" },
+      });
+      onEvent.mockClear();
+      socket.emitServer({
+        type: "response.output_audio.delta",
+        ...(keyed ? { response_id: "consult" } : {}),
+        delta: "AAA=",
+      });
+      socket.emitServer({
+        type: "response.output_audio_transcript.done",
+        ...(keyed ? { response_id: "consult" } : {}),
+        transcript: "late",
+      });
+      expect(onAudio).not.toHaveBeenCalled();
+      expect(onTranscript).not.toHaveBeenCalled();
+      expect(onEvent).not.toHaveBeenCalled();
+
+      socket.emitServer({ type: "response.created", response: { id: "continuation" } });
+      socket.emitServer({
+        type: "response.output_audio_transcript.delta",
+        response_id: "continuation",
+        delta: "current",
+      });
+      socket.emitServer({
+        type: "response.done",
+        response: {
+          id: "consult",
+          status: "completed",
+          output: [
+            {
+              id: "stale-tool",
+              type: "function_call",
+              call_id: "stale-call",
+              name: "lookup",
+              arguments: "{}",
+            },
+          ],
+        },
+      });
+      expect(onToolCall).not.toHaveBeenCalled();
+      expect(onResponseDone).toHaveBeenCalledTimes(1);
+      expect(onTranscript.mock.calls).toEqual([["assistant", "current", false]]);
+      socket.emitServer({
+        type: "response.done",
+        response: { id: "continuation", status: "completed" },
+      });
+      expect(onTranscript.mock.calls).toEqual([
+        ["assistant", "current", false],
+        ["assistant", "current", true],
+      ]);
+      expect(onResponseDone).toHaveBeenCalledTimes(2);
+      await bridge.close();
+    },
+  );
+
   it.each([false, true])(
     "releases a marked completed response after interruption (server VAD=%s)",
     async (serverVad) => {
