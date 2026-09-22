@@ -12,6 +12,7 @@ import {
   listDevicePairing,
   requestDevicePairing,
 } from "../infra/device-pairing.js";
+import { getActiveGatewayRootWorkCount } from "../process/gateway-work-admission.js";
 import type {
   NodeIdentityProbeParams,
   NodeIdentityProbeResult,
@@ -169,15 +170,27 @@ describeWithLanNodePairingServer("gateway ssh-verified node pairing auto-approve
     await attemptWithSshVerify({
       identityName: "ssh-verify-key-match",
       run: async ({ lanIp, loaded, connectNode }) => {
+        // A completed matching probe can authorize the first connection. Hold it
+        // until the pending handshake and retry-hint assertions have finished.
         const probe = createDeferred<NodeIdentityProbeResult>();
         probeMock.mockImplementation(() => probe.promise);
         try {
           const first = await connectNode();
           expect(first.ok).toBe(false);
+          expect(probeMock).toHaveBeenCalledOnce();
           const details = first.error?.details as PairingRequiredDetails | undefined;
           // The node must keep retrying while the detached probe can still land.
           expect(details?.recommendedNextStep).toBe("wait_then_retry");
           expect(details?.pauseReconnect).toBe(false);
+          expect(await getPairedDevice(loaded.identity.deviceId)).toBeNull();
+          expect((await listDevicePairing()).pending).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                deviceId: loaded.identity.deviceId,
+                publicKey: loaded.publicKey,
+              }),
+            ]),
+          );
           probe.resolve({
             status: "ok",
             stdout: `motd noise\n{"deviceId":"${loaded.identity.deviceId}","publicKey":"${loaded.publicKey}"}\n`,
@@ -203,7 +216,13 @@ describeWithLanNodePairingServer("gateway ssh-verified node pairing auto-approve
           expect(record?.nodeSurface).toBeDefined();
           expect(record?.pendingNodeSurface).toBeUndefined();
         } finally {
+          // Release a failed assertion's probe and join its full approval tail
+          // before the next case resets configuration or pairing state.
           probe.resolve({ status: "timeout" });
+          await waitFor(
+            async () => (getActiveGatewayRootWorkCount() === 0 ? true : undefined),
+            "SSH pairing work completion",
+          );
         }
       },
     });
