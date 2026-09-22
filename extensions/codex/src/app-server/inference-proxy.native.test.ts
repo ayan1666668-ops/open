@@ -154,7 +154,7 @@ describe.skipIf(process.platform === "win32")("native inference admission", () =
         });
       };
       const upstream = http.createServer();
-      const wss = new WebSocketServer({ noServer: true });
+      const wss = new WebSocketServer({ noServer: true, maxPayload: 32 * 1024 * 1024 });
       let disconnectNextHandshake = false;
       upstream.on("upgrade", (request, socket, head) => {
         if (disconnectNextHandshake) {
