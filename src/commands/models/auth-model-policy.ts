@@ -114,6 +114,7 @@ export async function completeProviderModelAccess(params: {
   prepared: ReturnType<typeof prepareProviderModelAccess>;
   prompter: Pick<WizardPrompter, "select">;
   runtime: RuntimeEnv;
+  mode?: "prompt" | "keep";
   assertCurrent?: (config?: OpenClawConfig) => void;
   onRequested?: (request: PreparedProviderModelAccess) => void;
   beforeCommit?: () => void;
@@ -126,6 +127,11 @@ export async function completeProviderModelAccess(params: {
   if (params.onRequested) {
     params.onRequested(prepared);
     return { kind: "deferred", message: "" };
+  }
+  if (params.mode === "keep") {
+    const message = "Current model restrictions kept.";
+    params.runtime.log(message);
+    return { kind: "unchanged", message };
   }
   const choice = await params.prompter.select(prepared.prompt);
   params.assertCurrent?.();

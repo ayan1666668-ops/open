@@ -28,6 +28,19 @@ API calls, not exported OpenClaw functions.
   details in core.
 </Tip>
 
+## Run provider-owned auth without a TTY
+
+An auth method may set `headless: true` when its `run` implementation never
+reads terminal input or waits for a `prompter` response. Browser or device-code
+confirmation and progress output are allowed. The flag applies only to
+`openclaw models auth login`; hosted Gateway and Plugin SDK callers continue to
+use their supplied prompters.
+
+A non-interactive CLI caller must provide enough flags to avoid provider and
+method pickers. After credentials are saved, OpenClaw keeps existing model
+restrictions and reports that choice instead of opening the model-access
+prompt. Methods without `headless: true` retain the interactive-TTY requirement.
+
 ## Import an existing credential during sign-in
 
 An auth method can declare `credentialImport` with a `migrationProviderId`,

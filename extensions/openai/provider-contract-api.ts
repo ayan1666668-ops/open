@@ -86,6 +86,7 @@ export function createOpenAIProvider(): ProviderPlugin {
       {
         id: "device-code",
         kind: "device_code",
+        headless: true,
         label: OPENAI_CHATGPT_DEVICE_PAIRING_LABEL,
         hint: OPENAI_CHATGPT_DEVICE_PAIRING_HINT,
         run: noopAuth,

@@ -175,6 +175,12 @@ export type ProviderAuthMethod = {
   label: string;
   hint?: string;
   kind: ProviderAuthKind;
+  /**
+   * Allow this provider-owned method to run without an interactive terminal.
+   * The method must not read terminal input or await an interactive prompt;
+   * external browser/device confirmation and progress output are allowed.
+   */
+  headless?: boolean;
   /** Provider-owned model used to validate app-guided secret setup. */
   starterModel?: string;
   /** One-time import attempted only after the user starts this login method. */
