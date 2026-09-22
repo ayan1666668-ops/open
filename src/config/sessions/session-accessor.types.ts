@@ -9,6 +9,7 @@ import type {
   SessionTranscriptTurnMutationResult,
 } from "./goals-operations.types.js";
 import type { SessionLifecycleStoreTarget } from "./session-accessor.lifecycle-types.js";
+import type { SessionOwnerAssignment } from "./session-entry-provenance.js";
 import type {
   SessionLifecycleRevisionExpectation,
   SessionTranscriptTurnExpectedState,
@@ -547,6 +548,8 @@ export type ReplySessionInitializationCommitResult =
 export type SessionEntryPatchOptions = {
   /** Synchronous final ownership check executed inside the commit transaction. */
   assertCommitAllowed?: () => void;
+  /** Internal review owner authorization; ordinary patches preserve the current pause. */
+  providerReviewMutation?: boolean;
   /** Let this write satisfy a legacy updatedAt=0 pending reset without rotating lifecycle identity. */
   consumePendingReset?: boolean;
   /** Entry to synthesize when a patch operation is allowed to create. */
@@ -810,6 +813,8 @@ export type SessionEntryCreateWithTranscriptOptions = {
   withCommit?: <T>(run: (assertSourceCurrent: () => void) => Promise<T>) => Promise<T>;
   /** Non-throwing notification after the entry's outer COMMIT, before publication or cleanup. */
   onLifecycleCommitted?: (entry: SessionEntry) => void;
+  /** Resolves a trusted owner after entry projection; the assignment commits with a new entry. */
+  resolveOwnerAssignment?: () => SessionOwnerAssignment | undefined;
 };
 
 export type SessionPatchProjectionSnapshot = { store: Readonly<Record<string, SessionEntry>> };
