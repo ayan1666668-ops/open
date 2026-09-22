@@ -9,6 +9,10 @@ import {
   setRuntimeConfigSnapshot,
 } from "../config/runtime-snapshot.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import {
+  initializeGlobalHookRunner,
+  resetGlobalHookRunner,
+} from "../plugins/hook-runner-global.js";
 import { loadPluginRegistryHandle } from "../plugins/loader.js";
 import { createPluginCache, withPluginCache } from "../plugins/plugin-cache.js";
 import { getPluginInstance, type PluginInstanceHandle } from "../plugins/plugin-instance-scope.js";
@@ -27,6 +31,7 @@ it("serves tools from the replacement generation after the listener creator reti
   const bundledDir = path.join(root, "bundled");
   const pluginDir = path.join(bundledDir, "generation-probe");
   const workspaceDir = path.join(root, "workspace");
+  const observationsPath = path.join(root, "tool-completions.jsonl");
   const config: OpenClawConfig = {
     agents: { defaults: { workspace: workspaceDir } },
     plugins: { allow: ["generation-probe"], entries: { "generation-probe": { enabled: true } } },
@@ -101,6 +106,13 @@ it("serves tools from the replacement generation after the listener creator reti
       fs.writeFileSync(
         path.join(pluginDir, "index.cjs"),
         `module.exports = { id: "generation-probe", register(api) {
+      const fs = require("node:fs");
+      api.on("after_tool_call", (event, ctx) => {
+        fs.appendFileSync(${JSON.stringify(observationsPath)}, JSON.stringify({
+          toolName: event.toolName, sessionKey: ctx.sessionKey, result: event.result
+        }) + "\\n");
+        throw new Error("observer failure must not change the HTTP result");
+      }, { matcher: ["generation_probe"] });
       api.registerWidgetPresenter({
         target: "node_panel", description: "Synthetic generation presenter",
         availability: async () => ({ ok: true, value: { available: true } }),
@@ -116,17 +128,35 @@ it("serves tools from the replacement generation after the listener creator reti
       setRuntimeConfigSnapshot(config);
       const original = loadGeneration();
       setActivePluginRegistry(original.pluginRegistry);
+      initializeGlobalHookRunner(original.pluginRegistry);
       await withPluginRuntimeGenerationScope(original, () => ensureMcpLoopbackServer());
       await callTool("before");
 
       const replacement = loadGeneration();
       setActivePluginRegistry(replacement.pluginRegistry);
+      initializeGlobalHookRunner(replacement.pluginRegistry);
       await original.instance.dispose();
       await callTool("after");
+      await vi.waitFor(() =>
+        expect(
+          fs
+            .readFileSync(observationsPath, "utf8")
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line)),
+        ).toEqual(
+          ["before", "after"].map((phase) => ({
+            toolName: "generation_probe",
+            sessionKey: `agent:main:generation-${phase}`,
+            result: { content: [{ type: "text", text: "generation tool available" }], details: {} },
+          })),
+        ),
+      );
     },
     () => closeMcpLoopbackServer(),
     () => Promise.all(instances.map((instance) => instance.dispose())),
     () => resetPluginRuntimeStateForTest(),
+    () => resetGlobalHookRunner(),
     () => clearRuntimeConfigSnapshot(),
     () => vi.unstubAllEnvs(),
   );

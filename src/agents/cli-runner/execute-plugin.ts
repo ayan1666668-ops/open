@@ -27,7 +27,6 @@ import { resolveExecToolConfig } from "../lazy-exec-tool.js";
 import { resolveReplyExpectation } from "../reply-completion.js";
 import { recordAgentCleanupFailure } from "../run-cleanup-timeout.js";
 import { resolveToolLoopDetectionConfig } from "../tool-loop-detection-config.js";
-import { normalizeToolPolicyName } from "../tool-policy.js";
 import {
   restartCliLiveSession,
   createCliLiveSessionCapability,
@@ -42,6 +41,7 @@ import { createCliPluginWatchdog, type CliWatchdogClock } from "./execute-plugin
 import { createCliRunCurrentAssertion } from "./execution-target.js";
 import { createCliFailoverError as failover } from "./exit-error.js";
 import * as noOutputPolicy from "./no-output-timeout-policy.js";
+import { normalizeCliToolName } from "./tool-policy.js";
 import type { PreparedCliRunContext } from "./types.js";
 
 const PLUGIN_ITERATOR_CLOSE_TIMEOUT_MS = 5_000;
@@ -86,9 +86,7 @@ function createPluginToolPermissionHandler(params: {
     }
 
     // Provider schemas are not policy schemas: match canonical names and file operands.
-    const canonicalToolName = normalizeToolPolicyName(
-      toolName.replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2").replace(/([a-z0-9])([A-Z])/g, "$1_$2"),
-    );
+    const canonicalToolName = normalizeCliToolName(toolName);
     const nativeFileTool =
       ["read", "write", "edit"].includes(canonicalToolName) &&
       Object.hasOwn(request.toolInput, "file_path");
