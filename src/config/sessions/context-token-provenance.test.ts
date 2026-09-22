@@ -136,14 +136,14 @@ describe("resolveProjectedSessionContextTokens", () => {
     ).toBe(272_000);
   });
 
-  it("rejects a legacy resolved row because its producer may have reused a fallback", () => {
+  it("accepts a resolved row written by current producers", () => {
     expect(
       resolveProjectedSessionContextTokens({
         entry: { ...matchingRuntimeEntry, contextTokensSource: "resolved" },
         ...currentSelection,
         resolvedContextTokens: undefined,
       }),
-    ).toBeUndefined();
+    ).toBe(272_000);
   });
 
   it("does not resurrect a removed runtime-configured cap while resolution is unavailable", () => {
