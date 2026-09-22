@@ -13,7 +13,11 @@ import { getPluginRegistryState } from "../plugins/runtime-state.js";
 import { getPluginRegistryForContext } from "../plugins/runtime/gateway-request-scope.js";
 import type { DecisionProviderHost } from "./provider-host.js";
 import type { DecisionBatch, DecisionOutcome, DecisionRuntimeV1 } from "./types.js";
-import { DecisionContractError, validateDecisionBatch } from "./validation.js";
+import {
+  DecisionConsumerClosedError,
+  DecisionContractError,
+  validateDecisionBatch,
+} from "./validation.js";
 
 type Options = Parameters<DecisionRuntimeV1["evaluate"]>[1];
 
@@ -85,7 +89,7 @@ export async function evaluateDecisionInRegistry(
     { scopedRuntime: true },
   );
   if (!authority?.() || !lifetime) {
-    throw new Error("Decision consumer authority closed.");
+    throw new DecisionConsumerClosedError();
   }
   const signal = AbortSignal.any([options.signal, lifetime]);
   const result = await entry.host.evaluate(
@@ -98,7 +102,7 @@ export async function evaluateDecisionInRegistry(
   );
   signal.throwIfAborted();
   if (!authority()) {
-    throw new Error("Decision consumer authority closed.");
+    throw new DecisionConsumerClosedError();
   }
   return result;
 }

@@ -1,4 +1,5 @@
 import { evaluateDecision } from "../../decisions/runtime.js";
+import { DecisionConsumerClosedError } from "../../decisions/validation.js";
 import type { AgentMessage } from "../runtime/index.js";
 import {
   buildPreservedTurnsSection,
@@ -61,13 +62,22 @@ export async function prepareActiveCompactionCuration(params: {
     latestUnresolvedUserRequest: params.latestUnresolvedUserRequest,
     latestUserAsk: params.latestUserAsk,
   });
-  const selection = await evaluateCompactionShadowCuration({
-    runtime: { evaluate: evaluateDecision },
-    agentId: params.agentId,
-    snapshot,
-    signal: params.signal,
-    timeoutMs: params.timeoutMs,
-  });
+  let selection: Awaited<ReturnType<typeof evaluateCompactionShadowCuration>>;
+  try {
+    selection = await evaluateCompactionShadowCuration({
+      runtime: { evaluate: evaluateDecision },
+      agentId: params.agentId,
+      snapshot,
+      signal: params.signal,
+      timeoutMs: params.timeoutMs,
+    });
+  } catch (error) {
+    params.signal.throwIfAborted();
+    if (error instanceof DecisionConsumerClosedError) {
+      throw error;
+    }
+    return { messages: params.sourceMessages, skippedReason: "selection-error" };
+  }
   params.signal.throwIfAborted();
   if (
     (getCompactionSafeguardRuntime(params.sessionManager)?.semanticCurationMode ?? "off") !==
@@ -175,15 +185,27 @@ export async function resolveCuratedCompactionCandidate(params: {
   }
 
   let reason: string;
-  const fidelity = await evaluateCompactionFidelity({
-    runtime: { evaluate: evaluateDecision },
-    agentId: params.agentId,
-    snapshot: params.snapshot,
-    candidateSummary: params.summary,
-    omittedSegmentIds: params.omittedSegmentIds,
-    signal: params.signal,
-    timeoutMs: params.timeoutMs,
-  });
+  let fidelity: Awaited<ReturnType<typeof evaluateCompactionFidelity>>;
+  try {
+    fidelity = await evaluateCompactionFidelity({
+      runtime: { evaluate: evaluateDecision },
+      agentId: params.agentId,
+      snapshot: params.snapshot,
+      candidateSummary: params.summary,
+      omittedSegmentIds: params.omittedSegmentIds,
+      signal: params.signal,
+      timeoutMs: params.timeoutMs,
+    });
+  } catch (error) {
+    params.signal.throwIfAborted();
+    if (error instanceof DecisionConsumerClosedError) {
+      throw error;
+    }
+    const fallback = await params.buildUncuratedFallback();
+    return fallback
+      ? { status: "accepted", summary: fallback, usedFallback: true, reason: "fidelity-error" }
+      : { status: "rejected", reason: "fidelity-error" };
+  }
   params.signal.throwIfAborted();
   if (fidelity.status !== "ok") {
     reason = `fidelity-${fidelity.status}:${fidelity.reason}`;

@@ -18,7 +18,11 @@ import type {
   ProviderFailureReason,
   UnavailableReason,
 } from "./types.js";
-import { DecisionContractError, validateDecisionResult } from "./validation.js";
+import {
+  DecisionConsumerClosedError,
+  DecisionContractError,
+  validateDecisionResult,
+} from "./validation.js";
 
 type Options = Parameters<DecisionRuntimeV1["evaluate"]>[1];
 const FAILURE_REASONS = new Set<ProviderFailureReason>([
@@ -32,12 +36,6 @@ const FAILURE_REASONS = new Set<ProviderFailureReason>([
 const MAX_CONCURRENT = 4;
 const COOLDOWN_MS = 10_000;
 const MAX_RETRY_AFTER_MS = 60_000;
-
-class DecisionConsumerClosedError extends Error {
-  constructor() {
-    super("Decision consumer authority closed.");
-  }
-}
 
 type Health = {
   id: string;

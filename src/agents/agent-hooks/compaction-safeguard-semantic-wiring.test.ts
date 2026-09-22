@@ -2,7 +2,9 @@ import type { AgentMessage } from "openclaw/plugin-sdk/agent-core";
 import type { ExtensionAPI, ExtensionContext } from "openclaw/plugin-sdk/agent-sessions";
 import type { Model } from "openclaw/plugin-sdk/llm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setRuntimeConfigSnapshot } from "../../config/config.js";
 import * as decisionRuntime from "../../decisions/runtime.js";
+import { DecisionConsumerClosedError } from "../../decisions/validation.js";
 import type { CompactionProvider } from "../../plugins/compaction-provider.js";
 import {
   resetPluginRuntimeStateForTest,
@@ -385,6 +387,64 @@ function activeScenario() {
 }
 
 describe("active curation through the registered compaction hook", () => {
+  it.each([
+    { modelSelection: "absent" as const, registeredProvider: false },
+    { modelSelection: "absent" as const, registeredProvider: true },
+    { modelSelection: "agent-empty" as const, registeredProvider: false },
+    { modelSelection: "agent-empty" as const, registeredProvider: true },
+  ])(
+    "uses one original-source summary when the decision model is $modelSelection (registered provider=$registeredProvider)",
+    async ({ modelSelection, registeredProvider }) => {
+      const { config, requests } = installDecisionFixture();
+      if (modelSelection === "absent") {
+        delete config.agents?.defaults?.decisionModel;
+        setRuntimeConfigSnapshot(config);
+      }
+      if (registeredProvider) {
+        installCompactionProviderForTest({
+          id: "summary-fixture",
+          label: "Summary fixture",
+          summarize: async () => validSummary,
+        });
+      }
+      const scenario = activeScenario();
+      if (modelSelection === "agent-empty") {
+        scenario.sessionManager = stubSessionManager("disabled");
+        setCompactionSafeguardRuntime(scenario.sessionManager, {
+          agentId: "disabled",
+          model: createAnthropicModelFixture(),
+          semanticCurationMode: "apply",
+          recentTurnsPreserve: 0,
+          qualityGuardEnabled: true,
+          qualityGuardMaxRetries: 0,
+          ...(registeredProvider ? { provider: "summary-fixture" } : {}),
+        });
+      } else if (registeredProvider) {
+        setCompactionSafeguardRuntime(scenario.sessionManager, {
+          model: createAnthropicModelFixture(),
+          semanticCurationMode: "apply",
+          recentTurnsPreserve: 0,
+          qualityGuardEnabled: true,
+          qualityGuardMaxRetries: 0,
+          provider: "summary-fixture",
+        });
+      }
+      const original = structuredClone(scenario.event.preparation.messagesToSummarize);
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages.mockResolvedValue(validSummary);
+
+      const { result } = await runCompactionScenario(scenario);
+
+      expect(result.cancel).not.toBe(true);
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(registeredProvider ? 0 : 1);
+      if (!registeredProvider) {
+        expect(mockSummarizeInStages.mock.calls[0]?.[0].messages).toEqual(original);
+      }
+      expect(requests).toEqual([]);
+      expect(scenario.event.preparation.messagesToSummarize).toEqual(original);
+    },
+  );
+
   it.each(["off", "shadow", "apply"] as const)(
     "rejects late cancellation in %s mode",
     async (mode) => {
@@ -409,7 +469,33 @@ describe("active curation through the registered compaction hook", () => {
     },
   );
 
-  it.each(["selection", "fidelity"])("does not recover after a hard %s error", async (stage) => {
+  it.each(["selection", "fidelity"])(
+    "recovers from an unexpected %s provider error using the original source",
+    async (stage) => {
+      installDecisionFixture();
+      const originalEvaluate = decisionRuntime.evaluateDecision;
+      const evaluate = vi.spyOn(decisionRuntime, "evaluateDecision");
+      const scenario = activeScenario();
+      const original = structuredClone(scenario.event.preparation.messagesToSummarize);
+      mockSummarizeInStages.mockReset();
+      mockSummarizeInStages.mockResolvedValue(validSummary);
+      evaluate.mockImplementation((batch, options) => {
+        const failSelection =
+          stage === "selection" && options.purpose === "compaction-shadow-curation";
+        const failFidelity = stage === "fidelity" && options.purpose === "compaction-fidelity";
+        if (failSelection || failFidelity) {
+          throw new Error("provider transport escaped its boundary");
+        }
+        return originalEvaluate(batch, options);
+      });
+      const { result } = await runCompactionScenario(scenario);
+      expect(result.cancel).not.toBe(true);
+      expect(mockSummarizeInStages).toHaveBeenCalledTimes(stage === "fidelity" ? 2 : 1);
+      expect(mockSummarizeInStages.mock.calls.at(-1)?.[0].messages).toEqual(original);
+    },
+  );
+
+  it.each(["selection", "fidelity"])("does not recover after %s authority loss", async (stage) => {
     installDecisionFixture();
     const originalEvaluate = decisionRuntime.evaluateDecision;
     const evaluate = vi.spyOn(decisionRuntime, "evaluateDecision");
@@ -423,7 +509,7 @@ describe("active curation through the registered compaction hook", () => {
         options.purpose === "compaction-fidelity" &&
         mockSummarizeInStages.mock.calls.length > 0;
       if (failSelection || failFidelity) {
-        throw new Error("Decision consumer authority closed.");
+        throw new DecisionConsumerClosedError();
       }
       return originalEvaluate(batch, options);
     });
