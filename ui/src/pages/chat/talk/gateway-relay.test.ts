@@ -653,7 +653,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
   });
 
   it("reports dropped microphone frames and recovery without ending the call", async () => {
-    const onStatus = vi.fn();
+    const onInputNotice = vi.fn();
     const client = createClient();
     const resolvers: Array<() => void> = [];
     vi.mocked(client["request"]).mockImplementation((method) =>
@@ -663,7 +663,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
           })
         : Promise.resolve(defaultRelayResponse(method)),
     );
-    const transport = await createTransport({ callbacks: { onStatus }, client });
+    const transport = await createTransport({ callbacks: { onInputNotice }, client });
     await startTransport(transport);
     // 4096 samples at 24 kHz is ~171 ms; a 3 s budget admits 17 in-flight frames.
     const samples = new Float32Array(4096);
@@ -672,15 +672,12 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     }
 
     expect(requestCallsFor(client, "talk.session.appendAudio")).toHaveLength(17);
-    expect(onStatus).toHaveBeenCalledWith(
-      "error",
+    expect(onInputNotice).toHaveBeenCalledWith(
       "Realtime Talk audio input fell behind; repeat the last part",
     );
     expect(
-      onStatus.mock.calls.filter(
-        ([status, detail]) =>
-          status === "error" &&
-          detail === "Realtime Talk audio input fell behind; repeat the last part",
+      onInputNotice.mock.calls.filter(
+        ([detail]) => detail === "Realtime Talk audio input fell behind; repeat the last part",
       ),
     ).toHaveLength(1);
     expect(requestCallsFor(client, "talk.session.close")).toHaveLength(0);
@@ -691,10 +688,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     for (let tick = 0; tick < 4; tick += 1) {
       await Promise.resolve();
     }
-    expect(onStatus).toHaveBeenCalledWith(
-      "listening",
-      "Microphone input recovered; repeat the last part",
-    );
+    expect(onInputNotice).toHaveBeenCalledWith("Microphone input recovered; repeat the last part");
     pumpMicrophone(samples);
     expect(requestCallsFor(client, "talk.session.appendAudio")).toHaveLength(18);
     void transport.stop();

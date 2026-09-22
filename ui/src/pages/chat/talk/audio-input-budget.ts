@@ -1,12 +1,10 @@
-type AudioInputBudgetStatusCallback = (status: "error" | "listening", detail: string) => void;
-
 const MAX_PENDING_AUDIO_MS = 3_000;
 
 export class RealtimeTalkAudioInputBudget {
   private pendingMs = 0;
   private lossReported = false;
 
-  constructor(private readonly onStatus: AudioInputBudgetStatusCallback) {}
+  constructor(private readonly onNotice: (detail: string) => void) {}
 
   reserve(frameMs: number): boolean {
     if (this.pendingMs + frameMs <= MAX_PENDING_AUDIO_MS) {
@@ -15,7 +13,7 @@ export class RealtimeTalkAudioInputBudget {
     }
     if (!this.lossReported) {
       this.lossReported = true;
-      this.onStatus("error", "Realtime Talk audio input fell behind; repeat the last part");
+      this.onNotice("Realtime Talk audio input fell behind; repeat the last part");
     }
     return false;
   }
@@ -24,7 +22,7 @@ export class RealtimeTalkAudioInputBudget {
     this.pendingMs = Math.max(0, this.pendingMs - frameMs);
     if (this.lossReported) {
       this.lossReported = false;
-      this.onStatus("listening", "Microphone input recovered; repeat the last part");
+      this.onNotice("Microphone input recovered; repeat the last part");
     }
   }
 

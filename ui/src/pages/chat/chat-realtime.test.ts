@@ -7,6 +7,7 @@ import {
   attachChatRealtimeActions,
   createInitialChatRealtimeState,
   dismissRealtimeTalkError,
+  dismissRealtimeTalkInputNotice,
   stopChatRealtimeTalk,
   type ChatRealtimeState,
 } from "./chat-realtime.ts";
@@ -465,6 +466,22 @@ describe("chat realtime actions", () => {
     expect(state.realtimeTalkVideoStream).toBeNull();
     expect(state.realtimeTalkDetail).toBe("Camera access is blocked");
     expect(state.realtimeTalkCameraError).toBe(true);
+  });
+
+  it("keeps recovered microphone input-loss guidance until it is dismissed", async () => {
+    const state = createState();
+    await state.toggleRealtimeTalk();
+    const session = inspectSession(state);
+    session.callbacks.onStatus?.("listening");
+
+    session.callbacks.onInputNotice?.("Microphone input recovered; repeat the last part");
+
+    expect(state.realtimeTalkStatus).toBe("listening");
+    expect(state.realtimeTalkActive).toBe(true);
+    expect(state.realtimeTalkInputNotice).toBe("Microphone input recovered; repeat the last part");
+    dismissRealtimeTalkInputNotice(state);
+    expect(state.realtimeTalkInputNotice).toBeNull();
+    expect(state.realtimeTalkActive).toBe(true);
   });
 
   it("cycles live cameras in enumeration order and persists the successful switch", async () => {

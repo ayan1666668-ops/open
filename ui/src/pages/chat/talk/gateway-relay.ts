@@ -56,8 +56,8 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
   private closed = false;
   private closeCompletion: Promise<void> = Promise.resolve();
   private audioAppendAbortController: AbortController | null = null;
-  private readonly audioInputBudget = new RealtimeTalkAudioInputBudget((status, detail) =>
-    this.ctx.callbacks.onStatus?.(status, detail),
+  private readonly audioInputBudget = new RealtimeTalkAudioInputBudget((detail) =>
+    this.ctx.callbacks.onInputNotice?.(detail),
   );
   private readonly outputQueue = new RealtimeTalkPcmOutputQueue();
   private readonly toolAbortControllers = new Map<string, AbortController>();
