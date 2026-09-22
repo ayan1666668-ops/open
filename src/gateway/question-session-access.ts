@@ -15,15 +15,16 @@ import { assertExistingDatabaseIdentity } from "../infra/sqlite-worker-identity.
 import { isIncognitoSessionKey } from "../routing/session-key.js";
 import { sessionChanges } from "../sessions/session-row-changes.js";
 import { getAsyncWorkSignal } from "../shared/async-work-scope.js";
-import { operatorScopeSatisfied } from "../shared/operator-scope-compat.js";
 import { readUserProfileAliases } from "../state/user-profile-list.js";
 import { readGatewayAccessRevision } from "./gateway-access-revision.js";
 import {
+  authorizeCurrentOperatorRoleScopes,
   hasOperatorBoundary,
   operatorSessionCap,
   resolveGatewayOperatorRoleActor,
 } from "./operator-role-policy.js";
 import { captureGatewayOperatorRunAuthority } from "./operator-run-authority.js";
+import { usesOwnRunQuestionAccess } from "./question-access.js";
 import {
   QuestionManagerError,
   QuestionManagerErrorCodes,
@@ -33,7 +34,11 @@ import type { QuestionSessionAccess } from "./question-session-access.types.js";
 import { readGatewayRequestMutationAuthority } from "./server-methods/session-mutation-guards.js";
 import type { GatewayClient, GatewayRequestHandlerOptions } from "./server-methods/types.js";
 import { resolveRequestedSessionAgentId } from "./session-request-agent.js";
-import { sharingIdentity, type SessionSharingTarget } from "./session-sharing-policy.js";
+import {
+  authorizeOwnSessionMutation,
+  sharingIdentity,
+  type SessionSharingTarget,
+} from "./session-sharing-policy.js";
 import { canReceiveSessionEvent } from "./session-sharing-read.js";
 import { isGatewayAdmin, prepareSessionSharing } from "./session-sharing.js";
 import { resolveStoredSessionKeyForAgentStore } from "./session-store-key.js";
@@ -242,7 +247,7 @@ export async function withPreparedQuestionSessions<T>(
               target,
               read,
               assertCurrent,
-              canAccess: (client, access, narrow, binding = selection.binding) => {
+              canAccess: (client, _access, narrow, binding = selection.binding) => {
                 try {
                   if (narrow && binding) {
                     binding.assertCurrent(preparedSession);
@@ -252,26 +257,32 @@ export async function withPreparedQuestionSessions<T>(
                   if (!target) {
                     return false;
                   }
-                  const sharing = sharingFor(client);
                   if (narrow) {
-                    const actor = resolveGatewayOperatorRoleActor(client);
+                    client?.internal?.operatorAccessAuthority?.assertCurrent();
+                    client?.internal?.operatorRunAuthority?.assertCurrent();
                     if (
-                      actor?.kind !== "operator" ||
-                      !actor.profileId.trim() ||
-                      !operatorScopeSatisfied(
-                        access === "read" ? "operator.sessions.read" : "operator.sessions.write",
-                        client?.connect.scopes ?? [],
-                      ) ||
+                      !binding?.canSelect(client) ||
+                      authorizeCurrentOperatorRoleScopes(client, cfg) ||
                       target.entry.incognito ||
                       isIncognitoSessionKey(target.canonicalKey)
                     ) {
                       return false;
                     }
-                    return access === "mutate"
-                      ? sharing.isCreator(target.entry.createdActor)
-                      : (sharing.entryFilter?.(target.canonicalKey, target.entry) ?? true);
+                    // Ordinary questions belong to their original requester, not other
+                    // session viewers or members. Both reads and answers require write scope.
+                    const actor = resolveGatewayOperatorRoleActor(client);
+                    return (
+                      actor?.kind === "operator" &&
+                      !authorizeOwnSessionMutation({
+                        client,
+                        target,
+                        expectedProfileId: actor.profileId,
+                      })
+                    );
                   }
-                  return sharing.entryFilter?.(target.canonicalKey, target.entry) ?? true;
+                  return (
+                    sharingFor(client).entryFilter?.(target.canonicalKey, target.entry) ?? true
+                  );
                 } catch {
                   return false;
                 }
@@ -332,6 +343,10 @@ export async function withQuestionSessionAccess<T>(
   operation.assertCurrent();
   const source = captureGatewayOperatorRunAuthority(options);
   const producer = resolveGatewayOperatorRoleActor(options.client);
+  const profileId =
+    usesOwnRunQuestionAccess(options.client) && options.client?.internal?.operatorRunAuthority
+      ? source?.authority.profileId
+      : undefined;
   let transferred = false;
   try {
     return await withPreparedQuestionSessions(
@@ -360,8 +375,9 @@ export async function withQuestionSessionAccess<T>(
           lifecycleRevision: selected.entry.lifecycleRevision,
         };
         let released = false;
+        let invalidated = false;
         const assertSourceCurrent = () => {
-          if (released) {
+          if (released || invalidated) {
             throw new Error("Question session source was released");
           }
           // Discovery may rotate worker connections normally; the retained host
@@ -380,6 +396,14 @@ export async function withQuestionSessionAccess<T>(
         const access: QuestionSessionAccess = {
           agentId: original.agentId,
           sessionKey: original.sessionKey,
+          canSelect: (client) =>
+            Boolean(
+              profileId &&
+              client &&
+              !client.invalidated &&
+              (client.connect.role ?? "operator") === "operator" &&
+              !authorizeOwnSessionMutation({ client, target: null, expectedProfileId: profileId }),
+            ),
           assertSourceCurrent,
           assertCurrent: (current) => {
             assertSourceCurrent();
@@ -399,6 +423,9 @@ export async function withQuestionSessionAccess<T>(
               next.entry.lifecycleRevision !== original.lifecycleRevision ||
               next.entry.incognito
             ) {
+              // A proven successor cannot revive this source. Pending requester checks
+              // cancel only this binding; terminal records remain immutable but unreadable.
+              invalidated = true;
               throw new Error("Question session generation changed");
             }
           },
@@ -451,12 +478,18 @@ function canAccessSessionQuestion(
     if (
       !observation?.isCurrent() ||
       !observation.ordinary ||
-      !observation.sessionAccess ||
+      !observation.sessionAccess?.canSelect(client) ||
       !prepared
     ) {
       return false;
     }
-    return prepared.canAccess(client, access, true, observation.sessionAccess);
+    const allowed = prepared.canAccess(client, access, true, observation.sessionAccess);
+    if (!allowed) {
+      // A worker may have just proved the original binding invalid. Settle that
+      // exact entry now; neither a transient read failure nor a successor is cancellation.
+      observation.refreshRequester();
+    }
+    return allowed;
   } catch {
     return false;
   }
@@ -476,19 +509,21 @@ export function prepareQuestionAuthorization(
 ) {
   const authority = readGatewayRequestMutationAuthority(options);
   const actor = resolveGatewayOperatorRoleActor(options.client);
+  const narrow = usesOwnRunQuestionAccess(options.client);
   return {
     target:
-      authority.sessionScope ||
+      narrow ||
       (!isGatewayAdmin(options.client) &&
         hasOperatorBoundary(options.client, options.context.getRuntimeConfig()))
         ? { ...observation?.record, sessionAccess: observation?.sessionAccess }
         : {},
     assertCurrent: () => {
       authority.assertCurrent();
-      if (authority.sessionScope && observation?.sessionAccess) {
+      if (narrow && observation?.sessionAccess) {
         try {
           observation.sessionAccess.assertSourceCurrent();
         } catch {
+          observation.refreshRequester();
           throw new QuestionManagerError(
             QuestionManagerErrorCodes.NOT_FOUND,
             `question '${id}' was not found`,
@@ -500,7 +535,7 @@ export function prepareQuestionAuthorization(
       if (!observation?.isCurrent()) {
         return questionNotFound(id);
       }
-      if (authority.sessionScope) {
+      if (narrow) {
         authority.assertCurrent();
         const current = resolveGatewayOperatorRoleActor(options.client);
         if (
@@ -548,11 +583,12 @@ export function questionBroadcastOptions(params: {
         (observation.record === expectedRecord && expectedRecord.status === "pending")),
     );
   return {
-    canReadQuestion: (client: GatewayClient) =>
-      isCurrent() && canAccessSessionQuestion(observation, prepared, client, "read"),
-    canReceiveQuestion: (client: GatewayClient) => {
+    questionRecipient: (client: GatewayClient) => {
       if (!isCurrent()) {
         return false;
+      }
+      if (usesOwnRunQuestionAccess(client)) {
+        return canAccessSessionQuestion(observation, prepared, client, "read");
       }
       if (prepared) {
         return prepared.canReceive(client);

@@ -169,9 +169,9 @@ async function withHostedQuestion(
                   expect(options.client.connect.scopes).toEqual(["operator.questions"]);
                 }
                 if (name === "question.waitAnswer") {
-                  expect(options.client?.connect.scopes).toEqual(["operator.sessions.read"]);
+                  expect(options.client?.connect.scopes).toEqual(["operator.sessions.write"]);
                   expect(readGatewayRequestMutationAuthority(options).sessionScope).toBe(
-                    "operator.sessions.read",
+                    "operator.sessions.write",
                   );
                   waiting.resolve();
                 }

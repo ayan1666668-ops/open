@@ -13,7 +13,6 @@ import { createAgentRuntimeApprovalAuthorityValidator } from "../agent-runtime-i
 import { QuestionManager } from "../question-manager.js";
 import type { GatewayBroadcastFn } from "../server-broadcast-types.js";
 import { createDirectChatContext } from "../server-chat.agent-events.test-helpers.js";
-import { handleGatewayRequest } from "../server-methods.js";
 import { createQuestionHandlers } from "./question.js";
 import { createSecretStoreWriteService } from "./secrets.js";
 import type { GatewayClient, GatewayRequestOptions, RespondFn } from "./types.js";
@@ -54,8 +53,8 @@ export function installQuestionTestHooks() {
         },
       },
     } as GatewayClient;
-    unregisterAuthorityClosed = registerAgentRunDelegatedAuthorityClosedHandler(() =>
-      manager.cancelClosedAuthorities(),
+    unregisterAuthorityClosed = registerAgentRunDelegatedAuthorityClosedHandler((authority) =>
+      manager.cancelClosedAuthorities(authority.operationalRunInstance),
     );
     broadcast = vi.fn<GatewayBroadcastFn>();
     reloadSecrets = vi.fn<SecretStoreReload>().mockResolvedValue({ warningCount: 0 });
@@ -77,32 +76,33 @@ export function installQuestionTestHooks() {
 export async function callQuestionRpc(
   method: string,
   params: Record<string, unknown>,
-  options?: {
-    client?: GatewayClient;
-    cfg?: OpenClawConfig;
-    throughRouter?: boolean;
-    hasCurrentClientAuthority?: () => boolean;
-  },
+  options?: { client?: GatewayClient; cfg?: OpenClawConfig; registered?: true } & Pick<
+    GatewayRequestOptions,
+    "hasCurrentClientAuthority"
+  >,
 ) {
   const calls: Parameters<RespondFn>[] = [];
   const respond: RespondFn = (...args) => calls.push(args);
   const cfg = options?.cfg ?? {};
-  const requestOptions: GatewayRequestOptions = {
-    req: { type: "req", id: "request-1", method, params },
+  const request = {
+    req: { type: "req" as const, id: "request-1", method, params },
+    params,
     respond,
     client: options?.client ?? null,
-    isWebchatConnect: () => false,
     hasCurrentClientAuthority: options?.hasCurrentClientAuthority,
+    isWebchatConnect: () => false,
     context: createDirectChatContext({
       broadcast,
+      questionManager: manager,
       validateAgentRuntimeApprovalAuthority: createAgentRuntimeApprovalAuthorityValidator(),
       getRuntimeConfig: () => cfg,
     }),
   };
-  if (options?.throughRouter) {
-    await handleGatewayRequest({ ...requestOptions, extraHandlers: handlers });
+  if (options?.registered) {
+    const { handleGatewayRequest } = await import("../server-methods.js");
+    await handleGatewayRequest({ ...request, extraHandlers: handlers });
   } else {
-    await handlers[method]?.({ ...requestOptions, params });
+    await handlers[method]?.(request);
   }
   const response = calls[0];
   if (!response) {

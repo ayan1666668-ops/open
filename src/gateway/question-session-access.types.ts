@@ -1,3 +1,5 @@
+import type { GatewayClient } from "./server-methods/client-types.js";
+
 type QuestionSessionCurrentRead = {
   readonly target: {
     agentId: string;
@@ -22,6 +24,8 @@ type QuestionSessionCurrentRead = {
 export type QuestionSessionAccess = {
   readonly agentId: string;
   readonly sessionKey: string;
+  /** Pure original-person selection, before session reads or liveness transitions. */
+  canSelect: (client: GatewayClient | null) => boolean;
   assertSourceCurrent: () => void;
   assertCurrent: (read: QuestionSessionCurrentRead) => void;
   release: () => void;

@@ -5,9 +5,6 @@ export type SessionMutationOperatorScope = "operator.write" | "operator.admin";
 export type SessionOperatorScope = "operator.sessions.read" | "operator.sessions.write";
 
 const SESSION_READ_METHODS: ReadonlySet<string> = new Set([
-  "question.get",
-  "question.list",
-  "question.waitAnswer",
   "sessions.list",
   "sessions.subscribe",
   "sessions.messages.subscribe",
@@ -32,7 +29,10 @@ const SESSION_READ_METHODS: ReadonlySet<string> = new Set([
 
 const SESSION_WRITE_METHODS: ReadonlySet<string> = new Set([
   "question.request",
+  "question.waitAnswer",
   "question.resolve",
+  "question.get",
+  "question.list",
   "chat.send",
   "chat.abort",
   "sessions.create",

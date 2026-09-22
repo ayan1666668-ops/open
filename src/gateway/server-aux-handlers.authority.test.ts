@@ -281,6 +281,7 @@ describe("gateway auxiliary authority lifecycle", () => {
             ordinary: false,
             sessionAccess: undefined,
             isCurrent: expect.any(Function),
+            refreshRequester: expect.any(Function),
           },
         );
         expect(onResolved.mock.calls[0]?.[1].isCurrent()).toBe(true);
@@ -523,6 +524,7 @@ describe("gateway auxiliary authority lifecycle", () => {
         ordinary: false,
         sessionAccess: undefined,
         isCurrent: expect.any(Function),
+        refreshRequester: expect.any(Function),
       },
     );
     expect(questionResolved.mock.calls[0]?.[1].isCurrent()).toBe(true);

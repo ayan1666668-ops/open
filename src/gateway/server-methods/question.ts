@@ -12,6 +12,7 @@ import {
   validateQuestionResolveParams,
   validateQuestionWaitAnswerParams,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { assertAdmittedRunOperatorAuthority } from "../../agents/admitted-run-context.js";
 import { registerActiveEmbeddedRunHumanInputWait } from "../../agents/embedded-agent-runner/run-state.js";
 import {
   handleQuestionChannelRequested,
@@ -23,6 +24,7 @@ import {
   SecretStoreValidationError,
 } from "../../secrets/store/secret-store.js";
 import { authorizeGatewaySessionCreation, hasOperatorBoundary } from "../operator-role-policy.js";
+import { canSelectQuestion, usesOwnRunQuestionAccess } from "../question-access.js";
 import {
   QuestionManager,
   QuestionManagerError,
@@ -111,7 +113,8 @@ export function createQuestionHandlers(
       let request = params as QuestionRequestParams;
       const storeBound = request.questions.some((question) => question.secretStore);
       const authority = readGatewayRequestMutationAuthority(options);
-      const narrow = authority.sessionScope === "operator.sessions.write";
+      authority.assertCurrent();
+      const narrow = usesOwnRunQuestionAccess(client);
       let sessionAccess: QuestionSessionAccess | undefined;
       let accepted = false;
       const requiresSharing = () =>
@@ -148,10 +151,13 @@ export function createQuestionHandlers(
       // Capture the admitted identity privately, not the caller's correlation fields.
       // Revalidate this exact claim even if another execution reuses its runId.
       const requester = identity ? structuredClone(identity) : undefined;
+      const operatorAuthority = client?.internal?.operatorRunAuthority;
       const isRequesterActive =
         requester && validateAuthority
           ? () => {
               try {
+                operatorAuthority?.assertCurrent();
+                sessionAccess?.assertSourceCurrent();
                 return validateAuthority(requester);
               } catch {
                 return false;
@@ -160,7 +166,8 @@ export function createQuestionHandlers(
           : undefined;
       if (
         narrow &&
-        (storeBound ||
+        (!operatorAuthority ||
+          storeBound ||
           request.questions.some((question) => question.isSecret) ||
           isRequesterActive?.() !== true)
       ) {
@@ -183,6 +190,9 @@ export function createQuestionHandlers(
         };
       }
       try {
+        if (narrow && operatorAuthority) {
+          assertAdmittedRunOperatorAuthority(operatorAuthority);
+        }
         const requestedSession = request.sessionKey
           ? resolveRequestedSessionAgentId(
               context.getRuntimeConfig(),
@@ -195,7 +205,7 @@ export function createQuestionHandlers(
           return;
         }
         if (narrow && requestedSession?.ok) {
-          // Starting a prompt uses the producer's agent ceiling; shared readers keep VIEW access.
+          // Starting a prompt retains the admitted producer's agent ceiling.
           const agentError = authorizeGatewaySessionCreation({
             cfg: context.getRuntimeConfig(),
             client,
@@ -228,7 +238,7 @@ export function createQuestionHandlers(
           }
           if (narrow) {
             authority.assertCurrent();
-            if (!sessionAccess || !prepared?.canAccess(client, "mutate", true)) {
+            if (!sessionAccess || !prepared?.canAccess(client, "mutate", true, sessionAccess)) {
               respond(
                 false,
                 undefined,
@@ -288,6 +298,7 @@ export function createQuestionHandlers(
             timeoutMs: request.timeoutMs ?? DEFAULT_QUESTION_TIMEOUT_MS,
             isRequesterActive,
             sessionAccess,
+            requesterRun: requester?.operationalRunInstance,
             registerHumanInputWait:
               requester && isRequesterActive
                 ? (isPending: () => boolean) =>
@@ -411,7 +422,14 @@ export function createQuestionHandlers(
       }
       const request = params;
       try {
-        const question = manager.get(request.id);
+        readGatewayRequestMutationAuthority(options).assertCurrent();
+        const question = canSelectQuestion(manager, request.id, options.client)
+          ? manager.get(request.id)
+          : null;
+        if (!question) {
+          respond(false, undefined, questionNotFound(request.id));
+          return;
+        }
         const observation = question ? manager.observe(request.id, question) : null;
         const authorize = prepareQuestionAuthorization(options, observation, request.id, "read");
         const target = authorize.target;
@@ -465,7 +483,14 @@ export function createQuestionHandlers(
       }
       const request = params;
       try {
-        const question = manager.get(request.id);
+        readGatewayRequestMutationAuthority(options).assertCurrent();
+        const question = canSelectQuestion(manager, request.id, options.client)
+          ? manager.get(request.id)
+          : null;
+        if (!question) {
+          respond(false, undefined, questionNotFound(request.id));
+          return;
+        }
         const observation = question ? manager.observe(request.id, question) : null;
         const authorize = prepareQuestionAuthorization(options, observation, request.id, "mutate");
         let reload: { name: string; result: ReturnType<QuestionManager["resolve"]> } | undefined;
@@ -604,7 +629,8 @@ export function createQuestionHandlers(
         return;
       }
       const id = (params as { id: string }).id;
-      const question = manager.get(id);
+      readGatewayRequestMutationAuthority(options).assertCurrent();
+      const question = canSelectQuestion(manager, id, options.client) ? manager.get(id) : null;
       if (!question) {
         respond(false, undefined, questionNotFound(id));
         return;
@@ -634,14 +660,21 @@ export function createQuestionHandlers(
       if (!assertValidParams(params, validateQuestionListParams, "question.list", respond)) {
         return;
       }
-      const records = manager.list().map((question) => {
-        const observation = manager.observe(question.id, question);
-        return {
-          question,
-          observation,
-          authorize: prepareQuestionAuthorization(options, observation, question.id, "read"),
-        };
-      });
+      readGatewayRequestMutationAuthority(options).assertCurrent();
+      const records = manager
+        .list(
+          usesOwnRunQuestionAccess(options.client)
+            ? (question) => canSelectQuestion(manager, question.id, options.client)
+            : undefined,
+        )
+        .map((question) => {
+          const observation = manager.observe(question.id, question);
+          return {
+            question,
+            observation,
+            authorize: prepareQuestionAuthorization(options, observation, question.id, "read"),
+          };
+        });
       await withPreparedQuestionSessions(
         options,
         records.map(({ authorize }) => authorize.target),

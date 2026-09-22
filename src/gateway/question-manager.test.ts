@@ -102,6 +102,7 @@ describe("QuestionManager", () => {
       const sessionAccess = {
         agentId: "main",
         sessionKey: "agent:main:own",
+        canSelect: () => true,
         assertSourceCurrent: () => {},
         assertCurrent: () => {},
         release,
@@ -321,10 +322,19 @@ describe("QuestionManager", () => {
   it("retires local questions without cancelling truth or refreshing human-input recovery", async () => {
     const onResolved = vi.fn();
     const releaseHumanInputWait = vi.fn();
+    const releaseSessionAccess = vi.fn();
     const record = manager.request({
       questions,
       timeoutMs: 10_000,
       onResolved,
+      sessionAccess: {
+        agentId: "main",
+        sessionKey: "agent:main:own",
+        canSelect: () => true,
+        assertSourceCurrent: () => {},
+        assertCurrent: () => {},
+        release: releaseSessionAccess,
+      },
       registerHumanInputWait: () => releaseHumanInputWait,
     });
     const waiting = manager.waitAnswer(record.id, 5_000);
@@ -334,18 +344,30 @@ describe("QuestionManager", () => {
     expect(record.status).toBe("pending");
     expect(manager.get(record.id)).toBeNull();
     expect(releaseHumanInputWait).toHaveBeenCalledExactlyOnceWith(false);
+    expect(releaseSessionAccess).toHaveBeenCalledOnce();
+    expect(manager.observe(record.id)?.sessionAccess).toBeUndefined();
     await vi.advanceTimersByTimeAsync(10_000 + QUESTION_RESOLVED_ENTRY_GRACE_MS);
     expect(onResolved).not.toHaveBeenCalled();
+    expect(releaseSessionAccess).toHaveBeenCalledOnce();
     expect(manager.request({ id: record.id, questions, timeoutMs: 10_000 }).status).toBe("pending");
   });
 
   it("permanently closes admission without reset reopening the retired owner", () => {
     const releaseHumanInputWait = vi.fn();
+    const releaseSessionAccess = vi.fn();
     const onResolved = vi.fn();
     const record = manager.request({
       questions,
       timeoutMs: 10_000,
       onResolved,
+      sessionAccess: {
+        agentId: "main",
+        sessionKey: "agent:main:own",
+        canSelect: () => true,
+        assertSourceCurrent: () => {},
+        assertCurrent: () => {},
+        release: releaseSessionAccess,
+      },
       registerHumanInputWait: () => releaseHumanInputWait,
     });
     manager.close();
@@ -356,9 +378,51 @@ describe("QuestionManager", () => {
     );
     expect(manager.get(record.id)).toBeNull();
     expect(releaseHumanInputWait).toHaveBeenCalledExactlyOnceWith(false);
+    expect(releaseSessionAccess).toHaveBeenCalledOnce();
     expect(onResolved).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it.each(["replacement", "answer"] as const)(
+    "keeps a reentrant %s intact when refreshing the original requester",
+    (transition) => {
+      let armed = false;
+      const onResolved = vi.fn();
+      const original = manager.request({
+        id: "reentrant-liveness",
+        questions,
+        timeoutMs: 10_000,
+        onResolved,
+        isRequesterActive: () => {
+          if (!armed) {
+            return true;
+          }
+          armed = false;
+          if (transition === "replacement") {
+            manager.reset();
+            manager.request({ id: "reentrant-liveness", questions, timeoutMs: 10_000 });
+          } else {
+            manager.resolve("reentrant-liveness", answers);
+          }
+          return false;
+        },
+      });
+      const observation = manager.observe(original.id)!;
+      armed = true;
+      observation.refreshRequester();
+      if (transition === "replacement") {
+        expect(observation.isCurrent()).toBe(false);
+        expect(observation.record.status).toBe("pending");
+        expect(manager.observe(original.id)?.record).not.toBe(original);
+        expect(manager.observe(original.id)?.record.status).toBe("pending");
+        expect(onResolved).not.toHaveBeenCalled();
+      } else {
+        expect(observation.isCurrent()).toBe(true);
+        expect(observation.record).toMatchObject({ status: "answered", answers });
+        expect(onResolved).toHaveBeenCalledOnce();
+      }
+    },
+  );
 
   it("preserves a replacement created by a retired entry's reset callback", async () => {
     const replacementRelease = vi.fn();
@@ -371,6 +435,7 @@ describe("QuestionManager", () => {
         sessionAccess: {
           agentId: "main",
           sessionKey: "agent:main:own",
+          canSelect: () => true,
           assertSourceCurrent: () => {},
           assertCurrent: () => {},
           release: replacementRelease,
@@ -544,14 +609,52 @@ describe("QuestionManager", () => {
   });
 
   it("keeps terminal records through the grace window", async () => {
-    const record = manager.request({ questions, timeoutMs: 10_000 });
+    let accessActive = true;
+    const releaseSessionAccess = vi.fn(() => {
+      accessActive = false;
+    });
+    const record = manager.request({
+      questions,
+      timeoutMs: 10_000,
+      sessionAccess: {
+        agentId: "main",
+        sessionKey: "agent:main:own",
+        canSelect: () => accessActive,
+        assertSourceCurrent: () => {},
+        assertCurrent: () => {},
+        release: releaseSessionAccess,
+      },
+    });
     manager.resolve(record.id, answers);
 
     await vi.advanceTimersByTimeAsync(QUESTION_RESOLVED_ENTRY_GRACE_MS - 1);
     expect(manager.get(record.id)?.status).toBe("answered");
+    expect(manager.observe(record.id)?.sessionAccess?.canSelect(null)).toBe(true);
+    expect(releaseSessionAccess).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1);
     expect(manager.get(record.id)).toBeNull();
+    expect(manager.observe(record.id)?.sessionAccess).toBeUndefined();
+    expect(releaseSessionAccess).toHaveBeenCalledOnce();
+    manager.close();
+    expect(releaseSessionAccess).toHaveBeenCalledOnce();
+  });
+
+  it("retains authority sweeping for legacy requesters without a run selector", () => {
+    let active = true;
+    const resolved = vi.fn();
+    const record = manager.request({
+      questions,
+      timeoutMs: 10_000,
+      isRequesterActive: () => active,
+      onResolved: resolved,
+    });
+    active = false;
+    manager.cancelClosedAuthorities({ instanceId: "other-instance", runId: "other-run" });
+    expect(resolved).toHaveBeenCalledWith(
+      { id: record.id, status: "cancelled" },
+      expect.objectContaining({ record: manager.get(record.id) }),
+    );
   });
 });
 
@@ -686,6 +789,7 @@ it.each(["fulfilled", "rejected", "reset", "close", "reused id"] as const)(
         sessionAccess: {
           agentId: "main",
           sessionKey: "agent:main:own",
+          canSelect: () => true,
           assertSourceCurrent: () => {},
           assertCurrent: () => {},
           release: releaseSession,
@@ -778,6 +882,7 @@ it.each(["answered", "cancelled", "expired"] as const)(
         sessionAccess: {
           agentId: "main",
           sessionKey: "agent:main:own",
+          canSelect: () => true,
           assertSourceCurrent: () => {},
           assertCurrent: () => {},
           release: releaseSession,

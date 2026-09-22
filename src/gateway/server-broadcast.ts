@@ -12,8 +12,9 @@ import type { SystemPresence } from "../infra/system-presence.js";
 import { logRejectedLargePayload } from "../logging/diagnostic-payload.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { queuePluginSessionsChanged } from "../plugins/gateway-events.js";
+import { operatorScopeSatisfied } from "../shared/operator-scope-compat.js";
 import { isBrowserCopilotClient } from "../utils/message-channel.js";
-import { ADMIN_SCOPE, READ_SCOPE, WRITE_SCOPE } from "./method-scopes.js";
+import { ADMIN_SCOPE, QUESTIONS_SCOPE, READ_SCOPE, WRITE_SCOPE } from "./method-scopes.js";
 import { hasEventScope } from "./server-broadcast-scopes.js";
 import type {
   GatewayBroadcastFn,
@@ -293,7 +294,17 @@ export function createGatewayBroadcaster(params: {
       ) {
         continue;
       }
-      if (!hasEventScope(c, event, explicitPluginScope, opts?.canReadQuestion)) {
+      const questionRecipient =
+        event === "question.requested" || event === "question.resolved"
+          ? opts?.questionRecipient
+          : undefined;
+      const ownRunQuestion =
+        questionRecipient !== undefined &&
+        !operatorScopeSatisfied(QUESTIONS_SCOPE, c.connect.scopes ?? []);
+      if (!hasEventScope(c, event, explicitPluginScope, ownRunQuestion)) {
+        continue;
+      }
+      if (questionRecipient && !isCurrent(() => questionRecipient(c))) {
         continue;
       }
       const requiresSessionSubscription =
@@ -330,12 +341,11 @@ export function createGatewayBroadcaster(params: {
         }
       }
       if (
-        (event === "question.requested" || event === "question.resolved") &&
-        opts?.canReceiveQuestion
-          ? !opts.canReceiveQuestion(c)
-          : sessionKeys.length > 0 &&
-            params.canReceiveSessionEvent &&
-            !params.canReceiveSessionEvent(c, sessionKeys, agentId, event, payload)
+        // The question owner consumes prepared sharing and original-source facts together.
+        !questionRecipient &&
+        sessionKeys.length > 0 &&
+        params.canReceiveSessionEvent &&
+        !params.canReceiveSessionEvent(c, sessionKeys, agentId, event, payload)
       ) {
         continue;
       }

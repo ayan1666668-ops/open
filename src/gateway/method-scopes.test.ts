@@ -911,6 +911,22 @@ describe("operator scope authorization", () => {
   });
 
   it.each([
+    "question.request",
+    "question.waitAnswer",
+    "question.resolve",
+    "question.get",
+    "question.list",
+  ])("keeps broad question authority distinct from own-run admission for %s", (method) => {
+    expect(authorizeOperatorScopesForMethod(method, ["operator.write"])).toEqual({
+      allowed: true,
+      sessionScope: "operator.sessions.write",
+    });
+    expect(authorizeOperatorScopesForMethod(method, ["operator.questions"])).toEqual({
+      allowed: true,
+    });
+  });
+
+  it.each([
     "users.setRole",
     "exec.approvals.get",
     "exec.approvals.set",

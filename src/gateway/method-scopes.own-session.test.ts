@@ -113,76 +113,42 @@ describe("session-scoped method admission", () => {
   });
 
   it.each([
-    ["question.list", "operator.sessions.read"],
-    ["question.get", "operator.sessions.read"],
-    ["question.waitAnswer", "operator.sessions.read"],
-    ["question.request", "operator.sessions.write"],
-    ["question.resolve", "operator.sessions.write"],
-  ] as const)("records the actual narrow admission for %s", (method, scope) => {
-    expect(authorizeOperatorScopesForMethod(method, [scope])).toEqual({
-      allowed: true,
-      sessionScope: scope,
-    });
-    expect(
-      projectOperatorScopesForMethod({
-        method,
-        requestParams: {},
-        requestedScopes: ["operator.questions", "operator.admin"],
-        allowedScopes: [scope],
-      }),
-    ).toEqual([scope]);
-    expect(
-      projectOperatorScopesForMethod({
-        method,
-        requestParams: {},
-        requestedScopes: ["operator.questions"],
-        allowedScopes: [scope],
-        requiredScope: "operator.admin",
-      }),
-    ).toEqual([]);
-    for (const broad of ["operator.questions", "operator.admin"]) {
-      expect(authorizeOperatorScopesForMethod(method, [scope, broad])).toEqual({ allowed: true });
-    }
-    if (scope === "operator.sessions.write") {
+    "question.request",
+    "question.get",
+    "question.list",
+    "question.waitAnswer",
+    "question.resolve",
+  ])(
+    "admits %s through the own-run question boundary without granting broader authority",
+    (method) => {
+      expect(authorizeOperatorScopesForMethod(method, ["operator.sessions.write"])).toEqual({
+        allowed: true,
+        sessionScope: "operator.sessions.write",
+      });
       expect(authorizeOperatorScopesForMethod(method, ["operator.sessions.read"])).toEqual({
         allowed: false,
         missingScope: "operator.questions",
       });
-    }
-  });
-
-  it.each([
-    ["question.request", "operator.sessions.write"],
-    ["question.waitAnswer", "operator.sessions.read"],
-    ["question.resolve", "operator.sessions.write"],
-    ["question.get", "operator.sessions.read"],
-    ["question.list", "operator.sessions.read"],
-  ] as const)(
-    "preserves broad or session-scoped question admission for %s",
-    (method, sessionScope) => {
-      expect(authorizeOperatorScopesForMethod(method, ["operator.write"])).toEqual({
+      expect(authorizeOperatorScopesForMethod(method, ["operator.questions"])).toEqual({
         allowed: true,
-        sessionScope,
       });
-      expect(authorizeOperatorScopesForMethod(method, ["operator.read"])).toEqual(
-        sessionScope === "operator.sessions.read"
-          ? { allowed: true, sessionScope }
-          : { allowed: false, missingScope: "operator.questions" },
-      );
-      for (const scope of ["operator.questions", "operator.admin"]) {
-        expect(authorizeOperatorScopesForMethod(method, [scope])).toEqual({ allowed: true });
-      }
-      for (const scopes of [[], ["operator.approvals"]]) {
-        expect(authorizeOperatorScopesForMethod(method, scopes)).toEqual({
-          allowed: false,
-          missingScope: "operator.questions",
-        });
-      }
+      expect(
+        projectOperatorScopesForMethod({
+          method,
+          requestParams: {},
+          requestedScopes: ["operator.questions", "operator.approvals", "operator.admin"],
+          allowedScopes: ["operator.sessions.write"],
+        }),
+      ).toEqual(["operator.sessions.write"]);
     },
   );
 
   it("preserves a dispatch registry's stronger scope and does not borrow broad read for a write", () => {
-    for (const requiredScope of ["operator.admin", "operator.approvals"] as const) {
+    for (const requiredScope of [
+      "operator.admin",
+      "operator.approvals",
+      "operator.questions",
+    ] as const) {
       expect(
         projectOperatorScopesForMethod({
           method: "sessions.patch",

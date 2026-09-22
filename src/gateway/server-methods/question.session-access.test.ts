@@ -1,12 +1,12 @@
 import fs from "node:fs";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { observeHostDataSql } from "../../../test/helpers/sqlite-statement-execution-counter.js";
 import { setRuntimeConfigSnapshot } from "../../config/config.js";
 import {
   loadSessionEntry,
   upsertSessionEntryCore,
 } from "../../config/sessions/session-accessor.js";
-import { addSessionMember } from "../../config/sessions/session-sharing-store.js";
+import { addSessionMember } from "../../config/sessions/session-sharing-store.native.js";
 import { historyPages } from "../../config/sessions/session-transcript-worker-resources.js";
 import type { SessionEntry } from "../../config/sessions/types.js";
 import { releaseAgentRunDelegatedAuthority } from "../../infra/agent-run-registry.js";
@@ -21,6 +21,7 @@ import {
   withOpenClawTestState,
   type OpenClawTestState,
 } from "../../test-utils/openclaw-test-state.js";
+import { captureGatewayOperatorRunAuthority } from "../operator-run-authority.js";
 import { createGatewayBroadcaster } from "../server-broadcast.js";
 import { GatewayClientRegistry } from "../server/client-registry.js";
 import type { GatewayWsClient } from "../server/ws-types.js";
@@ -39,6 +40,14 @@ import {
 import type { GatewayClient } from "./types.js";
 
 installQuestionTestHooks();
+
+const sourceReleases = new Set<() => void>();
+afterEach(() => {
+  for (const release of sourceReleases) {
+    release();
+  }
+  sourceReleases.clear();
+});
 
 function questionPeer(client: GatewayClient, connId: string) {
   const send = vi.fn();
@@ -69,10 +78,27 @@ async function fixture(state: OpenClawTestState, options?: { foreign?: boolean }
   setRuntimeConfigSnapshot(cfg);
   owner.connect.scopes = ["operator.sessions.write"];
   viewer.connect.scopes = ["operator.sessions.read", "operator.sessions.write"];
+  const sourceController = new AbortController();
+  owner.internal = {
+    ...owner.internal,
+    operatorAccessAuthority: {
+      signal: sourceController.signal,
+      assertCurrent: () => sourceController.signal.throwIfAborted(),
+    },
+  };
+  const source = captureGatewayOperatorRunAuthority({
+    client: owner,
+    context: { getRuntimeConfig: () => cfg },
+  });
+  if (!source) {
+    throw new Error("Expected admitted question source");
+  }
+  sourceReleases.add(source.release);
   const producer: GatewayClient = {
     ...owner,
     internal: {
       ...owner.internal,
+      operatorRunAuthority: source.authority,
       agentRuntimeIdentity: adminRequestClient.internal!.agentRuntimeIdentity,
     },
   };
@@ -105,12 +131,12 @@ async function fixture(state: OpenClawTestState, options?: { foreign?: boolean }
     callQuestionRpc(method, params, {
       client,
       cfg,
-      throughRouter: true,
+      registered: true,
       hasCurrentClientAuthority: current,
     });
   const request = (id = "ordinary-question", client = producer) =>
     call("question.request", { ...requestParams, id, timeoutMs: 10_000 }, client);
-  return { owner, viewer, producer, cfg, entry, write, call, request };
+  return { owner, viewer, producer, cfg, entry, write, call, request, sourceController };
 }
 
 it("binds a narrow producer to its trusted session and lets its browser answer after label changes", async () => {
@@ -168,7 +194,7 @@ it("binds a narrow producer to its trusted session and lets its browser answer a
 });
 
 it.each(["shared", "draft"] as const)(
-  "fans out cross-agent questions with current %s visibility and no global event grant",
+  "fans out requester-only questions with current %s visibility and no global event grant",
   async (visibility) => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
       const f = await fixture(state);
@@ -186,7 +212,7 @@ it.each(["shared", "draft"] as const)(
       broadcast.mockImplementation(broadcaster.broadcast);
       expect((await f.request())[0]).toBe(true);
       expect(owner.send).toHaveBeenCalledOnce();
-      expect(viewer.send).toHaveBeenCalledOnce();
+      expect(viewer.send).not.toHaveBeenCalled();
       expect(broad.send).toHaveBeenCalledOnce();
       const requested = broadcast.mock.calls.find(([event]) => event === "question.requested")!;
       const get = vi.spyOn(manager, "get");
@@ -206,7 +232,7 @@ it.each(["shared", "draft"] as const)(
       manager.resolve("ordinary-question", { answers: { destination: ["Own answer"] } });
       await manager.drain();
       expect(owner.send).toHaveBeenCalledOnce();
-      expect(viewer.send).toHaveBeenCalledTimes(visibility === "shared" ? 1 : 0);
+      expect(viewer.send).not.toHaveBeenCalled();
       expect(broad.send).toHaveBeenCalledOnce();
       const resolved = broadcast.mock.calls.find(([event]) => event === "question.resolved")!;
       manager.reset();
@@ -309,6 +335,8 @@ it.each(["pending", "answered"] as const)(
       if (status === "answered") {
         manager.resolve("ordinary-question", { answers: { destination: ["Original"] } });
       }
+      const observation = manager.observe("ordinary-question")!;
+      const waiting = manager.waitAnswer("ordinary-question");
       const replacement = state.statePath("replacement", "catalog.sqlite");
       await upsertSessionEntryCore(
         { agentId: "main", storePath: replacement, sessionKey: requestParams.sessionKey },
@@ -317,19 +345,26 @@ it.each(["pending", "answered"] as const)(
       f.cfg.session = { ...f.cfg.session, store: replacement };
       await state.writeConfig(f.cfg);
       setRuntimeConfigSnapshot(f.cfg);
-      for (const method of ["question.get", "question.waitAnswer"]) {
-        expect(await f.call(method, { id: "ordinary-question" })).toMatchObject([
-          false,
-          undefined,
-          { details: { reason: "QUESTION_NOT_FOUND" } },
-        ]);
-      }
-      expect(manager.get("ordinary-question")?.status).toBe(status);
+      expect(await f.call("question.get", { id: "ordinary-question" })).toMatchObject([
+        false,
+        undefined,
+        { details: { reason: "QUESTION_NOT_FOUND" } },
+      ]);
+      expect(observation.record.status).toBe(status === "pending" ? "cancelled" : status);
+      expect(await waiting).toMatchObject({ status: status === "pending" ? "cancelled" : status });
+      expect(await f.call("question.waitAnswer", { id: "ordinary-question" })).toMatchObject([
+        false,
+        undefined,
+        { details: { reason: "QUESTION_NOT_FOUND" } },
+      ]);
+      expect(manager.get("ordinary-question")?.status).toBe(
+        status === "pending" ? "cancelled" : status,
+      );
     });
   },
 );
 
-it("preserves cross-agent shared VIEW while narrow answer and cancel require the creator", async () => {
+it("keeps shared viewers and members out of requester-only questions while preserving broad membership", async () => {
   await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
     const f = await fixture(state);
     expect((await f.request())[0]).toBe(true);
@@ -341,24 +376,24 @@ it("preserves cross-agent shared VIEW while narrow answer and cancel require the
         expectedSessionId: f.entry.sessionId,
       },
     );
-    expect((await f.call("question.get", { id: "ordinary-question" }, f.viewer))[0]).toBe(true);
-    expect(await f.call("question.list", {}, f.viewer)).toMatchObject([
+    for (const method of ["question.get", "question.waitAnswer", "question.resolve"]) {
+      expect(
+        await f.call(
+          method,
+          { id: "ordinary-question", ...(method === "question.resolve" ? { cancel: true } : {}) },
+          f.viewer,
+        ),
+      ).toMatchObject([false, undefined, { details: { reason: "QUESTION_NOT_FOUND" } }]);
+      expect(manager.get("ordinary-question")?.status).toBe("pending");
+    }
+    expect(await f.call("question.list", {}, f.viewer)).toEqual([
       true,
-      { questions: [{ id: "ordinary-question" }] },
+      { questions: [] },
       undefined,
     ]);
-    const waiting = f.call("question.waitAnswer", { id: "ordinary-question" }, f.viewer);
+    const waiting = f.call("question.waitAnswer", { id: "ordinary-question" });
     const settled = Promise.allSettled([waiting]);
     try {
-      for (const params of [
-        { cancel: true },
-        { answers: { answers: { destination: ["Home"] } } },
-      ]) {
-        expect(
-          await f.call("question.resolve", { id: "ordinary-question", ...params }, f.viewer),
-        ).toMatchObject([false, undefined, { details: { reason: "QUESTION_NOT_FOUND" } }]);
-        expect(manager.get("ordinary-question")?.status).toBe("pending");
-      }
       const answers = { answers: { destination: ["Home"] } };
       expect((await f.call("question.resolve", { id: "ordinary-question", answers }))[0]).toBe(
         true,
@@ -376,6 +411,29 @@ it("preserves cross-agent shared VIEW while narrow answer and cancel require the
     expect(
       await f.call("question.resolve", { id: "member-question", cancel: true }, f.viewer),
     ).toEqual([true, { status: "cancelled" }, undefined]);
+  });
+});
+
+it("does not turn an ordinary broad producer into a narrow question grant", async () => {
+  await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+    const f = await fixture(state);
+    const broad = {
+      ...f.producer,
+      connect: { ...f.producer.connect, scopes: ["operator.questions"] },
+    };
+    expect((await f.request("privileged-ordinary", broad))[0]).toBe(true);
+    expect(manager.observe("privileged-ordinary")?.sessionAccess).toBeDefined();
+    for (const method of ["question.get", "question.waitAnswer", "question.resolve"]) {
+      expect(
+        await f.call(method, {
+          id: "privileged-ordinary",
+          ...(method === "question.resolve" ? { cancel: true } : {}),
+        }),
+      ).toMatchObject([false, undefined, { details: { reason: "QUESTION_NOT_FOUND" } }]);
+    }
+    expect(await f.call("question.list", {})).toEqual([true, { questions: [] }, undefined]);
+    expect(manager.get("privileged-ordinary")?.status).toBe("pending");
+    expect((await f.call("question.get", { id: "privileged-ordinary" }, broad))[0]).toBe(true);
   });
 });
 
@@ -481,7 +539,7 @@ it.each(["pending", "answered", "cancelled", "expired"] as const)(
   },
 );
 
-it.each(["generation", "session", "visibility", "profile", "source", "reused id"] as const)(
+it.each(["generation", "session", "creator", "profile", "source", "reused id"] as const)(
   "does not publish a held answer after %s changes",
   async (change) => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
@@ -495,10 +553,11 @@ it.each(["generation", "session", "visibility", "profile", "source", "reused id"
         return result;
       });
       let current = true;
+      const observer = { ...f.owner };
       const waiting = f.call(
         "question.waitAnswer",
         { id: "ordinary-question" },
-        f.viewer,
+        observer,
         () => current,
       );
       const settled = Promise.allSettled([waiting]);
@@ -511,14 +570,20 @@ it.each(["generation", "session", "visibility", "profile", "source", "reused id"
         if (change === "session") {
           await f.write({ sessionId: "replacement" });
         }
-        if (change === "visibility") {
+        if (change === "creator") {
           await upsertSessionEntryCore(
             { agentId: "main", sessionKey: requestParams.sessionKey },
-            { ...f.entry, visibility: "draft" },
+            {
+              ...f.entry,
+              createdActor: {
+                ...f.entry.createdActor,
+                id: f.viewer.authenticatedUserProfile!.profileId,
+              },
+            },
           );
         }
         if (change === "profile") {
-          f.viewer.authenticatedUserProfile = f.owner.authenticatedUserProfile;
+          observer.authenticatedUserProfile = f.viewer.authenticatedUserProfile;
         }
         if (change === "source") {
           current = false;
@@ -587,13 +652,14 @@ it("prepares question session data in the worker across RPCs and real narrow, br
       ).toBe(true);
       expect(await waiting).toEqual([true, { status: "answered", answers: answer }, undefined]);
       await manager.drain();
-      for (const recipient of [owner, viewer, broad, admin]) {
+      for (const recipient of [owner, broad, admin]) {
         expect(recipient.send).toHaveBeenCalledTimes(2);
         expect(recipient.send.mock.calls.map(([frame]) => JSON.parse(frame).event)).toEqual([
           "question.requested",
           "question.resolved",
         ]);
       }
+      expect(viewer.send).not.toHaveBeenCalled();
       expect(revoked.send).not.toHaveBeenCalled();
       expect(fallback).not.toHaveBeenCalled();
       // Existing role/profile authority may still read shared state; no session data
@@ -612,7 +678,7 @@ it.each([
   "close",
   "reused id",
   "generation",
-  "visibility",
+  "creator",
   "metadata",
   "unrelated",
   "publication delay",
@@ -623,13 +689,13 @@ it.each([
   async (change) => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
       const f = await fixture(state);
-      const viewer = questionPeer(f.viewer, "held-viewer");
+      const owner = questionPeer(f.owner, "held-owner");
       const broadcaster = createGatewayBroadcaster({
-        clients: new GatewayClientRegistry([viewer.ws]),
+        clients: new GatewayClientRegistry([owner.ws]),
       });
       broadcast.mockImplementation(broadcaster.broadcast);
       expect((await f.request())[0]).toBe(true);
-      viewer.send.mockClear();
+      owner.send.mockClear();
       const entered = createDeferredCore();
       const release = createDeferredCore();
       const run = historyPages.run.bind(historyPages);
@@ -668,7 +734,7 @@ it.each([
             status: "answered",
             answers: answer,
           });
-          expect(viewer.send).not.toHaveBeenCalled();
+          expect(owner.send).not.toHaveBeenCalled();
         }
         if (change === "reset" || change === "reused id") {
           manager.reset();
@@ -682,8 +748,13 @@ it.each([
         if (change === "generation") {
           await f.write({ lifecycleRevision: "replacement" });
         }
-        if (change === "visibility") {
-          await f.write({ visibility: "draft" });
+        if (change === "creator") {
+          await f.write({
+            createdActor: {
+              ...f.entry.createdActor,
+              id: f.viewer.authenticatedUserProfile!.profileId,
+            },
+          });
         }
         if (change === "database close") {
           await closeOpenClawAgentDatabaseByPathAsync(
@@ -712,11 +783,11 @@ it.each([
         }
         release.resolve();
         await manager.drain();
-        expect(viewer.send).toHaveBeenCalledTimes(
+        expect(owner.send).toHaveBeenCalledTimes(
           change === "metadata" || change === "unrelated" || change === "publication delay" ? 1 : 0,
         );
         if (change === "publication delay") {
-          expect(JSON.parse(String(viewer.send.mock.calls[0]?.[0]))).toMatchObject({
+          expect(JSON.parse(String(owner.send.mock.calls[0]?.[0]))).toMatchObject({
             type: "event",
             event: "question.resolved",
             payload: { id: "ordinary-question", status: "answered", answers: answer },
@@ -731,7 +802,7 @@ it.each([
         if (change === "unrelated") {
           expect(spy).toHaveBeenCalledOnce();
         }
-        if (change === "generation" || change === "visibility" || change === "metadata") {
+        if (change === "generation" || change === "creator" || change === "metadata") {
           expect(manager.get("ordinary-question")).toMatchObject({
             status: "answered",
             answers: answer,
@@ -867,15 +938,8 @@ it.each(["source", "generation"] as const)(
   async (change) => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
       const f = await fixture(state);
-      const source = new AbortController();
-      f.producer.internal = {
-        ...f.producer.internal,
-        operatorAccessAuthority: {
-          signal: source.signal,
-          assertCurrent: () => source.signal.throwIfAborted(),
-        },
-      };
-      const narrow = questionPeer(f.viewer, "retired-narrow");
+      const source = f.sourceController;
+      const narrow = questionPeer(f.owner, "retired-narrow");
       const broad = questionPeer(
         { ...f.viewer, connect: { ...f.viewer.connect, scopes: ["operator.questions"] } },
         "retired-broad",

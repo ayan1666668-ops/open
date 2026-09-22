@@ -13,6 +13,7 @@ import type {
   QuestionResolveResult,
   QuestionWaitAnswerResult,
 } from "../../packages/gateway-protocol/src/index.js";
+import type { OperationalRunInstanceRef } from "../agents/admitted-run-context.js";
 import {
   retainGatewayRootWorkAdmissionContinuationScope,
   type GatewayRootWorkAdmissionContinuationScope,
@@ -54,6 +55,7 @@ type QuestionManagerRequest = {
   onResolved?: (event: QuestionResolvedEvent, observation: QuestionObservation) => void;
   sessionAccess?: QuestionSessionAccess;
   isRequesterActive?: () => boolean;
+  requesterRun?: OperationalRunInstanceRef;
   /** Trusted handler binds the run; the manager owns expiry and terminal release. */
   registerHumanInputWait?: (isPending: () => boolean) => ((resolved: boolean) => void) | undefined;
 };
@@ -70,6 +72,7 @@ type QuestionEntry = {
   onResolved?: QuestionManagerRequest["onResolved"];
   sessionAccess?: QuestionSessionAccess;
   isRequesterActive?: () => boolean;
+  requesterRun?: OperationalRunInstanceRef;
   admissionContinuation: GatewayRootWorkAdmissionContinuationScope | null;
   releaseHumanInputWait?: (resolved: boolean) => void;
 };
@@ -80,6 +83,7 @@ export type QuestionObservation = {
   readonly ordinary: boolean;
   readonly sessionAccess?: QuestionSessionAccess;
   isCurrent: () => boolean;
+  refreshRequester: () => void;
 };
 
 function unrefTimer(timer: ReturnType<typeof setTimeout>): void {
@@ -178,6 +182,7 @@ export class QuestionManager {
       onResolved: params.onResolved,
       sessionAccess: params.sessionAccess,
       isRequesterActive: params.isRequesterActive,
+      requesterRun: params.requesterRun,
       admissionContinuation: retainGatewayRootWorkAdmissionContinuationScope(),
     };
     this.entries.set(record.id, entry);
@@ -196,9 +201,7 @@ export class QuestionManager {
     if (entry.record.status === "pending" && entry.record.expiresAtMs <= Date.now()) {
       this.expire(id);
     }
-    if (entry.record.status === "pending" && entry.isRequesterActive?.() === false) {
-      this.cancelEntry(entry, "requester-inactive");
-    }
+    this.refreshRequester(entry);
     return this.entries.get(id) === entry ? entry.record : null;
   }
 
@@ -219,19 +222,48 @@ export class QuestionManager {
       ordinary: entry.ordinary,
       sessionAccess: entry.sessionAccess,
       isCurrent: () => this.entries.get(entry.record.id) === entry,
+      refreshRequester: () => this.refreshRequester(entry),
     };
   }
 
+  private refreshRequester(entry: QuestionEntry): void {
+    if (this.entries.get(entry.record.id) !== entry || entry.record.status !== "pending") {
+      return;
+    }
+    const active = entry.isRequesterActive?.();
+    // Liveness can reset/reuse the public id or settle the captured entry reentrantly.
+    // A worker-confirmed source loss must retire only this still-pending observation.
+    if (
+      active === false &&
+      this.entries.get(entry.record.id) === entry &&
+      entry.record.status === "pending"
+    ) {
+      this.cancelEntry(entry, "requester-inactive");
+    }
+  }
+
   /** Called by the Gateway's existing authority-close observer. */
-  cancelClosedAuthorities(): void {
-    for (const id of this.entries.keys()) {
+  cancelClosedAuthorities(closedRun?: { runId: string; instanceId?: string }): void {
+    for (const [id, entry] of this.entries) {
+      if (
+        closedRun &&
+        entry.requesterRun &&
+        (entry.requesterRun.runId !== closedRun.runId ||
+          (closedRun.instanceId !== undefined &&
+            entry.requesterRun.instanceId !== closedRun.instanceId))
+      ) {
+        continue;
+      }
       this.get(id);
     }
   }
 
-  list(): QuestionRecord[] {
+  list(include?: (record: QuestionRecord) => boolean): QuestionRecord[] {
     const records: QuestionRecord[] = [];
-    for (const id of this.entries.keys()) {
+    for (const [id, entry] of this.entries) {
+      if (include && !include(entry.record)) {
+        continue;
+      }
       const record = this.get(id);
       if (record?.status === "pending") {
         records.push(record);

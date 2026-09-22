@@ -13,7 +13,7 @@ import {
   TALK_SCOPE,
   WRITE_SCOPE,
 } from "./method-scopes.js";
-import type { GatewayBroadcastOpts, GatewayPluginEventScope } from "./server-broadcast-types.js";
+import type { GatewayPluginEventScope } from "./server-broadcast-types.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 
 // Pairing scope is for device-pairing handshakes only; chat transcript events
@@ -97,7 +97,7 @@ export function hasEventScope(
   client: GatewayWsClient,
   event: string,
   explicitPluginScope?: GatewayPluginEventScope,
-  canReadQuestion?: GatewayBroadcastOpts["canReadQuestion"],
+  ownRunQuestion = false,
 ): boolean {
   if (client.connectionKind === "worker") {
     return false;
@@ -117,8 +117,6 @@ export function hasEventScope(
     required.length === 0 ||
     (role === "operator" &&
       (required.some((scope) => operatorScopeSatisfied(scope, scopes)) ||
-        ((event === "question.requested" || event === "question.resolved") &&
-          operatorScopeSatisfied("operator.sessions.read", scopes) &&
-          canReadQuestion?.(client) === true)))
+        (ownRunQuestion && operatorScopeSatisfied("operator.sessions.write", scopes))))
   );
 }
