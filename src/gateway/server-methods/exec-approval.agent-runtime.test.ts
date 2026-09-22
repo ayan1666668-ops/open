@@ -1,28 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import type { AgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
 import {
+  cleanupTestApprovalFixtures,
   createPreparedTestApprovalManager,
-  startTestApprovalRequest,
 } from "../exec-approval-manager.test-support.js";
 import { createChatRunState } from "../server-chat-state.js";
+import { waitForApprovalAccepted } from "./approval-request.test-support.js";
 import { createExecApprovalHandlers } from "./exec-approval.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
-
-const requests: ReturnType<typeof startTestApprovalRequest>[] = [];
-async function cleanupRequests() {
-  await runQaGatewayFixture(
-    async () => {},
-    ...requests.splice(0).map((request) => request.cleanup),
-  );
-}
 
 vi.mock("../../infra/command-analysis/explain.js", () => ({
   resolveCommandAnalysisSummaryForDisplay: vi.fn(async () => null),
 }));
 
-afterEach(cleanupRequests);
+afterEach(cleanupTestApprovalFixtures);
 
 function identity(enabled: boolean): AgentRuntimeIdentity {
   return {
@@ -95,71 +87,74 @@ function requestOptions(
 
 describe("exec approval signed agent runtime", () => {
   it("rejects closed authority before creating an exec approval", async (testContext) => {
-    const { manager } = await createPreparedTestApprovalManager(testContext, {
+    const fixture = await createPreparedTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => false,
     });
-    const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
-    const opts = requestOptions(identity(false), () => false);
+    const { manager } = fixture;
+    await fixture.run(async () => {
+      const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
+      const opts = requestOptions(identity(false), () => false);
 
-    await handler(opts);
+      await handler(opts);
 
-    expect(await manager.listPendingRecords()).toHaveLength(0);
-    expect(vi.mocked(opts.respond).mock.calls[0]?.[2]).toMatchObject({
-      message: expect.stringContaining("no longer active"),
+      expect(await manager.listPendingRecords()).toHaveLength(0);
+      expect(vi.mocked(opts.respond).mock.calls[0]?.[2]).toMatchObject({
+        message: expect.stringContaining("no longer active"),
+      });
     });
   });
 
   it("sanitizes display-only cwd and resolvedPath in the stored request", async (testContext) => {
-    const { manager } = await createPreparedTestApprovalManager(testContext, {
+    const fixture = await createPreparedTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
-    const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
-    const opts = requestOptions(identity(false));
-    // Bidi override in cwd/resolvedPath can spoof what path reviewers see.
-    (opts.params as Record<string, unknown>).cwd = "/tmp/safe‮evil";
-    (opts.params as Record<string, unknown>).resolvedPath = "/usr/bin/echo​x";
-    // Free-form policy strings must not reach reviewer meta rows: security/ask
-    // are closed enums (arbitrary values null out), host is escape-hardened.
-    (opts.params as Record<string, unknown>).security = "full‮looks-deny";
-    (opts.params as Record<string, unknown>).ask = "always​ish";
-    const request = startTestApprovalRequest(manager, handler, opts);
-    requests.push(request);
-    await runQaGatewayFixture(async () => {
-      const pending = request.pending;
-      const acceptedId = await request.accepted();
+    const { manager } = fixture;
+    await fixture.run(async () => {
+      const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
+      const opts = requestOptions(identity(false));
+      // Bidi override in cwd/resolvedPath can spoof what path reviewers see.
+      (opts.params as Record<string, unknown>).cwd = "/tmp/safe‮evil";
+      (opts.params as Record<string, unknown>).resolvedPath = "/usr/bin/echo​x";
+      // Free-form policy strings must not reach reviewer meta rows: security/ask
+      // are closed enums (arbitrary values null out), host is escape-hardened.
+      (opts.params as Record<string, unknown>).security = "full‮looks-deny";
+      (opts.params as Record<string, unknown>).ask = "always​ish";
+      const { pending, response } = await waitForApprovalAccepted(opts.respond, (respond) =>
+        fixture.track(Promise.resolve(handler({ ...opts, respond }))),
+      );
       expect(await manager.listPendingRecords()).toHaveLength(1);
       const record = (await manager.listPendingRecords())[0]!;
-      expect(record.id).toBe(acceptedId);
+      expect(response[1]).toMatchObject({ id: record.id });
       expect(record.request.cwd).toBe("/tmp/safe\\u{202E}evil");
       expect(record.request.resolvedPath).toBe("/usr/bin/echo\\u{200B}x");
       expect(record.request.security).toBeNull();
       expect(record.request.ask).toBeNull();
       await manager.resolve(record.id, "deny");
       await pending;
-    }, request.cleanup);
+    });
   });
 
   it("cancels an exec approval when authority closes after the handshake", async (testContext) => {
     let active = true;
-    const { manager } = await createPreparedTestApprovalManager(testContext, {
+    const fixture = await createPreparedTestApprovalManager(testContext, {
       validateAgentRuntimeDelegatedAuthority: () => active,
     });
-    const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
-    const opts = requestOptions(identity(false), () => active);
-    const request = startTestApprovalRequest(manager, handler, opts);
-    requests.push(request);
-    await runQaGatewayFixture(async () => {
-      const pending = request.pending;
-      const acceptedId = await request.accepted();
+    const { manager } = fixture;
+    await fixture.run(async () => {
+      const handler = createExecApprovalHandlers(manager)["exec.approval.request"]!;
+      const opts = requestOptions(identity(false), () => active);
+      const { pending, response } = await waitForApprovalAccepted(opts.respond, (respond) =>
+        fixture.track(Promise.resolve(handler({ ...opts, respond }))),
+      );
       expect(await manager.listPendingRecords()).toHaveLength(1);
       const record = (await manager.listPendingRecords())[0]!;
-      expect(record.id).toBe(acceptedId);
+      expect(response[1]).toMatchObject({ id: record.id });
       active = false;
 
       await expect(manager.awaitDecision(record.id)).resolves.toBeNull();
       await pending;
       expect(await manager.getSnapshot(record.id)).toMatchObject({ status: "cancelled" });
-    }, request.cleanup);
+    });
   });
 
   it.for([
@@ -168,30 +163,27 @@ describe("exec approval signed agent runtime", () => {
   ] as const)(
     "uses signed runtime provenance with collection %s",
     async ([_label, enabled], testContext) => {
-      const { manager, databaseOptions: options } = await createPreparedTestApprovalManager(
-        testContext,
-        {
-          approvalKind: "exec",
-          validateAgentRuntimeDelegatedAuthority: () => true,
-        },
-      );
-      const handler = createExecApprovalHandlers(manager)["exec.approval.request"];
-      if (!handler) {
-        throw new Error("exec approval request handler is unavailable");
-      }
-      const opts = requestOptions(identity(enabled));
+      const fixture = await createPreparedTestApprovalManager(testContext, {
+        approvalKind: "exec",
+        validateAgentRuntimeDelegatedAuthority: () => true,
+      });
+      const { manager, databaseOptions: options } = fixture;
+      await fixture.run(async () => {
+        const handler = createExecApprovalHandlers(manager)["exec.approval.request"];
+        if (!handler) {
+          throw new Error("exec approval request handler is unavailable");
+        }
+        const opts = requestOptions(identity(enabled));
 
-      const request = startTestApprovalRequest(manager, handler, opts);
-      requests.push(request);
-      await runQaGatewayFixture(async () => {
-        const pending = request.pending;
-        const acceptedId = await request.accepted();
+        const { pending, response } = await waitForApprovalAccepted(opts.respond, (respond) =>
+          fixture.track(Promise.resolve(handler({ ...opts, respond }))),
+        );
         expect(opts.context.broadcast).toHaveBeenCalled();
         const approvalId = String(
           (vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id?: unknown } | undefined)
             ?.id,
         );
-        expect(approvalId).toBe(acceptedId);
+        expect(response[1]).toMatchObject({ id: approvalId });
         expect((await manager.getSnapshot(approvalId))?.request).toMatchObject({
           agentId: "main",
           sessionKey: "agent:main:session-1",
@@ -226,7 +218,7 @@ describe("exec approval signed agent runtime", () => {
         }
         await manager.resolve(approvalId, "deny");
         await pending;
-      }, request.cleanup);
+      });
     },
   );
 });

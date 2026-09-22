@@ -1,7 +1,5 @@
 /** Shared harness for node invoke plugin-policy tests. */
 import { expect, vi } from "vitest";
-import { createDeferred } from "../../test/helpers/promise.js";
-import { runQaGatewayFixture } from "../../test/helpers/qa-gateway-cleanup.js";
 import type { PluginApprovalRequestPayload } from "../infra/plugin-approvals.js";
 import { createPluginRecord } from "../plugins/loader-records.js";
 import { createEmptyPluginRegistry } from "../plugins/registry-empty.js";
@@ -12,6 +10,7 @@ import { trackAsyncWork } from "../shared/async-work-scope.js";
 import type { ExecApprovalManager } from "./exec-approval-manager.js";
 import { applyPluginNodeInvokePolicy } from "./node-invoke-plugin-policy.js";
 import type { NodeRegistry, NodeSession } from "./node-registry.js";
+import { waitForApprovalRequested } from "./server-methods/approval-request.test-support.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
 
 export const DEMO_PLUGIN_ID = "demo";
@@ -49,14 +48,6 @@ export function createContext(opts?: {
   validateAgentRuntimeApprovalAuthority?: GatewayRequestContext["validateAgentRuntimeApprovalAuthority"];
 }) {
   const nodeSession = opts?.nodeSession ?? createNodeSession();
-  let requested: ReturnType<typeof createDeferred<unknown>> | undefined;
-  const observeRequested = (event: string, payload: unknown) => {
-    if (event === "plugin.approval.requested") {
-      requested?.resolve(payload);
-    }
-  };
-  const requests: Promise<unknown>[] = [];
-  let closing: Promise<void> | undefined;
   const invoke = vi.fn<NodeRegistry["invoke"]>(async (params) => {
     params.onDispatchReady?.("invoke-1");
     return {
@@ -76,8 +67,8 @@ export function createContext(opts?: {
         getForPairingGeneration: () => nodeSession,
         invoke,
       },
-      broadcast: vi.fn(observeRequested),
-      broadcastToConnIds: vi.fn(observeRequested),
+      broadcast: vi.fn(),
+      broadcastToConnIds: vi.fn(),
       pluginApprovalManager: opts?.pluginApprovalManager,
       getApprovalClientConnIds: opts?.getApprovalClientConnIds,
       hasExecApprovalClients: opts?.hasExecApprovalClients,
@@ -86,25 +77,6 @@ export function createContext(opts?: {
       validateAgentRuntimeApprovalAuthority: opts?.validateAgentRuntimeApprovalAuthority,
     } as unknown as GatewayRequestContext,
     invoke,
-    nextApproval(this: void) {
-      // Internal node requests have no accepted RPC response. Arm their actual
-      // delivery event before each operation, including sequential re-prompts.
-      requested = createDeferred<unknown>();
-      return requested.promise;
-    },
-    trackApproval<T>(this: void, pending: Promise<T>): Promise<T> {
-      requests.push(pending);
-      void pending.catch(() => {});
-      return pending;
-    },
-    cleanup(this: void) {
-      return (closing ??= runQaGatewayFixture(
-        async () => {
-          await opts?.pluginApprovalManager?.drain();
-        },
-        ...requests.map((pending) => () => pending),
-      ));
-    },
   };
 }
 
@@ -125,9 +97,7 @@ export function createApprovalClient(params: {
   } as GatewayClient;
 }
 
-export function createApprovalClientLookup(
-  clients: GatewayClient[] = [createOperatorClient("conn-owner-approval")],
-): ApprovalClientLookup {
+export function createApprovalClientLookup(clients: GatewayClient[]): ApprovalClientLookup {
   return (opts = {}) =>
     new Set(
       clients
@@ -228,26 +198,24 @@ export async function invokeDemoPolicy(
   });
 }
 
-export async function expectSinglePendingApproval(
+export async function expectSinglePendingApproval<T>(
   manager: ExecApprovalManager<PluginApprovalRequestPayload>,
-  requested: Promise<unknown>,
-  operation: Promise<unknown>,
-): Promise<PluginApprovalRecord> {
-  const event = await Promise.race([
-    requested,
-    operation.then(() => {
-      throw new Error("Node approval operation completed before request delivery");
-    }),
-  ]);
-  expect(event).toMatchObject({ id: expect.any(String) });
+  context: GatewayRequestContext,
+  start: () => Promise<T>,
+) {
+  const { pending, payload } = await waitForApprovalRequested(
+    context,
+    "plugin.approval.requested",
+    start,
+  );
   const records = await manager.listPendingRecords();
   expect(records).toHaveLength(1);
   const [record] = records;
   if (!record) {
     throw new Error("expected pending approval");
   }
-  expect(record.id).toBe((event as { id: string }).id);
-  return record;
+  expect(payload).toMatchObject({ id: record.id });
+  return { record, pending };
 }
 
 export async function expectApprovalResolution(
@@ -262,17 +230,4 @@ export async function expectApprovalResolution(
   });
   expect((await manager.getSnapshot(record.id))?.consumedDecision).toBe("allow-once");
   expect(await manager.consumeAllowOnce(record.id)).toBe(false);
-}
-
-export function expectTargetedApprovalRequest(
-  context: GatewayRequestContext,
-  id: string,
-  connectionIds: Set<string>,
-) {
-  expect(context.broadcastToConnIds).toHaveBeenCalledWith(
-    "plugin.approval.requested",
-    expect.objectContaining({ id }),
-    connectionIds,
-    { dropIfSlow: true },
-  );
 }

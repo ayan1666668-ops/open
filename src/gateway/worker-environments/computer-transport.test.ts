@@ -18,7 +18,10 @@ import { resetPluginRuntimeStateForTest, setActivePluginRegistry } from "../../p
 import { createDeferredCore } from "../../shared/deferred.js";
 import { createWorkerComputerTool } from "../../worker/computer-runtime.js";
 import { createDesktopSessionRegistry } from "../desktop/session-registry.js";
-import { createTestApprovalManager } from "../exec-approval-manager.test-support.js";
+import {
+  cleanupTestApprovalFixtures,
+  createTestApprovalFixture,
+} from "../exec-approval-manager.test-support.js";
 import {
   createApprovalClientLookup,
   createOperatorClient,
@@ -127,10 +130,12 @@ describe("session computer transport", () => {
     resetAgentRunRegistryForTest();
     resetPluginRuntimeStateForTest();
   });
-  afterEach(async () => {
-    const cleanup = approvalCleanup;
+  afterEach(async (testContext) => {
+    await runQaGatewayFixture(
+      () => cleanupTestApprovalFixtures(testContext),
+      () => approvalCleanup?.(),
+    );
     approvalCleanup = undefined;
-    await cleanup?.();
     vi.restoreAllMocks();
     resetAgentRunRegistryForTest();
     resetPluginRuntimeStateForTest();
@@ -427,64 +432,61 @@ describe("session computer transport", () => {
   it("keeps session and live run authority on clientless policy approvals", async (testContext) => {
     const h = createHarness();
     const { transport, prepared } = await h.prepare();
-    const manager = createTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+    approvalCleanup = () => prepared.close("completion");
+    const fixture = createTestApprovalFixture<PluginApprovalRequestPayload>(testContext, {
       approvalKind: "plugin",
       validateAgentRuntimeDelegatedAuthority: (authority) =>
         validateAgentRunDelegatedAuthority(authority) &&
         (authority.kind === "local" || h.options.placements.validateTurnClaim(authority.turnClaim)),
     });
-    const context = h.state.context!;
-    context.pluginApprovalManager = manager;
-    context.getApprovalClientConnIds = createApprovalClientLookup([createOperatorClient()]);
-    h.policyHandle.mockImplementationOnce(async (policy) => {
-      const approval = await policy.approvals?.request({
-        title: "Session desktop action",
-        description: "Approve the bound desktop action",
-      });
-      if (approval?.decision !== "allow-once") {
-        return { ok: false, message: "approval required" };
-      }
-      return await policy.invokeNode();
-    });
-    const requested = createDeferred<unknown>();
-    const broadcast = vi.mocked(context.broadcastToConnIds).getMockImplementation();
-    vi.mocked(context.broadcastToConnIds).mockImplementation((...args) => {
-      broadcast?.(...args);
-      if (args[0] === "plugin.approval.requested") {
-        requested.resolve(args[1]);
-      }
-    });
-    const operation = transport.invoke(request("type"));
-    void operation.catch(() => {});
+    const { manager } = fixture;
     let closing: Promise<void> | undefined;
-    approvalCleanup = () =>
-      (closing ??= runQaGatewayFixture(
-        () => manager.drain(),
-        () => operation,
-        () => prepared.close("completion"),
-      ));
-    await runQaGatewayFixture(async () => {
-      const record = await expectSinglePendingApproval(manager, requested.promise, operation);
-      expect(record.request).toMatchObject({
-        agentId: "main",
-        sessionKey: h.state.placement.sessionKey,
-        runId: h.claim.runId,
-      });
-      expect(record.agentRuntimeDelegatedAuthority).toMatchObject({
-        kind: "worker",
-        turnClaim: h.claim,
-        operationalRunInstance: h.run,
-      });
-      expect(await manager.resolve(record.id, "allow-once")).toBe(true);
-      await expect(operation).resolves.toMatchObject({ ok: true });
-      expect((await manager.getSnapshot(record.id))?.consumedDecision).toBe("allow-once");
-      releaseAgentRunDelegatedAuthority(h.authority);
-      h.releaseClaim();
-      h.policyHandle.mockClear();
-      await prepared.close("completion");
-      expect(h.policyHandle).not.toHaveBeenCalled();
-      expect(await manager.listPendingRecords()).toEqual([]);
-    }, approvalCleanup);
+    const cleanup = () =>
+      (closing ??= runQaGatewayFixture(fixture.cleanup, () => prepared.close("completion")));
+    approvalCleanup = cleanup;
+    await runQaGatewayFixture(
+      () =>
+        fixture.run(async () => {
+          const context = h.state.context!;
+          context.pluginApprovalManager = manager;
+          context.getApprovalClientConnIds = createApprovalClientLookup([createOperatorClient()]);
+          h.policyHandle.mockImplementationOnce(async (policy) => {
+            const approval = await policy.approvals?.request({
+              title: "Session desktop action",
+              description: "Approve the bound desktop action",
+            });
+            if (approval?.decision !== "allow-once") {
+              return { ok: false, message: "approval required" };
+            }
+            return await policy.invokeNode();
+          });
+          const { record, pending: operation } = await expectSinglePendingApproval(
+            manager,
+            context,
+            () => fixture.track(transport.invoke(request("type"))),
+          );
+          expect(record.request).toMatchObject({
+            agentId: "main",
+            sessionKey: h.state.placement.sessionKey,
+            runId: h.claim.runId,
+          });
+          expect(record.agentRuntimeDelegatedAuthority).toMatchObject({
+            kind: "worker",
+            turnClaim: h.claim,
+            operationalRunInstance: h.run,
+          });
+          expect(await manager.resolve(record.id, "allow-once")).toBe(true);
+          await expect(operation).resolves.toMatchObject({ ok: true });
+          expect((await manager.getSnapshot(record.id))?.consumedDecision).toBe("allow-once");
+          releaseAgentRunDelegatedAuthority(h.authority);
+          h.releaseClaim();
+          h.policyHandle.mockClear();
+          await prepared.close("completion");
+          expect(h.policyHandle).not.toHaveBeenCalled();
+          expect(await manager.listPendingRecords()).toEqual([]);
+        }),
+      cleanup,
+    );
   });
 
   it.each([

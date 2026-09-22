@@ -1,24 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runQaGatewayFixture } from "../../../test/helpers/qa-gateway-cleanup.js";
 import type { PluginApprovalRequestPayload } from "../../infra/plugin-approvals.js";
 import { openOpenClawStateDatabase } from "../../state/openclaw-state-db.js";
 import type { AgentRuntimeIdentity } from "../agent-runtime-identity-token.js";
 import type { ExecApprovalManager } from "../exec-approval-manager.js";
 import {
+  cleanupTestApprovalFixtures,
   createPreparedTestApprovalManager,
-  createTestApprovalManager,
-  startTestApprovalRequest,
+  createTestApprovalFixture,
 } from "../exec-approval-manager.test-support.js";
+import { waitForApprovalAccepted } from "./approval-request.test-support.js";
 import { createPluginApprovalHandlers } from "./plugin-approval.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
-
-const requests: ReturnType<typeof startTestApprovalRequest>[] = [];
-async function cleanupRequests() {
-  await runQaGatewayFixture(
-    async () => {},
-    ...requests.splice(0).map((request) => request.cleanup),
-  );
-}
 
 function executionIdentity() {
   return {
@@ -81,140 +73,148 @@ function requestHandler(
   return handler;
 }
 
-afterEach(async () => {
-  await cleanupRequests();
+afterEach(async (testContext) => {
+  await cleanupTestApprovalFixtures(testContext);
   vi.restoreAllMocks();
 });
 
 describe("plugin approval signed agent runtime", () => {
   it("rejects closed authority before creating a plugin approval", async (testContext) => {
-    const manager = createTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+    const fixture = createTestApprovalFixture<PluginApprovalRequestPayload>(testContext, {
       approvalKind: "plugin",
       validateAgentRuntimeDelegatedAuthority: () => false,
     });
-    const opts = requestOptions({
-      request: { title: "Sensitive action", description: "D" },
-      identity: {
-        ...identityWithoutExecution(),
-        approvalOwnerPluginId: "codex",
-      },
-      validateAuthority: () => false,
-    });
+    const { manager } = fixture;
+    await fixture.run(async () => {
+      const opts = requestOptions({
+        request: { title: "Sensitive action", description: "D" },
+        identity: {
+          ...identityWithoutExecution(),
+          approvalOwnerPluginId: "codex",
+        },
+        validateAuthority: () => false,
+      });
 
-    await requestHandler(manager)(opts);
+      await requestHandler(manager)(opts);
 
-    expect(await manager.listPendingRecords()).toHaveLength(0);
-    expect(vi.mocked(opts.respond).mock.calls[0]?.[2]).toMatchObject({
-      message: expect.stringContaining("no longer active"),
+      expect(await manager.listPendingRecords()).toHaveLength(0);
+      expect(vi.mocked(opts.respond).mock.calls[0]?.[2]).toMatchObject({
+        message: expect.stringContaining("no longer active"),
+      });
     });
   });
 
   it("cancels a plugin approval when authority closes after the handshake", async (testContext) => {
     let active = true;
-    const manager = createTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+    const fixture = createTestApprovalFixture<PluginApprovalRequestPayload>(testContext, {
       approvalKind: "plugin",
       validateAgentRuntimeDelegatedAuthority: () => active,
     });
-    const opts = requestOptions({
-      request: { title: "Sensitive action", description: "D", twoPhase: true },
-      identity: {
-        ...identityWithoutExecution(),
-        approvalOwnerPluginId: "codex",
-      },
-      validateAuthority: () => active,
-    });
-    const request = startTestApprovalRequest(manager, requestHandler(manager), opts);
-    requests.push(request);
-    await runQaGatewayFixture(async () => {
-      const pending = request.pending;
-      const acceptedId = await request.accepted();
+    const { manager } = fixture;
+    await fixture.run(async () => {
+      const opts = requestOptions({
+        request: { title: "Sensitive action", description: "D", twoPhase: true },
+        identity: {
+          ...identityWithoutExecution(),
+          approvalOwnerPluginId: "codex",
+        },
+        validateAuthority: () => active,
+      });
+      const { pending, response } = await waitForApprovalAccepted(opts.respond, (respond) =>
+        fixture.track(Promise.resolve(requestHandler(manager)({ ...opts, respond }))),
+      );
       expect(await manager.listPendingRecords()).toHaveLength(1);
       const record = (await manager.listPendingRecords())[0]!;
-      expect(record.id).toBe(acceptedId);
+      expect(response[1]).toMatchObject({ id: record.id });
       active = false;
 
       await expect(manager.awaitDecision(record.id)).resolves.toBeNull();
       await pending;
       expect(await manager.getSnapshot(record.id)).toMatchObject({ status: "cancelled" });
-    }, request.cleanup);
+    });
   });
 
   it("rejects a signed runtime without a host-resolved approval owner", async (testContext) => {
-    const manager = createTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+    const fixture = createTestApprovalFixture<PluginApprovalRequestPayload>(testContext, {
       approvalKind: "plugin",
       validateAgentRuntimeDelegatedAuthority: () => true,
     });
-    const opts = requestOptions({
-      request: { pluginId: "forged", title: "Sensitive action", description: "D" },
-      identity: {
-        kind: "agentRuntime",
-        agentId: "main",
-        sessionKey: "agent:main:session-1",
-        operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
-        delegatedAuthority: {
-          kind: "local",
+    const { manager } = fixture;
+    await fixture.run(async () => {
+      const opts = requestOptions({
+        request: { pluginId: "forged", title: "Sensitive action", description: "D" },
+        identity: {
+          kind: "agentRuntime",
+          agentId: "main",
+          sessionKey: "agent:main:session-1",
           operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
-          lifecycleGeneration: "generation-1",
-          claimId: "claim-1",
+          delegatedAuthority: {
+            kind: "local",
+            operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
+            lifecycleGeneration: "generation-1",
+            claimId: "claim-1",
+          },
         },
-      },
-    });
+      });
 
-    await requestHandler(manager)(opts);
+      await requestHandler(manager)(opts);
 
-    expect(vi.mocked(opts.respond).mock.calls[0]?.[2]).toMatchObject({
-      message: expect.stringContaining("signed plugin approval owner is unavailable"),
+      expect(vi.mocked(opts.respond).mock.calls[0]?.[2]).toMatchObject({
+        message: expect.stringContaining("signed plugin approval owner is unavailable"),
+      });
     });
   });
 
   it("uses signed runtime owner and route instead of forged request metadata", async (testContext) => {
-    const { manager, databaseOptions: options } =
-      await createPreparedTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+    const fixture = await createPreparedTestApprovalManager<PluginApprovalRequestPayload>(
+      testContext,
+      {
         approvalKind: "plugin",
         validateAgentRuntimeDelegatedAuthority: () => true,
-      });
-    const opts = requestOptions({
-      request: {
-        pluginId: "forged-plugin",
-        title: "Sensitive action",
-        description: "D",
-        agentId: "forged-agent",
-        sessionKey: "forged-session",
-        turnSourceChannel: "forged-channel",
-        turnSourceTo: "forged-target",
-        twoPhase: true,
       },
-      identity: {
-        kind: "agentRuntime",
-        operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
-        delegatedAuthority: {
-          kind: "local",
-          operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
-          lifecycleGeneration: "generation-1",
-          claimId: "claim-1",
+    );
+    const { manager, databaseOptions: options } = fixture;
+    await fixture.run(async () => {
+      const opts = requestOptions({
+        request: {
+          pluginId: "forged-plugin",
+          title: "Sensitive action",
+          description: "D",
+          agentId: "forged-agent",
+          sessionKey: "forged-session",
+          turnSourceChannel: "forged-channel",
+          turnSourceTo: "forged-target",
+          twoPhase: true,
         },
-        executionIdentity: executionIdentity(),
-        approvalOwnerPluginId: "codex",
-        agentId: "main",
-        sessionKey: "agent:main:session-1",
-        turnSourceChannel: "telegram",
-        turnSourceTo: "chat-1",
-        turnSourceAccountId: "default",
-        turnSourceThreadId: "thread-1",
-      },
-    });
+        identity: {
+          kind: "agentRuntime",
+          operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
+          delegatedAuthority: {
+            kind: "local",
+            operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
+            lifecycleGeneration: "generation-1",
+            claimId: "claim-1",
+          },
+          executionIdentity: executionIdentity(),
+          approvalOwnerPluginId: "codex",
+          agentId: "main",
+          sessionKey: "agent:main:session-1",
+          turnSourceChannel: "telegram",
+          turnSourceTo: "chat-1",
+          turnSourceAccountId: "default",
+          turnSourceThreadId: "thread-1",
+        },
+      });
 
-    const request = startTestApprovalRequest(manager, requestHandler(manager), opts);
-    requests.push(request);
-    await runQaGatewayFixture(async () => {
-      const pending = request.pending;
-      const acceptedId = await request.accepted();
+      const { pending, response } = await waitForApprovalAccepted(opts.respond, (respond) =>
+        fixture.track(Promise.resolve(requestHandler(manager)({ ...opts, respond }))),
+      );
       expect(opts.context.broadcast).toHaveBeenCalled();
       const broadcastPayload = vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as
         | { id?: unknown }
         | undefined;
       const approvalId = String(broadcastPayload?.id);
-      expect(approvalId).toBe(acceptedId);
+      expect(response[1]).toMatchObject({ id: approvalId });
       expect((await manager.getSnapshot(approvalId))?.request).toMatchObject({
         pluginId: "codex",
         agentId: "main",
@@ -237,42 +237,44 @@ describe("plugin approval signed agent runtime", () => {
       });
       await manager.resolve(approvalId, "deny");
       await pending;
-    }, request.cleanup);
+    });
   });
 
   it("does not create execution identity storage when collection is disabled", async (testContext) => {
-    const { manager, databaseOptions: options } =
-      await createPreparedTestApprovalManager<PluginApprovalRequestPayload>(testContext, {
+    const fixture = await createPreparedTestApprovalManager<PluginApprovalRequestPayload>(
+      testContext,
+      {
         approvalKind: "plugin",
         validateAgentRuntimeDelegatedAuthority: () => true,
-      });
-    const opts = requestOptions({
-      request: { title: "Sensitive action", description: "D", twoPhase: true },
-      identity: {
-        kind: "agentRuntime",
-        operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
-        delegatedAuthority: {
-          kind: "local",
-          operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
-          lifecycleGeneration: "generation-1",
-          claimId: "claim-1",
-        },
-        approvalOwnerPluginId: "codex",
-        agentId: "main",
-        sessionKey: "agent:main:session-1",
       },
-    });
+    );
+    const { manager, databaseOptions: options } = fixture;
+    await fixture.run(async () => {
+      const opts = requestOptions({
+        request: { title: "Sensitive action", description: "D", twoPhase: true },
+        identity: {
+          kind: "agentRuntime",
+          operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
+          delegatedAuthority: {
+            kind: "local",
+            operationalRunInstance: { instanceId: "instance-run-1", runId: "run-1" },
+            lifecycleGeneration: "generation-1",
+            claimId: "claim-1",
+          },
+          approvalOwnerPluginId: "codex",
+          agentId: "main",
+          sessionKey: "agent:main:session-1",
+        },
+      });
 
-    const request = startTestApprovalRequest(manager, requestHandler(manager), opts);
-    requests.push(request);
-    await runQaGatewayFixture(async () => {
-      const pending = request.pending;
-      const acceptedId = await request.accepted();
+      const { pending, response } = await waitForApprovalAccepted(opts.respond, (respond) =>
+        fixture.track(Promise.resolve(requestHandler(manager)({ ...opts, respond }))),
+      );
       expect(opts.context.broadcast).toHaveBeenCalled();
       const approvalId = String(
         (vi.mocked(opts.context.broadcast).mock.calls[0]?.[1] as { id?: unknown } | undefined)?.id,
       );
-      expect(approvalId).toBe(acceptedId);
+      expect(response[1]).toMatchObject({ id: approvalId });
       expect(
         openOpenClawStateDatabase(options)
           .db.prepare(
@@ -282,6 +284,6 @@ describe("plugin approval signed agent runtime", () => {
       ).toBeUndefined();
       await manager.resolve(approvalId, "deny");
       await pending;
-    }, request.cleanup);
+    });
   });
 });

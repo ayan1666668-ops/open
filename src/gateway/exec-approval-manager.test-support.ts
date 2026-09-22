@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { expect, vi, type TestContext } from "vitest";
+import { vi, type TestContext } from "vitest";
 import { createFixtureLifetime } from "../../test/helpers/fixture-lifetime.js";
-import { createDeferred } from "../../test/helpers/promise.js";
 import { runQaGatewayFixture } from "../../test/helpers/qa-gateway-cleanup.js";
 import type { ExecApprovalRequestPayload } from "../infra/exec-approvals.js";
 import { closeOpenClawStateDatabaseByPathAsync } from "../state/openclaw-state-db-cache.js";
@@ -10,10 +9,19 @@ import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import type { ExecApprovalManagerOptions } from "./exec-approval-manager.types.js";
 import * as operatorApprovalStore from "./operator-approval-store.js";
-import type {
-  GatewayRequestHandler,
-  GatewayRequestHandlerOptions,
-} from "./server-methods/types.js";
+
+const testCleanups = new WeakMap<TestContext["task"], Array<() => Promise<void>>>();
+
+/** Reset owners must join fixture work before changing registries, mocks, or stores. */
+export async function cleanupTestApprovalFixtures(test: TestContext): Promise<void> {
+  const results = await Promise.allSettled(
+    (testCleanups.get(test.task) ?? []).map((close) => close()),
+  );
+  const errors = results.flatMap((result) => (result.status === "rejected" ? [result.reason] : []));
+  if (errors.length) {
+    throw new AggregateError(errors, "Approval fixture cleanup failed");
+  }
+}
 
 /** Vitest clocks are process-local; send controlled time through the store's existing input. */
 export function installTestApprovalClock(): (() => void) | undefined {
@@ -52,9 +60,9 @@ export async function createPreparedTestApprovalManager<TPayload = ExecApprovalR
   return fixture;
 }
 
-function createTestApprovalFixture<TPayload>(
+export function createTestApprovalFixture<TPayload = ExecApprovalRequestPayload>(
   test: TestContext,
-  options: Omit<ExecApprovalManagerOptions<TPayload>, "persistence">,
+  options: Omit<ExecApprovalManagerOptions<TPayload>, "persistence"> = {},
 ) {
   test.signal.throwIfAborted();
   const restoreClock = installTestApprovalClock();
@@ -62,16 +70,36 @@ function createTestApprovalFixture<TPayload>(
   const fixture = createFixtureLifetime();
   let manager: ExecApprovalManager<TPayload> | undefined;
   let databasePath: string | undefined = undefined;
-  // Register on the actual test, never once through a cached helper module.
-  test.onTestFinished(() => {
-    void fixture.verifyCleanup(async () => {
+  const requests: Promise<unknown>[] = [];
+  let body: Promise<unknown> | undefined;
+  let closing: Promise<void> | undefined;
+  async function drainRequests() {
+    try {
       await manager?.drain();
-      if (databasePath) {
-        await closeOpenClawStateDatabaseByPathAsync(databasePath);
-      }
-    });
-    return fixture.cleanup();
-  });
+    } finally {
+      // Manager retirement settles observers; their outer RPC/policy continuations
+      // still own the database until they have unwound.
+      await Promise.allSettled(requests);
+    }
+  }
+  function cleanup(): Promise<void> {
+    return (closing ??= (async () => {
+      void fixture.verifyCleanup(async () => {
+        await drainRequests();
+        await Promise.allSettled([body]);
+        if (databasePath) {
+          await closeOpenClawStateDatabaseByPathAsync(databasePath);
+        }
+      });
+      await fixture.cleanup();
+    })());
+  }
+  // Vitest finishes hooks after afterEach. Both owners join the same cleanup,
+  // including failed initialization, before either can release fixture inputs.
+  const cleanups = testCleanups.get(test.task) ?? [];
+  cleanups.push(cleanup);
+  testCleanups.set(test.task, cleanups);
+  test.onTestFinished(cleanup);
   const root = fixture.createTempDir("openclaw-test-approval-");
   databasePath = path.join(root, "state.sqlite");
   const databaseOptions = {
@@ -85,7 +113,21 @@ function createTestApprovalFixture<TPayload>(
       ...options,
       persistence: { runtimeEpoch: randomUUID(), databaseOptions },
     });
-    return { manager, databaseOptions };
+    return {
+      manager,
+      databaseOptions,
+      cleanup,
+      track: <T>(request: Promise<T>) => {
+        requests.push(request);
+        void request.catch(() => {});
+        return request;
+      },
+      run: <T>(callback: () => Promise<T>) => {
+        const work = fixture.run(() => runQaGatewayFixture(callback, drainRequests));
+        body = work;
+        return work;
+      },
+    };
   } catch (error) {
     // A failed open can include failed closure of an unpublished handle.
     // Retain its inputs rather than certify cleanup from an empty cache.
@@ -95,46 +137,4 @@ function createTestApprovalFixture<TPayload>(
     );
     throw error;
   }
-}
-
-/** Two-phase fixtures own the accepted handshake and the handler through teardown. */
-export function startTestApprovalRequest(
-  manager: { drain(): Promise<void> },
-  handler: GatewayRequestHandler,
-  options: GatewayRequestHandlerOptions,
-) {
-  const response = createDeferred<Parameters<GatewayRequestHandlerOptions["respond"]>>();
-  const respond = options.respond;
-  options.respond = (...args) => {
-    respond(...args);
-    response.resolve(args);
-  };
-  const pending = (async () => handler(options))();
-  // Observe rejection immediately, including when a test assertion exits first.
-  void pending.catch(() => {});
-  let closing: Promise<void> | undefined;
-  return {
-    pending,
-    async accepted(): Promise<string> {
-      const [ok, payload, error] = await Promise.race([
-        response.promise,
-        pending.then(() => {
-          throw new Error("Approval request completed before its accepted handshake");
-        }),
-      ]);
-      expect(ok).toBe(true);
-      expect(error).toBeUndefined();
-      expect(payload).toMatchObject({ status: "accepted", id: expect.any(String) });
-      const id = (payload as { id: string }).id;
-      expect(id.length).toBeGreaterThan(0);
-      return id;
-    },
-    cleanup(this: void) {
-      // Drain releases decision observers; the handler must join before its store closes.
-      return (closing ??= runQaGatewayFixture(
-        () => manager.drain(),
-        () => pending,
-      ));
-    },
-  };
 }

@@ -22,13 +22,13 @@ import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../test-utils/openclaw-test-state.js";
-import { startTestApprovalRequest } from "./exec-approval-manager.test-support.js";
 import { createGatewayAuxHandlers } from "./server-aux-handlers.js";
+import { waitForApprovalAccepted } from "./server-methods/approval-request.test-support.js";
 import { createPluginApprovalHandlers } from "./server-methods/plugin-approval.js";
 import type { GatewayRequestHandlerOptions } from "./server-methods/types.js";
 import { createTestRuntimeSecretsActivator } from "./server-startup-config.test-support.js";
 
-const requests: ReturnType<typeof startTestApprovalRequest>[] = [];
+const requestCleanups: Array<() => Promise<void>> = [];
 const auxiliaries: ReturnType<typeof createGatewayAuxHandlers>[] = [];
 let fixture: OpenClawTestState | undefined;
 const cfg: OpenClawConfig = {
@@ -65,10 +65,7 @@ beforeEach(async () => {
   setRuntimeConfigSnapshot(cfg);
 });
 afterEach(async () => {
-  await runQaGatewayFixture(
-    async () => {},
-    ...requests.splice(0).map((request) => request.cleanup),
-  );
+  await runQaGatewayFixture(async () => {}, ...requestCleanups.splice(0));
   for (const aux of auxiliaries) {
     await aux.stopOperatorInteractions();
   }
@@ -146,22 +143,31 @@ async function requestGrant(
       validateAgentRuntimeApprovalAuthority: () => validateAgentRunDelegatedAuthority(authority),
     },
   } as unknown as GatewayRequestHandlerOptions;
-  const approval = startTestApprovalRequest(
-    { drain: () => aux.stopOperatorInteractions() },
-    createPluginApprovalHandlers(aux.pluginApprovalManager)["plugin.approval.request"]!,
-    args,
-  );
+  let pending: Promise<void> | undefined;
   let closing: Promise<void> | undefined;
   const cleanup = () =>
-    (closing ??= runQaGatewayFixture(approval.cleanup, () => releaseBinding?.()));
-  requests.push({ ...approval, cleanup });
+    (closing ??= runQaGatewayFixture(
+      () => aux.stopOperatorInteractions(),
+      () => pending,
+      () => releaseBinding?.(),
+    ));
+  requestCleanups.push(cleanup);
   try {
-    const approvalId = await approval.accepted();
+    const { response } = await waitForApprovalAccepted(args.respond, (respond) => {
+      pending = Promise.resolve(
+        createPluginApprovalHandlers(aux.pluginApprovalManager)["plugin.approval.request"]!({
+          ...args,
+          respond,
+        }),
+      );
+      void pending.catch(() => {});
+      return pending;
+    });
     const records = await aux.pluginApprovalManager.listPendingRecords();
     expect(records).toHaveLength(1);
     const record = records[0]!;
-    expect(record.id).toBe(approvalId);
-    return { aux, authority, pending: approval.pending, record, cleanup };
+    expect(response[1]).toMatchObject({ id: record.id });
+    return { aux, authority, pending, record, cleanup };
   } catch (error) {
     return await runQaGatewayFixture(async () => {
       throw error;
