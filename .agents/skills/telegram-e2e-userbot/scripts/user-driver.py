@@ -43,7 +43,11 @@ TDLIB_CACHE_ROOT = Path(
 
 
 class DriverError(RuntimeError):
-    pass
+    def __init__(self, message, *, tdlib_code=None, tdlib_message="", tdlib_method=""):
+        super().__init__(message)
+        self.tdlib_code = tdlib_code
+        self.tdlib_message = tdlib_message
+        self.tdlib_method = tdlib_method
 
 
 def read_json(path):
@@ -317,8 +321,12 @@ class TdClient:
                 continue
             if item.get("@extra") == extra:
                 if item.get("@type") == "error":
+                    message = item.get("message") or "TDLib error"
                     raise DriverError(
-                        f"{payload['@type']} failed ({item.get('code')}): {item.get('message')}"
+                        f"{payload['@type']} failed ({item.get('code')}): {message}",
+                        tdlib_code=item.get("code"),
+                        tdlib_message=message,
+                        tdlib_method=payload["@type"],
                     )
                 return item
             self.handle_update(item)
@@ -493,19 +501,14 @@ class UserDriver:
         try:
             return self.client.request({"@type": "getChat", "chat_id": int(chat)}, timeout=10)["id"]
         except DriverError as error:
-            chats = self.client.request(
-                {
-                    "@type": "getChats",
-                    "chat_list": {"@type": "chatListMain"},
-                    "limit": 100,
-                },
-                timeout=30,
-            )
-            chat_id = int(chat)
-            if chat_id in chats.get("chat_ids", []):
-                return chat_id
+            if not (
+                error.tdlib_method == "getChat"
+                and error.tdlib_code == 400
+                and error.tdlib_message == "Chat not found"
+            ):
+                raise
             raise DriverError(
-                f"Chat not found for tester account: {chat}. Add the QA user to the group, or configure the TDLib chat id from `user-driver.py chats --json`."
+                f"Chat {chat} is missing from the cold-restored TDLib state. Disable and republish the pooled credential with a snapshot where getChat(groupId) succeeds."
             ) from error
 
     def formatted_text(self, text):
@@ -804,6 +807,7 @@ def command_status(args):
         sys.exit(1)
     me = driver.client.request({"@type": "getMe"})
     version = driver.client.request({"@type": "getOption", "name": "version"})
+    chat_id = driver.resolve_chat(args.require_chat) if args.require_chat else None
     save_tester_identity(config, me)
     print_result(
         {
@@ -812,6 +816,7 @@ def command_status(args):
             "testDc": config.get("testDc") is True,
             "tdlibVersion": version.get("value", ""),
             "user": public_user(me),
+            **({"chatId": chat_id} if chat_id is not None else {}),
         },
         args.json,
         getattr(args, "output", ""),
@@ -1125,6 +1130,7 @@ def main():
 
     status = sub.add_parser("status")
     add_common(status)
+    status.add_argument("--require-chat", default="")
     status.set_defaults(func=command_status)
 
     confirm_qr = sub.add_parser("confirm-qr")

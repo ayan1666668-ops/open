@@ -24,14 +24,20 @@ export async function runTelegramTestDoctor({
   let proxy;
   try {
     const driverEnv = { ...sanitizeChildEnvironment(), ...credential.driverEnv };
-    const status = await runCommandImpl("uv", ["run", USER_DRIVER_PATH, "status", "--json"], {
-      cwd: process.cwd(),
-      env: driverEnv,
-      leaseFailure,
-      timeoutMs: 30_000,
-    });
+    const status = await runCommandImpl(
+      "uv",
+      ["run", USER_DRIVER_PATH, "status", "--json", "--require-chat", credential.groupId],
+      {
+        cwd: process.cwd(),
+        env: driverEnv,
+        leaseFailure,
+        timeoutMs: 30_000,
+      },
+    );
     if (status.status !== 0 || status.timedOut) {
-      throw new Error("TDLib Test Server user session is not authorized.");
+      throw new Error(
+        "TDLib Test Server credential is unauthorized or its configured group is missing from cold-restored state. Disable and republish this credential.",
+      );
     }
     const driver = JSON.parse(status.stdout);
     if (
@@ -42,6 +48,9 @@ export async function runTelegramTestDoctor({
       String(driver.user?.id) !== credential.testerUserId
     ) {
       throw new Error("TDLib Test Server user identity does not match the lease.");
+    }
+    if (String(driver.chatId) !== credential.groupId) {
+      throw new Error("TDLib Test Server group identity does not match the lease.");
     }
     proxy = await startProxy({
       leaseHealth: {
