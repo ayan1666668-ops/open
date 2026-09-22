@@ -28,7 +28,13 @@ import type { MemoryEmbeddingProviderAdapter } from "../plugins/memory-embedding
 import { createPluginRegistry } from "../plugins/registry.js";
 import type { PluginRuntime } from "../plugins/runtime/types.js";
 import { acquireTestPortBlock } from "../test-utils/port-claims.js";
-import { startGenericEmbeddingServer } from "./embeddings-http.test-support.js";
+import {
+  expectDefaultEmbeddingResponse,
+  expectEmbeddingData,
+  expectInvalidEmbeddingRequest,
+  observeNextEmbeddingAdmission,
+  startGenericEmbeddingServer,
+} from "./embeddings-http.test-support.js";
 import { startOpenAiCompatGatewayServer } from "./openai-compatible-http.test-helpers.js";
 import {
   installGatewayTestHooks,
@@ -71,6 +77,7 @@ let embedBatchMock: ReturnType<
 >;
 let closeEmbeddingProviderMock: ReturnType<typeof vi.fn<() => Promise<void> | void>>;
 let openAiAdapter: MemoryEmbeddingProviderAdapter;
+let embeddingsProviderLifetime: typeof import("./embeddings-provider-lifetime.js");
 let drainRetainedOpenAiEmbeddingProviders: typeof import("./embeddings-provider-lifetime.js").drainRetainedOpenAiEmbeddingProviders;
 let clearEmbeddingProviders: typeof import("../plugins/embedding-providers.js").clearEmbeddingProviders;
 let registerEmbeddingProvider: typeof import("../plugins/embedding-providers.js").registerEmbeddingProvider;
@@ -81,7 +88,8 @@ let genericEmbeddingBaseUrl: string;
 const genericEmbeddingRequests: Parameters<typeof startGenericEmbeddingServer>[0] = [];
 
 beforeAll(async () => {
-  ({ drainRetainedOpenAiEmbeddingProviders } = await import("./embeddings-provider-lifetime.js"));
+  embeddingsProviderLifetime = await import("./embeddings-provider-lifetime.js");
+  ({ drainRetainedOpenAiEmbeddingProviders } = embeddingsProviderLifetime);
   ({ clearEmbeddingProviders, registerEmbeddingProvider } =
     await import("../plugins/embedding-providers.js"));
   embedBatchMock = vi.fn(async (inputs: EmbeddingInput[]) =>
@@ -176,41 +184,6 @@ async function postEmbeddings(
   });
 }
 
-async function expectDefaultEmbeddingResponse(res: Response) {
-  expect(res.status).toBe(200);
-  const json = (await res.json()) as {
-    object?: string;
-    data?: Array<{ object?: string; embedding?: number[] }>;
-  };
-  expect(json.object).toBe("list");
-  expect(json.data?.[0]?.object).toBe("embedding");
-  expect(json.data?.[0]?.embedding).toEqual([0.1, 0.2]);
-}
-
-async function expectEmbeddingData(
-  res: Response,
-  expected: Array<{ object: "embedding"; index: number; embedding: number[] }>,
-) {
-  expect(res.status).toBe(200);
-  const json = (await res.json()) as {
-    data?: Array<{ embedding?: number[]; index?: number }>;
-  };
-  expect(json.data).toEqual(expected);
-}
-
-async function expectInvalidEmbeddingRequest(res: Response, message?: string) {
-  expect(res.status).toBe(400);
-  const json = (await res.json()) as { error?: { type?: string; message?: string } };
-  if (message === undefined) {
-    expect(json.error?.type).toBe("invalid_request_error");
-    return;
-  }
-  expect(json.error).toEqual({
-    type: "invalid_request_error",
-    message,
-  });
-}
-
 async function expectGenericProviderEmbeddingRequest(expectedProviderCall: {
   model: string;
   dimensions: number;
@@ -261,6 +234,7 @@ type HeldEmbeddingCleanup = {
   signal: AbortSignal;
   post: (body: unknown, headers?: Record<string, string>) => Promise<Response>;
   waitForClose: (request: Promise<Response>) => Promise<void>;
+  observeNextAdmission: () => Promise<AbortSignal>;
   releaseClose: () => void;
 };
 
@@ -274,6 +248,7 @@ async function withHeldEmbeddingCleanup(
   const requestLifetime = new AbortController();
   const requests: Promise<Response>[] = [];
   const originalTransport = openAiAdapter.transport;
+  let admission: ReturnType<typeof observeNextEmbeddingAdmission> | undefined;
   return runQaGatewayTestFixture(
     context,
     async ({ signal }) => {
@@ -308,6 +283,10 @@ async function withHeldEmbeddingCleanup(
           );
           expect(closeEmbeddingProviderMock).toHaveBeenCalledTimes(closesBefore + 1);
         },
+        observeNextAdmission: () => {
+          admission = observeNextEmbeddingAdmission(embeddingsProviderLifetime);
+          return admission.entered;
+        },
         releaseClose: closeGate.resolve,
       });
     },
@@ -320,6 +299,7 @@ async function withHeldEmbeddingCleanup(
     },
     () => drainRetainedOpenAiEmbeddingProviders(),
     () => {
+      admission?.restore();
       Reflect.set(openAiAdapter, "transport", originalTransport);
       closeEmbeddingProviderMock.mockReset();
       createEmbeddingProviderMock.mockReset();
@@ -339,6 +319,7 @@ async function expectSerializedEmbeddingCleanup(
   return withHeldEmbeddingCleanup(context, scenario.closeFails, async (fixture) => {
     Reflect.set(openAiAdapter, "transport", scenario.transport);
     if (scenario.localResult) {
+      registerEmbeddingProvider({ ...openAiAdapter, id: "local", transport: "local" });
       createEmbeddingProviderMock.mockResolvedValueOnce({
         provider: {
           id: "local",
@@ -355,11 +336,20 @@ async function expectSerializedEmbeddingCleanup(
       scenario.modelOverrides ? { "x-openclaw-model": scenario.modelOverrides[0] } : undefined,
     );
     await fixture.waitForClose(firstPromise);
+    const nextAdmission = fixture.observeNextAdmission();
     const secondPromise = fixture.post(
       { model: "openclaw/default", input: "second" },
       scenario.modelOverrides ? { "x-openclaw-model": scenario.modelOverrides[1] } : undefined,
     );
-    await Promise.resolve();
+    await racePromiseWithAbortSignal(
+      Promise.race([
+        nextAdmission,
+        secondPromise.then((response) => {
+          throw new Error(`Embedding request completed before admission (${response.status})`);
+        }),
+      ]),
+      fixture.signal,
+    );
     expect(createEmbeddingProviderMock).toHaveBeenCalledTimes(createsBefore + 1);
 
     fixture.releaseClose();
@@ -943,6 +933,7 @@ describe("OpenAI-compatible embeddings HTTP API (e2e)", () => {
 
       try {
         await fixture.waitForClose(firstPromise);
+        const nextAdmission = fixture.observeNextAdmission();
 
         const body = JSON.stringify({ model: "openclaw/default", input: "second" });
         secondRequest = httpRequest({
@@ -951,29 +942,39 @@ describe("OpenAI-compatible embeddings HTTP API (e2e)", () => {
           path: "/v1/embeddings",
           method: "POST",
           headers: {
-            authorization: "******",
+            authorization: "Bearer secret",
             "content-type": "application/json",
             "content-length": Buffer.byteLength(body),
             ...WRITE_SCOPE_HEADER,
           },
         });
-        secondRequest.on("error", () => {});
-        const secondRequestFinished = createDeferred();
-        secondRequest.once("finish", secondRequestFinished.resolve);
+        const secondResponse = createDeferred<never>();
+        secondRequest.on("error", secondResponse.reject);
+        secondRequest.once("response", (response) => {
+          response.resume();
+          secondResponse.reject(
+            new Error(`Embedding request completed before disconnect (${response.statusCode})`),
+          );
+        });
         secondRequest.once("close", secondRequestClosed.resolve);
         secondRequest.end(body);
-        await racePromiseWithAbortSignal(secondRequestFinished.promise, fixture.signal);
-        await new Promise<void>((resolve) => {
-          setImmediate(resolve);
-        });
+        const signal = await racePromiseWithAbortSignal(
+          Promise.race([nextAdmission, secondResponse.promise]),
+          fixture.signal,
+        );
+        expect(signal.aborted).toBe(false);
+        expect(createEmbeddingProviderMock).toHaveBeenCalledTimes(createsBefore + 1);
+        const disconnected = createDeferred();
+        signal.addEventListener("abort", () => disconnected.resolve(), { once: true });
         secondRequest.destroy();
-        await racePromiseWithAbortSignal(secondRequestClosed.promise, fixture.signal);
-        await new Promise<void>((resolve) => {
-          setImmediate(resolve);
-        });
+        await racePromiseWithAbortSignal(
+          Promise.all([secondRequestClosed.promise, disconnected.promise]),
+          fixture.signal,
+        );
 
         fixture.releaseClose();
         expect((await firstPromise).status).toBe(200);
+        await drainRetainedOpenAiEmbeddingProviders();
 
         const next = await fixture.post({ model: "openclaw/default", input: "next" });
         expect(next.status).toBe(200);

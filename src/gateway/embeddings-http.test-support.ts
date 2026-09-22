@@ -1,5 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { expect, vi } from "vitest";
+import { createDeferred } from "../../test/helpers/promise.js";
 
 async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
@@ -63,4 +65,55 @@ export async function startGenericEmbeddingServer(
         server.close((error) => (error ? reject(error) : resolve()));
       }),
   };
+}
+
+export async function expectDefaultEmbeddingResponse(res: Response) {
+  expect(res.status).toBe(200);
+  const json = (await res.json()) as {
+    object?: string;
+    data?: Array<{ object?: string; embedding?: number[] }>;
+  };
+  expect(json.object).toBe("list");
+  expect(json.data?.[0]?.object).toBe("embedding");
+  expect(json.data?.[0]?.embedding).toEqual([0.1, 0.2]);
+}
+
+export async function expectEmbeddingData(
+  res: Response,
+  expected: Array<{ object: "embedding"; index: number; embedding: number[] }>,
+) {
+  expect(res.status).toBe(200);
+  const json = (await res.json()) as {
+    data?: Array<{ embedding?: number[]; index?: number }>;
+  };
+  expect(json.data).toEqual(expected);
+}
+
+export async function expectInvalidEmbeddingRequest(res: Response, message?: string) {
+  expect(res.status).toBe(400);
+  const json = (await res.json()) as { error?: { type?: string; message?: string } };
+  if (message === undefined) {
+    expect(json.error?.type).toBe("invalid_request_error");
+    return;
+  }
+  expect(json.error).toEqual({
+    type: "invalid_request_error",
+    message,
+  });
+}
+
+// Observe the queued HTTP request while keeping the lifetime owner intact.
+export function observeNextEmbeddingAdmission(
+  embeddingsProviderLifetime: typeof import("./embeddings-provider-lifetime.js"),
+) {
+  const entered = createDeferred<AbortSignal>();
+  const acquire = embeddingsProviderLifetime.acquireEmbeddingProviderLease;
+  const spy = vi
+    .spyOn(embeddingsProviderLifetime, "acquireEmbeddingProviderLease")
+    .mockImplementationOnce((...args) => {
+      const acquired = acquire(...args);
+      entered.resolve(args[1]);
+      return acquired;
+    });
+  return { entered: entered.promise, restore: () => spy.mockRestore() };
 }
