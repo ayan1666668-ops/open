@@ -83,6 +83,7 @@ it("resource proof requires clean joined Gateway exit, not forced termination", 
   for (const failed of [
     { ...clean, exited: false },
     { ...clean, exitCode: 1 },
+    { ...clean, signals: ["SIGTERM", "SIGKILL"] },
     { ...clean, exitCode: null, signal: "SIGKILL", signals: ["SIGTERM", "SIGKILL"] },
   ]) {
     expect(() => assertKitchenSinkResourceShutdown(failed)).toThrow("did not exit cleanly");

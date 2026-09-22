@@ -2805,7 +2805,12 @@ type KitchenSinkResourceCase = {
 export function assertKitchenSinkResourceShutdown(
   shutdown: NonNullable<KitchenSinkResourceCase["shutdown"]>,
 ) {
-  if (!shutdown.exited || shutdown.exitCode !== 0 || shutdown.signal !== null) {
+  if (
+    !shutdown.exited ||
+    shutdown.exitCode !== 0 ||
+    shutdown.signal !== null ||
+    shutdown.signals.includes("SIGKILL")
+  ) {
     throw new Error("Owned Gateway did not exit cleanly; temporary state retained");
   }
 }
