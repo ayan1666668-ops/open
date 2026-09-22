@@ -294,215 +294,112 @@ async function invokeVisibilityHandler(params: {
   return response;
 }
 
-test("sessions.patch cancels active work and commits only after admission and terminal persistence drain", async () => {
-  const { storePath } = await createSessionStoreDir();
-  const sessionKey = "agent:main:archive-active";
-  const sessionId = "session-archive-active";
-  const runId = "run-archive-active";
-  await writeSessionStore({
-    entries: { [sessionKey]: sessionStoreEntry(sessionId) },
-  });
-  const interrupted = createDeferredCore();
-  const admission = await beginSessionWorkAdmission({
-    scope: storePath,
-    identities: [sessionKey, sessionId],
-    assertAllowed: () => {},
-    onInterrupt: () => interrupted.resolve(),
-  });
-  const persistence = createDeferredCore();
-  const active = activeRunContext({
-    runId,
-    sessionId,
-    sessionKey,
-    persistence,
-    ownerConnId: "different-connection",
-  });
-  const archive = directSessionReq(
-    "sessions.patch",
-    { key: sessionKey, archived: true, expectedSessionId: sessionId },
-    {
-      context: active.context,
-      client: { connId: "archive-writer", connect: { scopes: ["operator.write"] } } as never,
-    },
-  );
-  let replacement: Promise<unknown> | undefined;
-  try {
-    await interrupted.promise;
-    expect(active.controller.signal.aborted).toBe(true);
-    expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
-
-    let replacementAdmitted = false;
-    replacement = beginSessionWorkAdmission({
+test("sessions.patch cancels active work and commits only after admission and terminal persistence drain", ({
+  signal,
+}) =>
+  archiveFixture.run(async () => {
+    signal.throwIfAborted();
+    const { storePath } = await createSessionStoreDir();
+    const sessionKey = "agent:main:archive-active";
+    const sessionId = "session-archive-active";
+    const runId = "run-archive-active";
+    await writeSessionStore({
+      entries: { [sessionKey]: sessionStoreEntry(sessionId) },
+    });
+    const interrupted = createDeferredCore();
+    const admission = await beginSessionWorkAdmission({
+      signal,
       scope: storePath,
       identities: [sessionKey, sessionId],
-      assertAllowed: () => {
-        replacementAdmitted = true;
-        if (loadSessionEntry({ storePath, sessionKey })?.archivedAt !== undefined) {
-          throw new Error("archived");
-        }
-      },
-    }).then(
-      (lease) => {
-        // Unexpected admission still owns a lease; the assertion below rejects the result.
-        lease.release();
-        return lease;
-      },
-      (error: unknown) => error,
-    );
-    await Promise.resolve();
-    expect(replacementAdmitted).toBe(false);
-
-    admission.release();
-    await Promise.resolve();
-    expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
-    persistence.resolve();
-
-    const archived = await archive;
-    expect(archived.ok).toBe(true);
-    expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toEqual(expect.any(Number));
-    expect(await replacement).toBeInstanceOf(Error);
-  } finally {
-    admission.release();
-    persistence.resolve();
-    await Promise.allSettled([archive, ...(replacement ? [replacement] : [])]);
-    active.unsubscribe();
-  }
-});
-
-test("sharing revocation fences archive before cancellation and forces fresh authorization", async () => {
-  const { storePath } = await createSessionStoreDir();
-  const sessionKey = "agent:main:archive-sharing-revocation";
-  const sessionId = "session-archive-sharing-revocation";
-  const runId = "run-archive-sharing-revocation";
-  const owner = identifiedClient("archive-owner");
-  const viewer = identifiedClient("archive-viewer");
-  await writeSessionStore({
-    entries: {
-      [sessionKey]: sessionStoreEntry(sessionId, {
-        createdVia: "operator",
-        createdActor: { type: "human", source: "profile", id: "archive-owner" },
-        visibility: "shared",
-      }),
-    },
-  });
-  let interrupted = false;
-  const admission = await beginSessionWorkAdmission({
-    scope: storePath,
-    identities: [sessionKey, sessionId],
-    assertAllowed: () => {},
-    onInterrupt: () => {
-      interrupted = true;
-    },
-  });
-  const persistence = createDeferredCore();
-  const active = activeRunContext({ runId, sessionId, sessionKey, persistence });
-  const requestContext = await archiveLifecycleRequestContext(active.context);
-  const placement = workerPlacement({ sessionId, sessionKey, state: "active" });
-  const reclaim = vi.fn();
-  requestContext.workerSessionPlacementService = placementReader(() => placement);
-  requestContext.workerPlacementDispatchService = { dispatch: vi.fn(), reclaim };
-  const authorized = resolveSessionMutationAuthorization({
-    client: viewer,
-    method: "sessions.patch",
-    requestParams: { key: sessionKey, archived: true },
-    context: requestContext,
-  });
-  expect(authorized.error).toBeNull();
-  if (!authorized.authorization) {
-    throw new Error("expected captured archive authorization");
-  }
-  const sharingTarget = resolveSessionSharingTarget({
-    cfg: requestContext.getRuntimeConfig(),
-    sessionKey,
-  });
-  if (!sharingTarget) {
-    throw new Error("expected resolved sharing target");
-  }
-
-  const sharingCommitted = createDeferredCore();
-  const releaseSharingMutation = createDeferredCore();
-  let sharing: Promise<LifecycleHandlerResponse> | undefined;
-  let archive: Promise<LifecycleHandlerResponse> | undefined;
-
-  try {
-    let sharingSettled = false;
-    sharing = runExclusiveSessionLifecycleMutation({
-      scope: sharingTarget.storePath,
-      identities: [
-        sharingTarget.canonicalKey,
-        sharingTarget.storeKey,
-        ...sharingTarget.storeKeys,
-        sharingTarget.entry.sessionId,
-      ],
-      run: async () => {
-        const response = await invokeVisibilityHandler({
-          client: owner,
-          context: requestContext,
-          sessionKey,
-          visibility: "draft",
-        });
-        sharingCommitted.resolve();
-        await releaseSharingMutation.promise;
-        return response;
-      },
-    }).finally(() => {
-      sharingSettled = true;
+      assertAllowed: () => {},
+      onInterrupt: () => interrupted.resolve(),
     });
-    await sharingCommitted.promise;
-    expect(isSessionLifecycleMutationActive(sharingTarget.storePath, [sessionKey, sessionId])).toBe(
-      true,
-    );
-    expect(sharingSettled).toBe(false);
-    expect(loadSessionEntry({ storePath, sessionKey })?.visibility).toBe("draft");
+    const persistence = createDeferredCore();
+    let unsubscribe: (() => void) | undefined;
+    let archive: ReturnType<typeof directSessionReq> | undefined;
+    let replacement: Promise<unknown> | undefined;
+    const release = () => {
+      admission.release();
+      persistence.resolve();
+    };
+    signal.addEventListener("abort", release, { once: true });
+    if (signal.aborted) {
+      release();
+    }
+    try {
+      const active = activeRunContext({
+        runId,
+        sessionId,
+        sessionKey,
+        persistence,
+        ownerConnId: "different-connection",
+      });
+      unsubscribe = active.unsubscribe;
+      archive = directSessionReq(
+        "sessions.patch",
+        { key: sessionKey, archived: true, expectedSessionId: sessionId },
+        {
+          context: active.context,
+          client: { connId: "archive-writer", connect: { scopes: ["operator.write"] } } as never,
+        },
+      );
+      await racePromiseWithAbortSignal(interrupted.promise, signal);
+      expect(active.controller.signal.aborted).toBe(true);
+      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
 
-    let archiveSettled = false;
-    archive = invokeArchiveHandler({
-      authorization: authorized.authorization,
-      client: viewer,
-      context: requestContext,
-      sessionKey,
-      expectedSessionId: sessionId,
-    }).finally(() => {
-      archiveSettled = true;
-    });
-    await Promise.resolve();
-    expect(archiveSettled).toBe(false);
-    expect(interrupted).toBe(false);
-    expect(active.controller.signal.aborted).toBe(false);
-    expectNoSessionQueueCleanup();
-    expect(reclaim).not.toHaveBeenCalled();
-    expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
+      let replacementAdmitted = false;
+      replacement = beginSessionWorkAdmission({
+        signal,
+        scope: storePath,
+        identities: [sessionKey, sessionId],
+        assertAllowed: () => {
+          replacementAdmitted = true;
+          if (loadSessionEntry({ storePath, sessionKey })?.archivedAt !== undefined) {
+            throw new Error("archived");
+          }
+        },
+      }).then(
+        (lease) => {
+          // Unexpected admission still owns a lease; the assertion below rejects the result.
+          lease.release();
+          return lease;
+        },
+        (error: unknown) => error,
+      );
+      await Promise.resolve();
+      expect(replacementAdmitted).toBe(false);
 
-    releaseSharingMutation.resolve();
-    expect(await sharing).toMatchObject({ ok: true });
-    expect(loadSessionEntry({ storePath, sessionKey })?.visibility).toBe("draft");
+      admission.release();
+      await Promise.resolve();
+      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
+      persistence.resolve();
 
-    expect(await archive).toMatchObject({
-      ok: false,
-      error: { details: { code: "SESSION_PARTICIPATION_REQUIRED" } },
-    });
-    expect(interrupted).toBe(false);
-    expect(active.controller.signal.aborted).toBe(false);
-    expectNoSessionQueueCleanup();
-    expect(reclaim).not.toHaveBeenCalled();
-    expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
-  } finally {
-    releaseSharingMutation.resolve();
-    admission.release();
-    await Promise.allSettled([...(sharing ? [sharing] : []), ...(archive ? [archive] : [])]);
-    active.unsubscribe();
-  }
-});
+      const archived = await archive;
+      expect(archived.ok).toBe(true);
+      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toEqual(expect.any(Number));
+      expect(await replacement).toBeInstanceOf(Error);
+    } finally {
+      release();
+      await Promise.allSettled([
+        ...(archive ? [archive] : []),
+        ...(replacement ? [replacement] : []),
+      ]);
+      unsubscribe?.();
+      signal.removeEventListener("abort", release);
+    }
+  }));
 
-test.each(["owner", "viewer"] as const)(
-  "archive permits sharing during drain and revalidates the %s before commit",
-  async (archiveRole) => {
+test("sharing revocation fences archive before cancellation and forces fresh authorization", ({
+  signal,
+}) =>
+  archiveFixture.run(async () => {
+    signal.throwIfAborted();
     const { storePath } = await createSessionStoreDir();
-    const sessionKey = "agent:main:archive-before-sharing";
-    const sessionId = "session-archive-before-sharing";
-    const runId = "run-archive-before-sharing";
+    const sessionKey = "agent:main:archive-sharing-revocation";
+    const sessionId = "session-archive-sharing-revocation";
+    const runId = "run-archive-sharing-revocation";
     const owner = identifiedClient("archive-owner");
-    const archiver = archiveRole === "owner" ? owner : identifiedClient("archive-viewer");
+    const viewer = identifiedClient("archive-viewer");
     await writeSessionStore({
       entries: {
         [sessionKey]: sessionStoreEntry(sessionId, {
@@ -512,145 +409,308 @@ test.each(["owner", "viewer"] as const)(
         }),
       },
     });
+    let interrupted = false;
     const admission = await beginSessionWorkAdmission({
+      signal,
       scope: storePath,
       identities: [sessionKey, sessionId],
       assertAllowed: () => {},
+      onInterrupt: () => {
+        interrupted = true;
+      },
     });
     const persistence = createDeferredCore();
-    const active = activeRunContext({ runId, sessionId, sessionKey, persistence });
-    const requestContext = await archiveLifecycleRequestContext(active.context);
-    let placement = workerPlacement({ sessionId, sessionKey, state: "active" });
-    const reclaimGate = createDeferredCore();
-    const reclaim = vi.fn(async () => {
-      await reclaimGate.promise;
-      placement = workerPlacement({ sessionId, sessionKey, state: "reclaimed" });
-      return placement as Extract<WorkerSessionPlacementRecord, { state: "reclaimed" }>;
-    });
-    requestContext.workerSessionPlacementService = placementReader(() => placement);
-    requestContext.workerPlacementDispatchService = { dispatch: vi.fn(), reclaim };
-    const authorized = resolveSessionMutationAuthorization({
-      client: archiver,
-      method: "sessions.patch",
-      requestParams: { key: sessionKey, archived: true },
-      context: requestContext,
-    });
-    expect(authorized.error).toBeNull();
-    if (!authorized.authorization) {
-      throw new Error("expected captured archive authorization");
-    }
-    let archive: Promise<LifecycleHandlerResponse> | undefined;
+    const sharingCommitted = createDeferredCore();
+    const releaseSharingMutation = createDeferredCore();
+    let unsubscribe: (() => void) | undefined;
     let sharing: Promise<LifecycleHandlerResponse> | undefined;
-
+    let archive: Promise<LifecycleHandlerResponse> | undefined;
+    const release = () => {
+      releaseSharingMutation.resolve();
+      admission.release();
+      persistence.resolve();
+    };
+    signal.addEventListener("abort", release, { once: true });
+    if (signal.aborted) {
+      release();
+    }
     try {
+      const active = activeRunContext({ runId, sessionId, sessionKey, persistence });
+      unsubscribe = active.unsubscribe;
+      const requestContext = await archiveLifecycleRequestContext(active.context);
+      const placement = workerPlacement({ sessionId, sessionKey, state: "active" });
+      const reclaim = vi.fn();
+      requestContext.workerSessionPlacementService = placementReader(() => placement);
+      requestContext.workerPlacementDispatchService = { dispatch: vi.fn(), reclaim };
+      const authorized = resolveSessionMutationAuthorization({
+        client: viewer,
+        method: "sessions.patch",
+        requestParams: { key: sessionKey, archived: true },
+        context: requestContext,
+      });
+      expect(authorized.error).toBeNull();
+      if (!authorized.authorization) {
+        throw new Error("expected captured archive authorization");
+      }
+      const sharingTarget = resolveSessionSharingTarget({
+        cfg: requestContext.getRuntimeConfig(),
+        sessionKey,
+      });
+      if (!sharingTarget) {
+        throw new Error("expected resolved sharing target");
+      }
+
+      let sharingSettled = false;
+      sharing = runExclusiveSessionLifecycleMutation({
+        scope: sharingTarget.storePath,
+        identities: [
+          sharingTarget.canonicalKey,
+          sharingTarget.storeKey,
+          ...sharingTarget.storeKeys,
+          sharingTarget.entry.sessionId,
+        ],
+        run: async () => {
+          const response = await invokeVisibilityHandler({
+            client: owner,
+            context: requestContext,
+            sessionKey,
+            visibility: "draft",
+          });
+          sharingCommitted.resolve();
+          await releaseSharingMutation.promise;
+          return response;
+        },
+      }).finally(() => {
+        sharingSettled = true;
+      });
+      await racePromiseWithAbortSignal(sharingCommitted.promise, signal);
+      expect(
+        isSessionLifecycleMutationActive(sharingTarget.storePath, [sessionKey, sessionId]),
+      ).toBe(true);
+      expect(sharingSettled).toBe(false);
+      expect(loadSessionEntry({ storePath, sessionKey })?.visibility).toBe("draft");
+
+      let archiveSettled = false;
       archive = invokeArchiveHandler({
         authorization: authorized.authorization,
-        client: archiver,
+        client: viewer,
         context: requestContext,
         sessionKey,
         expectedSessionId: sessionId,
+      }).finally(() => {
+        archiveSettled = true;
       });
-      await vi.waitFor(() => expect(active.controller.signal.aborted).toBe(true));
+      await Promise.resolve();
+      expect(archiveSettled).toBe(false);
+      expect(interrupted).toBe(false);
+      expect(active.controller.signal.aborted).toBe(false);
+      expectNoSessionQueueCleanup();
+      expect(reclaim).not.toHaveBeenCalled();
+      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
 
-      sharing = invokeVisibilityHandler({
-        client: owner,
-        context: requestContext,
-        sessionKey,
-        visibility: "draft",
-      });
+      releaseSharingMutation.resolve();
       expect(await sharing).toMatchObject({ ok: true });
       expect(loadSessionEntry({ storePath, sessionKey })?.visibility).toBe("draft");
-      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
 
-      admission.release();
-      persistence.resolve();
-      if (archiveRole === "viewer") {
-        expect(await archive).toMatchObject({
-          ok: false,
-          error: { details: { code: "SESSION_PARTICIPATION_REQUIRED" } },
-        });
-        expect(reclaim).not.toHaveBeenCalled();
-        expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
-        return;
-      }
-      await vi.waitFor(() => expect(reclaim).toHaveBeenCalledOnce());
-      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
-      reclaimGate.resolve();
-      expect(await archive).toMatchObject({ ok: true });
-      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toEqual(expect.any(Number));
-      expect(await sharing).toMatchObject({ ok: true });
-      expect(loadSessionEntry({ storePath, sessionKey })).toMatchObject({
-        archivedAt: expect.any(Number),
-        visibility: "draft",
+      expect(await archive).toMatchObject({
+        ok: false,
+        error: { details: { code: "SESSION_PARTICIPATION_REQUIRED" } },
       });
+      expect(interrupted).toBe(false);
+      expect(active.controller.signal.aborted).toBe(false);
+      expectNoSessionQueueCleanup();
+      expect(reclaim).not.toHaveBeenCalled();
+      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
     } finally {
-      admission.release();
-      persistence.resolve();
-      reclaimGate.resolve();
-      await Promise.allSettled([...(archive ? [archive] : []), ...(sharing ? [sharing] : [])]);
-      active.unsubscribe();
+      release();
+      await Promise.allSettled([...(sharing ? [sharing] : []), ...(archive ? [archive] : [])]);
+      unsubscribe?.();
+      signal.removeEventListener("abort", release);
     }
-  },
+  }));
+
+test.for(["owner", "viewer"] as const)(
+  "archive permits sharing during drain and revalidates the %s before commit",
+  (archiveRole, { signal }) =>
+    archiveFixture.run(async () => {
+      signal.throwIfAborted();
+      const { storePath } = await createSessionStoreDir();
+      const sessionKey = "agent:main:archive-before-sharing";
+      const sessionId = "session-archive-before-sharing";
+      const runId = "run-archive-before-sharing";
+      const owner = identifiedClient("archive-owner");
+      const archiver = archiveRole === "owner" ? owner : identifiedClient("archive-viewer");
+      await writeSessionStore({
+        entries: {
+          [sessionKey]: sessionStoreEntry(sessionId, {
+            createdVia: "operator",
+            createdActor: { type: "human", source: "profile", id: "archive-owner" },
+            visibility: "shared",
+          }),
+        },
+      });
+      const admission = await beginSessionWorkAdmission({
+        signal,
+        scope: storePath,
+        identities: [sessionKey, sessionId],
+        assertAllowed: () => {},
+      });
+      const persistence = createDeferredCore();
+      const reclaimGate = createDeferredCore();
+      let unsubscribe: (() => void) | undefined;
+      let archive: Promise<LifecycleHandlerResponse> | undefined;
+      let sharing: Promise<LifecycleHandlerResponse> | undefined;
+      const release = () => {
+        admission.release();
+        persistence.resolve();
+        reclaimGate.resolve();
+      };
+      signal.addEventListener("abort", release, { once: true });
+      if (signal.aborted) {
+        release();
+      }
+      try {
+        const active = activeRunContext({ runId, sessionId, sessionKey, persistence });
+        unsubscribe = active.unsubscribe;
+        const requestContext = await archiveLifecycleRequestContext(active.context);
+        let placement = workerPlacement({ sessionId, sessionKey, state: "active" });
+        const reclaim = vi.fn(async () => {
+          await reclaimGate.promise;
+          placement = workerPlacement({ sessionId, sessionKey, state: "reclaimed" });
+          return placement as Extract<WorkerSessionPlacementRecord, { state: "reclaimed" }>;
+        });
+        requestContext.workerSessionPlacementService = placementReader(() => placement);
+        requestContext.workerPlacementDispatchService = { dispatch: vi.fn(), reclaim };
+        const authorized = resolveSessionMutationAuthorization({
+          client: archiver,
+          method: "sessions.patch",
+          requestParams: { key: sessionKey, archived: true },
+          context: requestContext,
+        });
+        expect(authorized.error).toBeNull();
+        if (!authorized.authorization) {
+          throw new Error("expected captured archive authorization");
+        }
+
+        archive = invokeArchiveHandler({
+          authorization: authorized.authorization,
+          client: archiver,
+          context: requestContext,
+          sessionKey,
+          expectedSessionId: sessionId,
+        });
+        await vi.waitFor(() => expect(active.controller.signal.aborted).toBe(true));
+
+        sharing = invokeVisibilityHandler({
+          client: owner,
+          context: requestContext,
+          sessionKey,
+          visibility: "draft",
+        });
+        expect(await sharing).toMatchObject({ ok: true });
+        expect(loadSessionEntry({ storePath, sessionKey })?.visibility).toBe("draft");
+        expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
+
+        admission.release();
+        persistence.resolve();
+        if (archiveRole === "viewer") {
+          expect(await archive).toMatchObject({
+            ok: false,
+            error: { details: { code: "SESSION_PARTICIPATION_REQUIRED" } },
+          });
+          expect(reclaim).not.toHaveBeenCalled();
+          expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
+          return;
+        }
+        await vi.waitFor(() => expect(reclaim).toHaveBeenCalledOnce());
+        expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
+        reclaimGate.resolve();
+        expect(await archive).toMatchObject({ ok: true });
+        expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toEqual(expect.any(Number));
+        expect(await sharing).toMatchObject({ ok: true });
+        expect(loadSessionEntry({ storePath, sessionKey })).toMatchObject({
+          archivedAt: expect.any(Number),
+          visibility: "draft",
+        });
+      } finally {
+        release();
+        await Promise.allSettled([...(archive ? [archive] : []), ...(sharing ? [sharing] : [])]);
+        unsubscribe?.();
+        signal.removeEventListener("abort", release);
+      }
+    }),
 );
 
-test("alias archive lets an earlier alias mutation finish before canonical reclaim", async () => {
-  const { storePath } = await createSessionStoreDir();
-  const aliasKey = "aaa-archive-cloud-alias";
-  const sessionKey = `agent:main:${aliasKey}`;
-  const sessionId = "session-archive-cloud-alias";
-  await writeSessionStore({ entries: { [sessionKey]: sessionStoreEntry(sessionId) } });
-  let placement = workerPlacement({ sessionId, sessionKey, state: "active" });
-  const reclaimEntered = createDeferredCore();
-  const allowNestedReclaim = createDeferredCore();
-  const contenderRelease = createDeferredCore();
-  const contenderStarted = createDeferredCore();
-  const reclaim = vi.fn(async () => {
-    reclaimEntered.resolve();
-    await allowNestedReclaim.promise;
-    await runExclusiveSessionLifecycleMutation({
-      scope: storePath,
-      identities: [aliasKey, sessionKey, sessionId],
-      run: async () => {},
+test("alias archive lets an earlier alias mutation finish before canonical reclaim", ({ signal }) =>
+  archiveFixture.run(async () => {
+    signal.throwIfAborted();
+    const { storePath } = await createSessionStoreDir();
+    const aliasKey = "aaa-archive-cloud-alias";
+    const sessionKey = `agent:main:${aliasKey}`;
+    const sessionId = "session-archive-cloud-alias";
+    await writeSessionStore({ entries: { [sessionKey]: sessionStoreEntry(sessionId) } });
+    let placement = workerPlacement({ sessionId, sessionKey, state: "active" });
+    const reclaimEntered = createDeferredCore();
+    const allowNestedReclaim = createDeferredCore();
+    const contenderRelease = createDeferredCore();
+    const contenderStarted = createDeferredCore();
+    const reclaim = vi.fn(async () => {
+      reclaimEntered.resolve();
+      await allowNestedReclaim.promise;
+      await runExclusiveSessionLifecycleMutation({
+        scope: storePath,
+        identities: [aliasKey, sessionKey, sessionId],
+        run: async () => {},
+      });
+      placement = workerPlacement({ sessionId, sessionKey, state: "reclaimed" });
+      return placement as Extract<WorkerSessionPlacementRecord, { state: "reclaimed" }>;
     });
-    placement = workerPlacement({ sessionId, sessionKey, state: "reclaimed" });
-    return placement as Extract<WorkerSessionPlacementRecord, { state: "reclaimed" }>;
-  });
-  const archive = directSessionReq(
-    "sessions.patch",
-    { key: aliasKey, archived: true, expectedSessionId: sessionId },
-    {
-      context: {
-        workerSessionPlacementService: placementReader(() => placement),
-        workerPlacementDispatchService: { dispatch: vi.fn(), reclaim },
-      },
-    },
-  );
-  await reclaimEntered.promise;
-  const contender = runExclusiveSessionLifecycleMutation({
-    scope: storePath,
-    identities: [aliasKey],
-    run: async () => {
-      contenderStarted.resolve();
-      await contenderRelease.promise;
-    },
-  });
-  await contenderStarted.promise;
-  allowNestedReclaim.resolve();
+    let archive: ReturnType<typeof directSessionReq> | undefined;
+    let contender: Promise<void> | undefined;
+    const release = () => {
+      contenderRelease.resolve();
+      allowNestedReclaim.resolve();
+    };
+    signal.addEventListener("abort", release, { once: true });
+    if (signal.aborted) {
+      release();
+    }
+    try {
+      archive = directSessionReq(
+        "sessions.patch",
+        { key: aliasKey, archived: true, expectedSessionId: sessionId },
+        {
+          context: {
+            workerSessionPlacementService: placementReader(() => placement),
+            workerPlacementDispatchService: { dispatch: vi.fn(), reclaim },
+          },
+        },
+      );
+      await racePromiseWithAbortSignal(reclaimEntered.promise, signal);
+      contender = runExclusiveSessionLifecycleMutation({
+        scope: storePath,
+        identities: [aliasKey],
+        run: async () => {
+          contenderStarted.resolve();
+          await contenderRelease.promise;
+        },
+      });
+      await racePromiseWithAbortSignal(contenderStarted.promise, signal);
+      allowNestedReclaim.resolve();
 
-  try {
-    expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
-    contenderRelease.resolve();
-    const result = await archive;
-    expect(result.ok).toBe(true);
-    expect(reclaim).toHaveBeenCalledOnce();
-    expect(placement.state).toBe("reclaimed");
-    expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toEqual(expect.any(Number));
-  } finally {
-    contenderRelease.resolve();
-    allowNestedReclaim.resolve();
-    await Promise.allSettled([archive, contender]);
-  }
-});
+      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
+      contenderRelease.resolve();
+      const result = await archive;
+      expect(result.ok).toBe(true);
+      expect(reclaim).toHaveBeenCalledOnce();
+      expect(placement.state).toBe("reclaimed");
+      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toEqual(expect.any(Number));
+    } finally {
+      release();
+      await Promise.allSettled([...(archive ? [archive] : []), ...(contender ? [contender] : [])]);
+      signal.removeEventListener("abort", release);
+    }
+  }));
 
 test("sessions.patch returns retryable UNAVAILABLE when runtime drain does not settle", async () => {
   const { storePath } = await createSessionStoreDir();
@@ -754,39 +814,50 @@ test("sessions.patch releases the archive drain without appending a transcript m
   }
 });
 
-test("sessions.patch returns UNAVAILABLE when terminal persistence fails", async () => {
-  const { storePath } = await createSessionStoreDir();
-  const sessionKey = "agent:main:archive-persistence-failure";
-  const sessionId = "session-archive-persistence-failure";
-  const runId = "run-archive-persistence-failure";
-  await writeSessionStore({ entries: { [sessionKey]: sessionStoreEntry(sessionId) } });
-  const persistence = createDeferredCore();
-  const active = activeRunContext({
-    runId,
-    sessionId,
-    sessionKey,
-    persistence,
-    terminalPersistenceError: new Error("disk full"),
-  });
-  const archive = directSessionReq(
-    "sessions.patch",
-    { key: sessionKey, archived: true, expectedSessionId: sessionId },
-    {
-      context: active.context,
-    },
-  );
-  try {
-    const archived = await archive;
-    expect(active.controller.signal.aborted).toBe(true);
-    expect(archived.ok).toBe(false);
-    expect(archived.error).toMatchObject({ code: "UNAVAILABLE", retryable: true });
-    expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
-  } finally {
-    persistence.resolve();
-    await Promise.allSettled([archive]);
-    active.unsubscribe();
-  }
-});
+test("sessions.patch returns UNAVAILABLE when terminal persistence fails", ({ signal }) =>
+  archiveFixture.run(async () => {
+    signal.throwIfAborted();
+    const { storePath } = await createSessionStoreDir();
+    const sessionKey = "agent:main:archive-persistence-failure";
+    const sessionId = "session-archive-persistence-failure";
+    const runId = "run-archive-persistence-failure";
+    await writeSessionStore({ entries: { [sessionKey]: sessionStoreEntry(sessionId) } });
+    const persistence = createDeferredCore();
+    let unsubscribe: (() => void) | undefined;
+    let archive: ReturnType<typeof directSessionReq> | undefined;
+    const release = () => persistence.resolve();
+    signal.addEventListener("abort", release, { once: true });
+    if (signal.aborted) {
+      release();
+    }
+    try {
+      const active = activeRunContext({
+        runId,
+        sessionId,
+        sessionKey,
+        persistence,
+        terminalPersistenceError: new Error("disk full"),
+      });
+      unsubscribe = active.unsubscribe;
+      archive = directSessionReq(
+        "sessions.patch",
+        { key: sessionKey, archived: true, expectedSessionId: sessionId },
+        {
+          context: active.context,
+        },
+      );
+      const archived = await racePromiseWithAbortSignal(archive, signal);
+      expect(active.controller.signal.aborted).toBe(true);
+      expect(archived.ok).toBe(false);
+      expect(archived.error).toMatchObject({ code: "UNAVAILABLE", retryable: true });
+      expect(loadSessionEntry({ storePath, sessionKey })?.archivedAt).toBeUndefined();
+    } finally {
+      release();
+      await Promise.allSettled(archive ? [archive] : []);
+      unsubscribe?.();
+      signal.removeEventListener("abort", release);
+    }
+  }));
 
 test("sessions.patch rejects main and global archives before cancellation side effects", async () => {
   const { storePath } = await createSessionStoreDir();
