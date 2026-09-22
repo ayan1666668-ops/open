@@ -68,6 +68,14 @@ export class OpenClawFilePreviewModal extends OpenClawLitElement {
     this.derivedInputsReady = true;
     this.filteredFiles = this.filterFiles();
     const nextActiveFile = this.resolveActiveFile(this.filteredFiles);
+    // A late sibling read replaces the inventory, not the document being read.
+    // Reset only when the displayed document or explicit view context changes.
+    this.resetScrollAfterUpdate ||=
+      changed.has("layout") ||
+      changed.has("query") ||
+      this.activeFile?.path !== nextActiveFile?.path ||
+      this.activeFile?.contents !== nextActiveFile?.contents ||
+      this.activeFile?.message !== nextActiveFile?.message;
     this.activeFile = nextActiveFile;
 
     const nextCodeSource = nextActiveFile?.contents;
@@ -75,8 +83,6 @@ export class OpenClawFilePreviewModal extends OpenClawLitElement {
       this.codeSource = nextCodeSource;
       this.codeChunks = nextCodeSource === undefined ? [] : chunkFileContents(nextCodeSource);
     }
-
-    this.resetScrollAfterUpdate = true;
   }
 
   override render() {

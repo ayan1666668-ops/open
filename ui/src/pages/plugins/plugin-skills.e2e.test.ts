@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, it } from "vitest";
 import type { PluginsSkillsReadResult } from "../../../../packages/gateway-protocol/src/index.ts";
+import type { OpenClawFilePreviewModal } from "../../components/file-preview-modal.ts";
 import type { PluginDiscoveryDetailResult } from "../../lib/plugins/index.ts";
 import { reconnectMockGateway } from "../../test-helpers/control-ui-e2e.ts";
 import {
@@ -272,6 +273,63 @@ describeControlUiE2e("Plugin skill bundle routes", () => {
         .first()
         .waitFor();
       expect(await modal.count()).toBe(0);
+    } finally {
+      await context.close();
+    }
+  });
+
+  it("preserves the foreground reading position when a background file finishes", async () => {
+    const context = await newContext();
+    const page = await context.newPage();
+    const initial: PluginsSkillsReadResult = {
+      ...bundle,
+      files: bundle.files.map((file) =>
+        file.path === "SKILL.md"
+          ? {
+              ...file,
+              content:
+                file.content + "\n\n" + "Read this guidance before proceeding.\n\n".repeat(100),
+            }
+          : { path: file.path, sizeBytes: file.sizeBytes, status: "deferred" },
+      ),
+    };
+    const gateway = await installMockGateway(page, {
+      featureMethods: [...pluginMethods, "plugins.skills.read"],
+      methodResponses: { ...responses(), "plugins.skills.read": initial },
+    });
+    try {
+      await page.goto(`${server.baseUrl}settings/plugins/calendar-plus`);
+      await page.getByRole("button", { name: new RegExp(skill.name) }).click();
+      const modal = page.locator("openclaw-file-preview-modal");
+      await modal.locator(".markdown").waitFor();
+      await gateway.deferNext("plugins.skills.read");
+      await modal.locator('[data-path="references/config.md"]').click();
+      await gateway.waitForRequest("plugins.skills.read", { after: 1 });
+      await modal.locator('[data-path="SKILL.md"]').click();
+      await modal.locator(".markdown").waitFor();
+      const body = modal.locator(".detail-body");
+      await body.evaluate((element) => {
+        element.scrollTop = 300;
+      });
+      const scrollTop = await body.evaluate((element) => element.scrollTop);
+      expect(scrollTop).toBe(300);
+      const selected = bundle.files.find((file) => file.path === "references/config.md")!;
+      await gateway.resolveDeferred("plugins.skills.read", {
+        ...initial,
+        files: initial.files.map((file) => (file.path === selected.path ? selected : file)),
+      });
+      // Await the controller's completed read and the actual modal render, not just RPC delivery.
+      await expect
+        .poll(() =>
+          modal.evaluate(async (preview: OpenClawFilePreviewModal) => {
+            await preview.updateComplete;
+            return preview.files.find((file) => file.path === "references/config.md")?.contents;
+          }),
+        )
+        .toContain("CONFIGURATION_TAIL");
+      expect(await body.evaluate((element) => element.scrollTop)).toBe(scrollTop);
+      expect(await modal.locator('[data-path="SKILL.md"][aria-current="true"]').count()).toBe(1);
+      await modal.getByRole("button", { name: "Close", exact: true }).click();
     } finally {
       await context.close();
     }
