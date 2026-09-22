@@ -120,6 +120,11 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
       networkProxy: "default",
     },
   },
+  {
+    commandPath: ["transcripts"],
+    // Lists, summaries, and artifact paths own stdout; startup notes must not corrupt them.
+    policy: { ownsProtocolStdout: true, hideBanner: true },
+  },
   { commandPath: ["message"], policy: { loadPlugins: "never" } },
   { commandPath: ["docs"], policy: { configGuard: "skip" } },
   // Destructive maintenance owns a validity-aware, non-observing config read.
@@ -442,7 +447,7 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
   },
   {
     commandPath: ["worktrees"],
-    policy: { loadPlugins: "never", networkProxy: "bypass" },
+    policy: { configGuard: "validate", loadPlugins: "never", networkProxy: "bypass" },
   },
   {
     commandPath: ["fleet"],

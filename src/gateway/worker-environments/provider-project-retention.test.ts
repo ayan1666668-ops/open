@@ -3,7 +3,11 @@ import { z } from "zod";
 import { createWorkerProjectPreparationIdentity } from "./preparation-identity.js";
 import { PROJECT_KEY, usePreparedPoolFixture } from "./prepared-pool.test-support.js";
 import { createWorkerProviderIntent } from "./provider-intent.js";
-import type { RepositoryWorkerProjectSnapshot } from "./workspace-git-base.js";
+import { prepareWorkerProviderProject } from "./provider-project-preparation.js";
+import {
+  workerProjectSeedKey,
+  type RepositoryWorkerProjectSnapshot,
+} from "./workspace-git-base.js";
 
 const sourceAdmission = vi.hoisted(() =>
   vi.fn<typeof import("./repository-project-admission.js").prepareRepositoryWorkerProjectSource>(),
@@ -15,7 +19,7 @@ vi.mock("./repository-project-admission.js", () => ({
 describe("prepared project retention compatibility", () => {
   const fixture = usePreparedPoolFixture();
 
-  function setup() {
+  async function setup() {
     sourceAdmission
       .mockReset()
       .mockRejectedValue(new Error("Retention must not access the repository"));
@@ -60,7 +64,7 @@ describe("prepared project retention compatibility", () => {
       setupRecipe: "e".repeat(40),
       runSetupScript: false,
     });
-    const record = fixture.store.createIntent({
+    const record = await fixture.store.createIntent({
       environmentId: "retained",
       providerId: fixture.provider.id,
       profileId: "development",
@@ -100,7 +104,7 @@ describe("prepared project retention compatibility", () => {
   }
 
   it("uses repository admission and fences a changed source owner before allocation", async () => {
-    const { owner, project } = setup();
+    const { owner, project } = await setup();
     let current = true;
     sourceAdmission.mockImplementation(async (request) => {
       request.assertCurrent();
@@ -142,9 +146,9 @@ describe("prepared project retention compatibility", () => {
     expect(fixture.store.list()).toEqual(before);
   });
 
-  it("keeps initially private repository metadata on ordinary cold provisioning", async () => {
-    const { owner, project } = setup();
-    sourceAdmission.mockResolvedValue(undefined);
+  it("keeps providers without project preparation on ordinary cold provisioning", async () => {
+    const { owner, project } = await setup();
+    fixture.provider.supportsProjectPreparation = () => false;
     const options = {
       executionMode: "worker-turn" as const,
       repository: { agentId: "main", url: project.source.url },
@@ -157,11 +161,50 @@ describe("prepared project retention compatibility", () => {
     const cold = await owner.createWithProfile("development", "private-cold", options, intent);
     expect(cold.profileSnapshot).not.toHaveProperty("project");
     expect(cold.preparation).toBeNull();
-    expect(sourceAdmission).toHaveBeenCalledOnce();
+    expect(sourceAdmission).not.toHaveBeenCalled();
+  });
+
+  it("passes private pack production through the provisioning owner instead of worker fetch", async () => {
+    const { project, record } = await setup();
+    const stopped = new Error("Private pack producer stopped before transfer");
+    const prepareGitPack = vi.fn(async () => {
+      throw stopped;
+    });
+    sourceAdmission.mockResolvedValue({
+      project,
+      setupRecipe: undefined,
+      assertCurrent: () => {},
+      revalidate: async () => {},
+      prepareGitPack,
+    });
+    const operation = await prepareWorkerProviderProject({
+      project,
+      preparation: undefined,
+      record,
+      namespace: "gateway",
+      getConfig: () => fixture.config,
+      requireCurrent: () => {},
+      signal: fixture.abort.signal,
+    });
+    const runScript = vi.fn(async () =>
+      JSON.stringify({
+        ready: false,
+        directory: `/node/.openclaw-worker/git-seeds/gateway/.tmp-${workerProjectSeedKey(project)}-fixture`,
+      }),
+    );
+    const upload = vi.fn();
+    try {
+      await expect(operation.project.prepare({ runScript, upload })).rejects.toBe(stopped);
+      expect(prepareGitPack).toHaveBeenCalledOnce();
+      expect(runScript).toHaveBeenCalledOnce();
+      expect(upload).not.toHaveBeenCalled();
+    } finally {
+      operation.close();
+    }
   });
 
   it("checks canonical retained contents without source admission or an allocation authority", async () => {
-    const { record, owner } = setup();
+    const { record, owner } = await setup();
     const retained = await owner.prepareRetention(record, fixture.abort.signal);
     expect(retained).toBeDefined();
     expect(() => retained!.assertCurrent()).not.toThrow();
@@ -178,7 +221,7 @@ describe("prepared project retention compatibility", () => {
   it.each(["profile", "target", "owner selection", "agent deletion", "runtime"])(
     "rechecks %s drift without acquiring external source authority",
     async (mutation) => {
-      const { record, owner, invalidateArtifacts } = setup();
+      const { record, owner, invalidateArtifacts } = await setup();
       const retained = await owner.prepareRetention(record, fixture.abort.signal);
       expect(retained).toBeDefined();
       if (mutation === "profile") {
@@ -202,7 +245,7 @@ describe("prepared project retention compatibility", () => {
   );
 
   it("rejects an old runtime fingerprint when reconstructing retention after restart", async () => {
-    const { record, owner, artifacts } = setup();
+    const { record, owner, artifacts } = await setup();
     artifacts.workerArchiveSha256 = "1".repeat(64);
     expect(await owner.prepareRetention(record, fixture.abort.signal)).toBeUndefined();
     expect(sourceAdmission).not.toHaveBeenCalled();

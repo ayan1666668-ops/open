@@ -21,6 +21,7 @@ import {
 } from "../../config/config.js";
 import { restoreEnvVarRefs } from "../../config/env-preserve.js";
 import { resolveConfigIncludes } from "../../config/includes.js";
+import type { ConfigWriteOptions } from "../../config/io.js";
 import { formatConfigIssueLines } from "../../config/issue-format.js";
 import {
   mergeAgentModelEntryForConfig,
@@ -28,6 +29,7 @@ import {
   toAgentModelListLike,
 } from "../../config/model-input.js";
 import { resolveIncludeRoots } from "../../config/paths.js";
+import { copyRuntimeConfigWriteApplication } from "../../config/runtime-write-application.js";
 import type { AgentModelEntryConfig } from "../../config/types.agent-defaults.js";
 import type { AgentModelConfig } from "../../config/types.agents-shared.js";
 import { normalizeAgentId } from "../../routing/session-key.js";
@@ -38,7 +40,13 @@ import {
 } from "./provider-aliases.js";
 
 export { formatTokenK } from "./list.format.js";
-export { ensureFlagCompatibility } from "./list.options.js";
+
+/** Rejects conflicting machine-readable output modes. */
+export function ensureFlagCompatibility(opts: { json?: boolean; plain?: boolean }): void {
+  if (opts.json && opts.plain) {
+    throw new Error("Choose either --json or --plain, not both.");
+  }
+}
 
 /** Formats millisecond durations for model command output. */
 export const formatMs = (value?: number | null) => {
@@ -90,11 +98,16 @@ export async function updateConfig(
     context: UpdateConfigContext,
   ) => readonly (ModelRef | undefined)[],
   beforeCommit?: () => void,
+  writeOptions?: ConfigWriteOptions,
 ): Promise<OpenClawConfig> {
   const explicitSetPaths: string[][] = [];
   const result = await transformConfigFile({
     base: "source",
-    writeOptions: { explicitSetPaths, beforeCommit },
+    writeOptions: copyRuntimeConfigWriteApplication(writeOptions, {
+      ...writeOptions,
+      explicitSetPaths,
+      beforeCommit,
+    }),
     transform: async (currentConfig, { snapshot }, { envSnapshotForRestore }) => {
       if (!snapshot.valid) {
         const issues = formatConfigIssueLines(snapshot.issues, "-").join("\n");
@@ -387,6 +400,8 @@ export async function updateDefaultModelPrimaryConfig(params: {
       }
       if (inspection.status === "unknown-model") {
         warning = `Warning: Model "${inspection.ref}" is not in the local model catalog for provider "${inspection.provider}". The provider is installed or configured, so the selection was saved; verify the model ID if it is not a newly released or self-hosted model.`;
+      } else if (inspection.status === "uncatalogued-provider") {
+        warning = `Note: Provider "${inspection.provider}" has no local model catalog, so "${inspection.ref}" could not be checked offline. The selection was saved.`;
       }
       return applyDefaultModelPrimaryUpdate({
         cfg,

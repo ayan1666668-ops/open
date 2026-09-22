@@ -89,6 +89,11 @@ export type ProviderAuthContext = {
   openUrl: (url: string) => Promise<void>;
   oauth: {
     createVpsAwareHandlers: typeof createVpsAwareOAuthHandlers;
+    authorize?: (params: {
+      state: string;
+      timeoutMs: number;
+      buildAuthorizationUrl: (redirectUrl: string) => string;
+    }) => Promise<{ code: string; state: string }>;
   };
 };
 
@@ -204,11 +209,12 @@ export type ProviderAuthMethod = {
 };
 
 export type ProviderPluginWizardSetup = {
+  modelTarget?: "utility";
   choiceId?: string;
   choiceLabel?: string;
   choiceHint?: string;
   assistantPriority?: number;
-  assistantVisibility?: "visible" | "manual-only";
+  assistantVisibility?: "visible" | "manual-only" | "detected-only";
   onboardingFeatured?: boolean;
   groupId?: string;
   groupLabel?: string;

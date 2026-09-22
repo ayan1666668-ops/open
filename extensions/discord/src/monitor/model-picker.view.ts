@@ -1,4 +1,3 @@
-// Discord plugin module implements model picker.view behavior.
 import type { APISelectMenuOption } from "discord-api-types/v10";
 import { ButtonStyle } from "discord-api-types/v10";
 import type {
@@ -14,7 +13,6 @@ import {
   Separator,
   StringSelectMenu,
   TextDisplay,
-  type MessagePayloadObject,
   type TopLevelComponents,
 } from "../internal/discord.js";
 import {
@@ -30,7 +28,6 @@ import {
   normalizeModelPickerPage,
   type DiscordModelPickerBucket,
   type DiscordModelPickerCommandContext,
-  type DiscordModelPickerLayout,
   type DiscordModelPickerModelPage,
   type DiscordModelPickerPage,
   type DiscordModelPickerProviderItem,
@@ -57,8 +54,8 @@ type CompactRuntimeState = {
 };
 
 type DiscordModelPickerRenderShellParams = {
-  layout: DiscordModelPickerLayout;
   title: string;
+  refreshWarning?: string;
   detailLines: string[];
   rows: DiscordModelPickerRow[];
   footer?: string;
@@ -69,8 +66,6 @@ type DiscordModelPickerRenderShellParams = {
 };
 
 type DiscordModelPickerRenderedView = {
-  layout: DiscordModelPickerLayout;
-  content?: string;
   components: TopLevelComponents[];
 };
 
@@ -81,7 +76,6 @@ type DiscordModelPickerProviderViewParams = {
   page?: number;
   providerBucket?: string;
   currentModel?: string;
-  layout?: DiscordModelPickerLayout;
 };
 
 type DiscordModelPickerModelViewParams = {
@@ -99,7 +93,6 @@ type DiscordModelPickerModelViewParams = {
   pendingModelIndex?: number;
   pendingRuntime?: string;
   quickModels?: string[];
-  layout?: DiscordModelPickerLayout;
 };
 
 function parseCurrentModelRef(raw?: string): DiscordModelPickerCurrentModelRef | null {
@@ -269,18 +262,12 @@ function resolveCompactRuntimeState(params: {
 function buildRenderedShell(
   params: DiscordModelPickerRenderShellParams,
 ): DiscordModelPickerRenderedView {
-  if (params.layout === "classic") {
-    const lines = [params.title, ...params.detailLines, "", params.footer].filter(Boolean);
-    return {
-      layout: "classic",
-      content: lines.join("\n"),
-      components: params.rows,
-    };
-  }
-
   const containerComponents: Array<TextDisplay | Separator | DiscordModelPickerRow> = [
     new TextDisplay(`## ${params.title}`),
   ];
+  if (params.refreshWarning) {
+    containerComponents.push(new TextDisplay(params.refreshWarning));
+  }
   if (params.detailLines.length > 0) {
     containerComponents.push(new TextDisplay(params.detailLines.join("\n")));
   }
@@ -300,7 +287,6 @@ function buildRenderedShell(
 
   const container = new Container(containerComponents);
   return {
-    layout: "v2",
     components: [container],
   };
 }
@@ -500,7 +486,7 @@ function buildModelRows(params: {
             }
             return option;
           }),
-          placeholder: "Select runtime",
+          placeholder: "Choose how to run this model",
         }),
       ]),
     );
@@ -709,8 +695,8 @@ export function renderDiscordModelPickerProvidersView(
       ? `Showing page ${page.page}/${page.totalPages} · ${page.totalItems} providers total`
       : `All ${page.totalItems} providers shown`;
   return buildRenderedShell({
-    layout: params.layout ?? "v2",
     title: "Model Picker",
+    refreshWarning: params.data.refreshWarning,
     detailLines,
     rows,
     footer,
@@ -745,8 +731,8 @@ export function renderDiscordModelPickerModelsView(
     ];
 
     return buildRenderedShell({
-      layout: params.layout ?? "v2",
       title: "Model Picker",
+      refreshWarning: params.data.refreshWarning,
       detailLines: [
         formatCurrentModelLine(params.currentModel),
         `Provider not found: ${normalizeProviderId(params.provider)}`,
@@ -806,17 +792,18 @@ export function renderDiscordModelPickerModelsView(
         : undefined,
     pendingRuntime: params.pendingRuntime,
   });
+  const selectedRuntimeLabel = choices?.find((choice) => choice.id === selectedRuntime)?.label;
   const pendingLine = !params.pendingModel
     ? "Select a model, then press Submit."
     : !supportsDiscordModelPickerRuntimeChoices()
       ? `Selected: ${params.pendingModel} (press Submit)`
       : choices === undefined
-        ? "Runtime availability is not confirmed. Reopen /model to try again."
+        ? "Could not confirm how to run this model. Open /models to try again."
         : choices.length === 0
-          ? "No runtime is available for the selected model. Choose another model."
-          : selectedRuntime
-            ? `Selected: ${params.pendingModel} · runtime ${selectedRuntime} (press Submit)`
-            : "Choose an available runtime for the selected model, then press Submit.";
+          ? "This model cannot run with your current connections. Choose another model."
+          : selectedRuntimeLabel
+            ? `Selected: ${params.pendingModel} · ${selectedRuntimeLabel} (press Submit)`
+            : "Choose how to run this model, then press Submit.";
 
   const detailLines = [formatCurrentModelLine(params.currentModel), `Default: ${defaultModel}`];
   if (modelPage.totalPages > 1) {
@@ -826,8 +813,8 @@ export function renderDiscordModelPickerModelsView(
   }
 
   return buildRenderedShell({
-    layout: params.layout ?? "v2",
     title: "Model Picker",
+    refreshWarning: params.data.refreshWarning,
     detailLines,
     preRowText: pendingLine,
     rows,
@@ -847,7 +834,6 @@ type DiscordModelPickerRecentsViewParams = {
   page?: number;
   providerPage?: number;
   modelBucket?: string;
-  layout?: DiscordModelPickerLayout;
 };
 
 function formatRecentsButtonLabel(modelRef: string, suffix?: string): string {
@@ -920,8 +906,8 @@ export function renderDiscordModelPickerRecentsView(
   ]);
 
   return buildRenderedShell({
-    layout: params.layout ?? "v2",
     title: "Recents",
+    refreshWarning: params.data.refreshWarning,
     detailLines: [
       "Models you've previously selected appear here.",
       formatCurrentModelLine(params.currentModel),
@@ -930,19 +916,5 @@ export function renderDiscordModelPickerRecentsView(
     rows,
     trailingRows: [backRow],
   });
-}
-
-export function toDiscordModelPickerMessagePayload(
-  view: DiscordModelPickerRenderedView,
-): MessagePayloadObject {
-  if (view.layout === "classic") {
-    return {
-      content: view.content,
-      components: view.components,
-    };
-  }
-  return {
-    components: view.components,
-  };
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

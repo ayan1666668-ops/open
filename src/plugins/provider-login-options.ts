@@ -41,6 +41,7 @@ function isEligible(choice: ProviderAuthChoiceMetadata): boolean {
   return (
     Boolean(choice.choiceId.trim()) &&
     choice.assistantVisibility !== "manual-only" &&
+    choice.assistantVisibility !== "detected-only" &&
     supportsProviderAuthChoiceTextInference(choice.onboardingScopes)
   );
 }
@@ -184,6 +185,10 @@ export function resolveProviderChannelLoginChoice(
       normalizeInput(choice.providerId) === normalized,
   );
   if (groups.length > 1) {
+    const chat = groups.filter((choice) => projectChannelChoice(choice).mode === "chat");
+    if (chat.length === 1 && groups.every((choice) => choice.pluginId === chat[0]!.pluginId)) {
+      return select(chat);
+    }
     return select(groups);
   }
   const exact = metadata.filter((choice) => normalizeInput(choice.choiceId) === normalized);

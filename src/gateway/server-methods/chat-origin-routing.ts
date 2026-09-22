@@ -12,7 +12,7 @@ import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
 import {
   deliveryContextFromSession,
   sessionDeliveryOrigin,
-} from "../../utils/delivery-context.shared.js";
+} from "../../utils/delivery-context.read.js";
 import {
   INTERNAL_MESSAGE_CHANNEL,
   isGatewayCliClient,
@@ -146,8 +146,14 @@ export function resolveChatSendOriginatingRoute(params: {
       explicitDeliverRoute: params.deliver === true,
     };
   }
+  // Internal WebChat bindings use the canonical session key, never a stored external route.
+  const internalRoute: ChatSendOriginatingRoute = {
+    originatingChannel: INTERNAL_MESSAGE_CHANNEL,
+    originatingTo: params.sessionKey,
+    explicitDeliverRoute: false,
+  };
   if (params.deliver !== true) {
-    return { originatingChannel: INTERNAL_MESSAGE_CHANNEL, explicitDeliverRoute: false };
+    return internalRoute;
   }
 
   const sessionDeliveryContext = deliveryContextFromSession(params.entry);
@@ -159,7 +165,7 @@ export function resolveChatSendOriginatingRoute(params: {
   const routeAccountIdCandidate = sessionDeliveryContext?.accountId ?? sessionOrigin?.accountId;
   const routeThreadIdCandidate = sessionDeliveryContext?.threadId ?? sessionOrigin?.threadId;
   if (params.sessionKey.length > CHAT_SEND_SESSION_KEY_MAX_LENGTH) {
-    return { originatingChannel: INTERNAL_MESSAGE_CHANNEL, explicitDeliverRoute: false };
+    return internalRoute;
   }
 
   const parsedSessionKey = parseAgentSessionKey(params.sessionKey);
@@ -212,7 +218,7 @@ export function resolveChatSendOriginatingRoute(params: {
     routeToCandidate.trim().length > 0;
 
   if (!hasDeliverableRoute) {
-    return { originatingChannel: INTERNAL_MESSAGE_CHANNEL, explicitDeliverRoute: false };
+    return internalRoute;
   }
 
   return {

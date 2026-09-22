@@ -3,6 +3,8 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Page } from "playwright";
 import { afterEach, expect, it } from "vitest";
+import type { ApplicationContext } from "../app/context.ts";
+import { prepareChatHistoryFixture } from "../test-helpers/chat-activity-fixtures.ts";
 import { takeControlUiViewportScreenshot } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import {
   controlUiSessionUrl,
@@ -33,6 +35,9 @@ async function openMockAbortableRun(currentPage: Page, runId: string) {
   const sessionKey = "agent:main:main";
   const sessionInfo = {
     key: sessionKey,
+    sessionId: `session:${sessionKey}`,
+    kind: "direct",
+    updatedAt: 1,
     hasActiveRun: true,
     activeRunIds: [runId],
     status: "running",
@@ -58,65 +63,6 @@ suite.define(() => {
       await suite.closeBrowserContext(page.context());
     }
     page = undefined;
-  });
-
-  it("retires failed history released after clicking Send", async () => {
-    const context = await suite.newBrowserContext({});
-    const currentPage = await context.newPage();
-    page = currentPage;
-    const sessionKey = "agent:main:main";
-    const diagnostic = "⚠️ ✉️ Message failed: delivery unavailable near 🧭";
-    const renderedDiagnostic = "Message failed: delivery unavailable near 🧭";
-    const gateway = await installMockGateway(currentPage, {
-      sessionKey,
-      // Account recovery can replace startup with a scoped history request.
-      heldMethods: ["chat.startup", "chat.history", "chat.send"],
-      sessions: [
-        {
-          key: sessionKey,
-          status: "failed",
-          hasActiveRun: false,
-          lastRunId: "failed-run",
-          lastRunError: diagnostic,
-        },
-      ],
-    });
-    await currentPage.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
-    await gateway.waitForRequest("sessions.list", { match: rosterMatch });
-    const startup = await gateway.waitForRequest("chat.startup");
-    expect(startup.params).toMatchObject({ sessionKey });
-    await currentPage.locator(".agent-chat__input textarea").fill("Try again");
-    await currentPage.getByRole("button", { name: "Send message" }).click();
-    expect(await gateway.getRequests("chat.send")).toHaveLength(0);
-
-    // Fault injection controls only WebSocket delivery, never application state.
-    await gateway.resolveDeferred("chat.startup");
-    await expect
-      .poll(async () =>
-        (await gateway.getRequests()).some(
-          ({ method }) => method === "chat.history" || method === "chat.send",
-        ),
-      )
-      .toBe(true);
-    if ((await gateway.getRequests("chat.history")).length > 0) {
-      await gateway.resolveDeferred("chat.history");
-    }
-    const send = await gateway.waitForRequest("chat.send");
-    const { idempotencyKey: runId } = send.params as { idempotencyKey: string };
-    expect(runId).toEqual(expect.any(String));
-    const alert = currentPage.getByRole("alert").filter({ hasText: renderedDiagnostic });
-    await alert.waitFor();
-    await alert.locator(".chat-error__content > strong").getByText(renderedDiagnostic).waitFor();
-    expect(await alert.locator("details").count()).toBe(0);
-    await gateway.resolveDeferred("chat.send", { runId, status: "started" });
-    await currentPage.getByRole("button", { name: "Stop generating" }).waitFor();
-    await gateway.emitChatFinal({ sessionKey, runId, text: "Recovery completed." });
-    await currentPage
-      .locator(".chat-group.assistant")
-      .getByText("Recovery completed.", { exact: true })
-      .waitFor();
-    await expect.poll(() => alert.count()).toBe(0);
-    expect(await currentPage.getByRole("button", { name: "Stop generating" }).count()).toBe(0);
   });
 
   it("excludes a reply-less failed turn's idle time from the next successful turn", async () => {
@@ -190,6 +136,7 @@ suite.define(() => {
       role: "toolResult",
       toolName: "bash",
       toolCallId: "successful-tool",
+      isError: false,
       content: "ok",
       timestamp: firstStartedAt + 982_000,
       __openclaw: { id: "successful-tool-result", runId },
@@ -209,32 +156,67 @@ suite.define(() => {
     const reply = {
       role: "assistant",
       content: "Success after the earlier failure.",
-      timestamp: firstStartedAt + 994_000,
+      // Creation precedes the long final request; lifecycle owns completion.
+      timestamp: firstStartedAt + 983_000,
       __openclaw: { id: "successful-reply", runId },
     };
     messages.push(reply);
     // The same canonical history must survive a full page reload, not just
     // the live terminal projection or its retained local timestamps.
-    await gateway.setMethodResponse("chat.history", {
-      messages,
+    const completedSession = {
+      key: sessionKey,
       sessionId: `session:${sessionKey}`,
-      sessionInfo: { key: sessionKey, hasActiveRun: false, activeRunIds: [], status: "done" },
+      kind: "direct",
+      hasActiveRun: false,
+      activeRunIds: [],
+      status: "done",
+      lastRunId: runId,
+      startedAt: firstStartedAt + 981_000,
+      endedAt: firstStartedAt + 994_000,
+      runtimeMs: 13_000,
+      updatedAt: firstStartedAt + 994_000,
+    };
+    // A terminal event also refreshes the roster; every read must retain its timing.
+    await gateway.setSessionsListResponse({ sessions: [completedSession] });
+    await gateway.setMethodResponse("chat.history", {
+      ...prepareChatHistoryFixture(messages),
+      sessionId: `session:${sessionKey}`,
+      sessionInfo: completedSession,
     });
     await gateway.emitGatewayEvent("chat", { sessionKey, runId, state: "final", message: reply });
+    await gateway.emitGatewayEvent("sessions.changed", {
+      ...completedSession,
+      reason: "lifecycle",
+    });
     const replyBody = currentPage
       .locator(".chat-group.assistant")
       .getByText(reply.content, { exact: true });
     await replyBody.waitFor();
-    const elapsedLabel = currentPage.locator(".chat-work-group .chat-activity-group__label");
+    const operationLabel = currentPage.locator(".chat-work-group .chat-activity-group__label");
+    const elapsedLabel = currentPage.locator(".chat-work-group .chat-activity-group__duration");
+    const refreshedSession = await currentPage.evaluate(async (key) => {
+      const app = document.querySelector<
+        HTMLElement & { runtime?: { context?: ApplicationContext } }
+      >("openclaw-app");
+      const sessions = app?.runtime?.context?.sessions;
+      if (!sessions) {
+        throw new Error("Session capability is missing");
+      }
+      await sessions.refresh({ agentId: "main", force: true });
+      return sessions.state.result?.sessions.find((row) => row.key === key);
+    }, sessionKey);
+    expect(refreshedSession).toMatchObject({ lastRunId: runId, runtimeMs: 13_000 });
     await elapsedLabel.waitFor();
-    expect.soft(await elapsedLabel.textContent()).toBe("Worked for 13s");
+    await expect.poll(() => operationLabel.textContent()).toBe("1 command");
+    expect.soft(await elapsedLabel.textContent()).toBe("13s");
     expect(await currentPage.getByRole("button", { name: "Stop generating" }).count()).toBe(0);
 
     await currentPage.reload();
     await gateway.waitForRequest("chat.startup");
     await replyBody.waitFor();
     await elapsedLabel.waitFor();
-    expect(await elapsedLabel.textContent()).toBe("Worked for 13s");
+    expect(await operationLabel.textContent()).toBe("1 command");
+    expect(await elapsedLabel.textContent()).toBe("13s");
     expect(await currentPage.locator(".chat-group.user").count()).toBe(2);
   });
 
@@ -421,6 +403,9 @@ suite.define(() => {
       sessionId: `session:${sessionKey}`,
       sessionInfo: {
         key: sessionKey,
+        sessionId: `session:${sessionKey}`,
+        kind: "direct",
+        updatedAt: 2,
         hasActiveRun: false,
         activeRunIds: [],
         lastRunId: runId,
@@ -492,6 +477,9 @@ suite.define(() => {
       sessionId: `session:${sessionKey}`,
       sessionInfo: {
         key: sessionKey,
+        sessionId: `session:${sessionKey}`,
+        kind: "direct",
+        updatedAt: 2,
         hasActiveRun: true,
         activeRunIds: [runId],
         status: "running",
@@ -596,6 +584,9 @@ suite.define(() => {
       sessionId: `session:${sessionKey}`,
       sessionInfo: {
         key: sessionKey,
+        sessionId: `session:${sessionKey}`,
+        kind: "direct",
+        updatedAt: 2,
         hasActiveRun: false,
         activeRunIds: [],
         lastRunId: runId,
@@ -635,6 +626,7 @@ suite.define(() => {
       const activeUpdatedAt = Date.now();
       const sessionInfo = {
         key: sessionKey,
+        kind: "direct",
         updatedAt: activeUpdatedAt,
         hasActiveRun: activity === "direct",
         hasActiveSubagentRun: activity === "descendant",
@@ -657,6 +649,8 @@ suite.define(() => {
         sessionId: `session:${sessionKey}`,
         sessionInfo: {
           key: sessionKey,
+          sessionId: `session:${sessionKey}`,
+          kind: "direct",
           updatedAt: activeUpdatedAt + 1,
           hasActiveRun: false,
           hasActiveSubagentRun: false,

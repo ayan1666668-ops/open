@@ -236,32 +236,34 @@ type ToolInventoryRuntimeModelContext = ReturnType<
 /** Keeps dynamic model hooks owned and scoped until inventory projection finishes. */
 export async function acquireEffectiveToolInventoryRuntimeModelContext(
   params: Parameters<typeof resolveStaticToolInventoryRuntimeModelContext>[0],
-): Promise<{
-  run: <T>(project: (context: ToolInventoryRuntimeModelContext) => T) => T;
-  release: () => void;
-}> {
+): Promise<
+  { run: <T>(project: (context: ToolInventoryRuntimeModelContext) => T) => T } & AsyncDisposable
+> {
   const staticContext = resolveStaticToolInventoryRuntimeModelContext(params);
   if (staticContext.runtimeModel) {
-    return { run: (project) => project(staticContext), release: () => {} };
+    return { run: (project) => project(staticContext), [Symbol.asyncDispose]: async () => {} };
   }
 
   const provider = normalizeProviderId(params.modelProvider ?? "");
   const modelId = params.modelId?.trim() ?? "";
   if (!provider || !modelId) {
-    return { run: (project) => project({}), release: () => {} };
+    return { run: (project) => project({}), [Symbol.asyncDispose]: async () => {} };
   }
   const agentId = params.agentId?.trim() || resolveSessionAgentId({ config: params.cfg });
   const agentDir = params.agentDir ?? resolveAgentDir(params.cfg, agentId);
   const workspaceDir = params.workspaceDir ?? resolveAgentWorkspaceDir(params.cfg, agentId);
-  const lease = await acquireReadOnlyPreparedModelRuntime({
-    agentId,
-    agentDir,
-    config: params.cfg,
-    workspaceDir,
-    // The selected provider owner must join the generation before dynamic hooks resolve.
-    loadRuntimePlugins: true,
-    runtimePluginSelections: [{ provider, modelId, agentId }],
-  });
+  const lease = await acquireReadOnlyPreparedModelRuntime(
+    {
+      agentId,
+      agentDir,
+      config: params.cfg,
+      workspaceDir,
+      // The selected provider owner must join the generation before dynamic hooks resolve.
+      loadRuntimePlugins: true,
+      runtimePluginSelections: [{ provider, modelId, agentId }],
+    },
+    { catalogMode: "static" },
+  );
   let transferred = false;
   try {
     const stores = lease.snapshot.createStores();
@@ -274,10 +276,11 @@ export async function acquireEffectiveToolInventoryRuntimeModelContext(
     });
     const runtimeModel = resolved.model as ProviderRuntimeModel | undefined;
     if (!runtimeModel) {
-      return { run: (project) => project({}), release: () => {} };
+      return { run: (project) => project({}), [Symbol.asyncDispose]: async () => {} };
     }
     const context = { modelApi: runtimeModel.api, runtimeModel };
     let released = false;
+    let disposal: Promise<void> | undefined;
     const acquired = {
       run: <T>(project: (context: ToolInventoryRuntimeModelContext) => T): T => {
         if (released) {
@@ -285,18 +288,16 @@ export async function acquireEffectiveToolInventoryRuntimeModelContext(
         }
         return withPluginRuntimeGenerationScope(lease.snapshot, () => project(context));
       },
-      release: () => {
-        if (!released) {
-          released = true;
-          lease.release();
-        }
+      [Symbol.asyncDispose]() {
+        released = true;
+        return (disposal ??= lease[Symbol.asyncDispose]());
       },
     };
     transferred = true;
     return acquired;
   } finally {
     if (!transferred) {
-      lease.release();
+      await lease[Symbol.asyncDispose]();
     }
   }
 }
@@ -351,12 +352,14 @@ export function resolveEffectiveToolInventory(
   const effectiveTools = createOpenClawCodingTools({
     agentId,
     sessionKey: params.sessionKey,
+    sessionId: params.sessionId,
     workspaceDir,
     agentDir,
     config: params.cfg,
     modelProvider: params.modelProvider,
     modelId: params.modelId,
     modelApi: runtimeModelContext.modelApi,
+    modelBaseUrl: runtimeModelContext.runtimeModel?.baseUrl,
     modelCompat,
     messageProvider: params.messageProvider,
     senderId: params.senderId,

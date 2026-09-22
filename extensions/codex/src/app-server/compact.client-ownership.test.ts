@@ -1,7 +1,9 @@
 import path from "node:path";
+import { setImmediate, setTimeout as delay } from "node:timers/promises";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
+  claimCodexAppServerLiveThread,
   consumeCodexAppServerLiveThread,
   retainCodexAppServerLiveThread,
 } from "./client-runtime.js";
@@ -22,8 +24,17 @@ import {
   retireSharedCodexAppServerClientIfCurrent,
   resetSharedCodexAppServerClientForTests,
 } from "./shared-client.js";
-import { createClientHarness, useAutoCleanupTempDirTracker } from "./test-support.js";
-import { withCodexAppServerThreadMutation } from "./thread-ownership.js";
+import * as sharedClientRuntime from "./shared-client.js";
+import { createInferenceReadyClientHarness, useAutoCleanupTempDirTracker } from "./test-support.js";
+import {
+  createParams,
+  resetThreadLifecycleTestFixtures,
+  startOrResumeThread,
+} from "./thread-lifecycle.test-fixtures.js";
+import {
+  releaseCodexAppServerBindingSubscription,
+  retainCodexAppServerBindingSubscription,
+} from "./thread-ownership.js";
 import { CODEX_APP_SERVER_VERSION } from "./version.js";
 
 const tempDirs = useAutoCleanupTempDirTracker(afterEach);
@@ -34,7 +45,7 @@ const pluginConfig = {
   appServer: { command: process.execPath, args: ["app-server"], homeScope: "user" },
 };
 let runtime: ReturnType<typeof resolveCodexAppServerRuntimeOptions>;
-const transports: ReturnType<typeof createClientHarness>[] = [];
+const transports: ReturnType<typeof createInferenceReadyClientHarness>[] = [];
 
 beforeEach(() => {
   directory = tempDirs.make("codex-compact-owner-");
@@ -51,8 +62,35 @@ afterEach(async () => {
   resetSharedCodexAppServerClientForTests();
   await Promise.all(transports.splice(0).map(({ client }) => client.closeAndWait()));
   resetCodexTestBindingStore();
+  resetThreadLifecycleTestFixtures();
   vi.restoreAllMocks();
 });
+
+function createOwnershipHarness(
+  respond: (
+    request: { id: number; method: string; params?: { threadId?: string } },
+    send: (message: unknown) => void,
+  ) => void,
+  autoEmitExit = true,
+) {
+  return createInferenceReadyClientHarness({
+    autoEmitExit,
+    onWrite(line, send) {
+      const request = JSON.parse(line) as Parameters<typeof respond>[0];
+      if (request.id === undefined) {
+        return;
+      }
+      if (request.method === "initialize") {
+        send({
+          id: request.id,
+          result: { userAgent: `codex-cli/${CODEX_APP_SERVER_VERSION}`, codexHome: directory },
+        });
+      } else {
+        respond(request, send);
+      }
+    },
+  });
+}
 
 function sendCompactionCompleted(
   send: (message: unknown) => void,
@@ -86,62 +124,45 @@ it.each(["warm", "closed", "detached", "unconfirmed-close"])(
     const operations: { client: number; method: string; threadId?: string }[] = [];
     vi.spyOn(CodexAppServerClient, "start").mockImplementation(async () => {
       const index = transports.length;
-      const harness = createClientHarness({
-        onWrite(line, send) {
-          const request = JSON.parse(line) as {
-            id?: number;
-            method: string;
-            params?: { threadId?: string };
-          };
-          if (request.id === undefined) {
-            return;
+      const harness = createOwnershipHarness((request, send) => {
+        const threadId = request.params?.threadId;
+        operations.push({ client: index, method: request.method, threadId });
+        // Codex's thread_resume cross-process contract retains the writer after turn completion.
+        if (
+          request.method === "thread/resume" &&
+          threadId &&
+          owners.has(threadId) &&
+          owners.get(threadId) !== index
+        ) {
+          send({
+            id: request.id,
+            error: { code: -32600, message: `thread ${threadId} already has an active writer` },
+          });
+          return;
+        }
+        if (request.method === "thread/resume" && threadId) {
+          owners.set(threadId, index);
+          send({
+            id: request.id,
+            result: threadStartResult(threadId, directory),
+          });
+          return;
+        }
+        // Unsubscribe stops notifications, but Codex keeps the writer until idle eviction or exit.
+        if (
+          (request.method === "turn/start" || request.method === "thread/compact/start") &&
+          threadId
+        ) {
+          const turn = { id: "finished-turn", threadId, status: "completed" };
+          if (request.method === "thread/compact/start") {
+            sendCompactionCompleted(send, threadId, turn.id);
+          } else {
+            send({ method: "turn/completed", params: { threadId, turn } });
           }
-          const threadId = request.params?.threadId;
-          operations.push({ client: index, method: request.method, threadId });
-          if (request.method === "initialize") {
-            send({
-              id: request.id,
-              result: { userAgent: `codex-cli/${CODEX_APP_SERVER_VERSION}`, codexHome: directory },
-            });
-            return;
-          }
-          // Codex's thread_resume cross-process contract retains the writer after turn completion.
-          if (
-            request.method === "thread/resume" &&
-            threadId &&
-            owners.has(threadId) &&
-            owners.get(threadId) !== index
-          ) {
-            send({
-              id: request.id,
-              error: { code: -32600, message: `thread ${threadId} already has an active writer` },
-            });
-            return;
-          }
-          if (request.method === "thread/resume" && threadId) {
-            owners.set(threadId, index);
-            send({
-              id: request.id,
-              result: threadStartResult(threadId, directory),
-            });
-            return;
-          }
-          // Unsubscribe stops notifications, but Codex keeps the writer until idle eviction or exit.
-          if (
-            (request.method === "turn/start" || request.method === "thread/compact/start") &&
-            threadId
-          ) {
-            const turn = { id: "finished-turn", threadId, status: "completed" };
-            if (request.method === "thread/compact/start") {
-              sendCompactionCompleted(send, threadId, turn.id);
-            } else {
-              send({ method: "turn/completed", params: { threadId, turn } });
-            }
-            send({ id: request.id, result: request.method === "turn/start" ? { turn } : {} });
-            return;
-          }
-          send({ id: request.id, result: {} });
-        },
+          send({ id: request.id, result: request.method === "turn/start" ? { turn } : {} });
+          return;
+        }
+        send({ id: request.id, result: {} });
       });
       harness.client.addTransportExitHandler(() => {
         for (const [threadId, ownerIndex] of owners) {
@@ -266,46 +287,68 @@ it.each(["warm", "closed", "detached", "unconfirmed-close"])(
   },
 );
 
-it.each(["success", "failure"])(
-  "keeps a successor fenced until final detached-owner exit after compaction %s",
-  async (outcome) => {
+it.each([
+  ["success", false, "untracked"],
+  ["failure", false, "untracked"],
+  ["success", true, "untracked"],
+  ["failure", true, "untracked"],
+  ["success", "during-resume", "untracked"],
+  ["failure", "during-resume", "untracked"],
+  ["success", "during-resume", "claimed"],
+  ["failure", "during-resume", "claimed"],
+  ["success", "during-resume", "idle"],
+  ["failure", "during-resume", "idle"],
+] as const)(
+  "fences replacement resume after compaction %s (late final release: %s, subscription: %s)",
+  async (outcome, lateRelease, subscription) => {
     const sessionKey = "agent:main:compact-final-owner";
+    const threadId = "final-owner-thread";
+    const ownerClaimed = subscription === "claimed";
+    const ownerWrites = subscription === "untracked" ? [0, 0] : [0, 0, 0];
+    let ownerExited = false;
+    const resumes: number[] = [];
     const compactStarted = createDeferred<{
       id: number;
       send: (message: unknown) => void;
     }>();
     vi.spyOn(CodexAppServerClient, "start").mockImplementation(async () => {
-      const harness = createClientHarness({
-        autoEmitExit: false,
-        onWrite(line, send) {
-          const request = JSON.parse(line) as {
-            id?: number;
-            method: string;
-            params?: { threadId?: string };
-          };
-          if (request.id === undefined) {
-            return;
-          }
-          if (request.method === "initialize") {
+      const index = transports.length;
+      const harness = createOwnershipHarness((request, send) => {
+        const result = threadStartResult(request.params?.threadId ?? threadId, directory);
+        result.thread.sessionId = "session-final-owner";
+        if (request.method === "thread/read") {
+          send({
+            id: request.id,
+            result: { thread: { ...result.thread, status: { type: "notLoaded" } } },
+          });
+          return;
+        }
+        if (request.method === "thread/resume" || request.method === "thread/start") {
+          resumes.push(index);
+          if (index > 0 && !ownerExited) {
             send({
               id: request.id,
-              result: { userAgent: `codex-cli/${CODEX_APP_SERVER_VERSION}`, codexHome: directory },
+              error: { code: -32600, message: "thread already has an active writer" },
             });
             return;
           }
-          if (request.method === "thread/resume") {
-            const result = threadStartResult(request.params?.threadId, directory);
-            result.thread.sessionId = "session-final-owner";
-            send({ id: request.id, result });
-            return;
-          }
-          if (request.method === "thread/compact/start") {
-            compactStarted.resolve({ id: request.id, send });
-            return;
-          }
-          send({ id: request.id, result: {} });
-        },
-      });
+          send({ id: request.id, result });
+          return;
+        }
+        if (request.method === "thread/compact/start") {
+          compactStarted.resolve({ id: request.id, send });
+          return;
+        }
+        send({
+          id: request.id,
+          result: request.method === "configRequirements/read" ? { requirements: null } : {},
+        });
+      }, index !== 0);
+      if (index === 0) {
+        harness.client.addTransportExitHandler(() => {
+          ownerExited = true;
+        });
+      }
       transports.push(harness);
       return harness.client;
     });
@@ -315,17 +358,23 @@ it.each(["success", "failure"])(
       agentDir,
       authProfileId: null,
     });
-    await owner.request(
-      "thread/resume",
-      { threadId: "final-owner-thread", excludeTurns: true },
-      { timeoutMs: 1_000 },
-    );
     registerCodexTestSessionIdentity(sessionFile, "session-final-owner", sessionKey, "main");
-    await writeCodexAppServerBinding(sessionFile, {
-      threadId: "final-owner-thread",
-      cwd: directory,
-      clientId: owner.getInstanceId(),
-    });
+    const prepareThread = (client: CodexAppServerClient) =>
+      startOrResumeThread({
+        client,
+        params: {
+          ...createParams(sessionFile, directory),
+          sessionId: "session-final-owner",
+          sessionKey,
+          agentDir,
+          agentId: "main",
+        },
+        cwd: directory,
+        dynamicTools: [],
+        appServer: runtime,
+        userMcpServersEnabled: false,
+      });
+    await prepareThread(owner);
     const releaseRetirementLease = retainSharedCodexAppServerClientIfCurrent(owner);
     expect(releaseRetirementLease).toBeDefined();
     expect(releaseLeasedSharedCodexAppServerClient(owner)).toBe(true);
@@ -346,9 +395,11 @@ it.each(["success", "failure"])(
       { bindingStore: testCodexAppServerBindingStore, pluginConfig },
     );
     const pendingCompact = await compactStarted.promise;
-    releaseRetirementLease?.();
+    if (!lateRelease) {
+      releaseRetirementLease?.();
+    }
     if (outcome === "success") {
-      sendCompactionCompleted(pendingCompact.send, "final-owner-thread", "compaction-turn");
+      sendCompactionCompleted(pendingCompact.send, threadId, "compaction-turn");
       pendingCompact.send({ id: pendingCompact.id, result: {} });
     } else {
       pendingCompact.send({
@@ -357,26 +408,109 @@ it.each(["success", "failure"])(
       });
     }
 
-    const result = await compaction;
-    expect(result).toMatchObject(
+    const compactionResult = await compaction;
+    expect(compactionResult).toMatchObject(
       outcome === "success"
         ? { ok: true, compacted: true }
         : { ok: false, compacted: false, reason: "forced compaction failure" },
     );
+    if (lateRelease === true) {
+      releaseRetirementLease?.();
+    }
     const harness = transports[0];
-    expect(harness?.stdinDestroyed).toBe(true);
+    expect(harness?.stdinDestroyed).toBe(lateRelease !== "during-resume");
 
-    let successorRan = false;
-    const successor = withCodexAppServerThreadMutation("final-owner-thread", async () => {
-      successorRan = true;
+    if (subscription !== "untracked") {
+      await owner.request("thread/resume", { threadId }, { timeoutMs: 1_000 });
+      if (ownerClaimed) {
+        expect(await claimCodexAppServerLiveThread(owner, threadId)).toBeDefined();
+      } else {
+        expect(await retainCodexAppServerBindingSubscription(owner, threadId)).toBe(true);
+      }
+    }
+    const nextOwner = await getLeasedSharedCodexAppServerClient({
+      startOptions: runtime.start,
+      agentDir,
+      authProfileId: null,
     });
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 20);
+    const entered = createDeferred<void>();
+    const released = createDeferred<void>();
+    let acquired = false;
+    const retain = sharedClientRuntime.retainSharedCodexAppServerClientByInstanceId;
+    vi.spyOn(
+      sharedClientRuntime,
+      "retainSharedCodexAppServerClientByInstanceId",
+    ).mockImplementation((id) => {
+      const result = retain(id);
+      void Promise.resolve(result).then((lease) => {
+        acquired = true;
+        if (lease) {
+          const release = lease.release;
+          vi.spyOn(lease, "release").mockImplementation((wait) => {
+            const exit = release(wait);
+            released.resolve();
+            return exit;
+          });
+        }
+      });
+      entered.resolve();
+      return result;
     });
-    expect(successorRan).toBe(false);
-
-    harness?.emitExit();
-    await successor;
-    expect(successorRan).toBe(true);
+    const successor = prepareThread(nextOwner).then(
+      (value) => ({ value }),
+      (error: unknown) => ({ error }),
+    );
+    try {
+      if (lateRelease) {
+        await Promise.race([
+          entered.promise,
+          successor.then((result) => {
+            throw "error" in result
+              ? result.error
+              : new Error("resume skipped recorded-owner acquisition");
+          }),
+        ]);
+        await Promise.resolve();
+        expect(acquired).toBe(lateRelease === "during-resume");
+        if (lateRelease === "during-resume") {
+          await released.promise;
+          await setImmediate();
+          if (ownerClaimed) {
+            expect(
+              await Promise.race([successor, Promise.resolve({ pending: true })]),
+            ).toMatchObject({
+              error: expect.objectContaining({ message: expect.stringContaining("claimed") }),
+            });
+            const rejectedRelease = releaseCodexAppServerBindingSubscription({
+              threadId,
+              clientId: owner.getInstanceId(),
+            }).catch((error: unknown) => error);
+            await setImmediate();
+            expect(await Promise.race([rejectedRelease, Promise.resolve(null)])).toMatchObject({
+              message: expect.stringContaining("active run"),
+            });
+          }
+          releaseRetirementLease?.();
+          expect(harness?.stdinDestroyed).toBe(true);
+        }
+      } else {
+        await delay(20);
+        expect(
+          sharedClientRuntime.retainSharedCodexAppServerClientByInstanceId,
+        ).not.toHaveBeenCalled();
+      }
+      expect(resumes).toEqual(ownerWrites);
+    } finally {
+      releaseRetirementLease?.();
+      harness?.emitExit();
+      await successor;
+    }
+    expect(await successor).toMatchObject(
+      ownerClaimed
+        ? { error: expect.any(Error) }
+        : { value: { threadId, lifecycle: { action: "resumed" } } },
+    );
+    expect(resumes).toEqual(ownerClaimed ? ownerWrites : [...ownerWrites, 1]);
+    releaseLeasedSharedCodexAppServerClient(nextOwner);
   },
 );

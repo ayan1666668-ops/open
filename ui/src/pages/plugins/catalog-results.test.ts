@@ -46,13 +46,12 @@ function baseProps(overrides: Partial<PluginCatalogResultsProps> = {}): PluginCa
       },
       { slug: "tools", label: "Tools", description: "Tools", icon: "wrench", order: 1 },
     ],
-    categoriesError: null,
     featured: [plugin("featured")],
     featuredLoading: false,
-    featuredError: null,
     trending: [plugin("trending")],
     trendingLoading: false,
-    trendingError: null,
+    loadingMore: false,
+    loadMoreError: null,
     intent: "all",
     category: null,
     query: "",
@@ -65,9 +64,8 @@ function baseProps(overrides: Partial<PluginCatalogResultsProps> = {}): PluginCa
     onQueryChange: vi.fn(),
     onOpenEntry: vi.fn(),
     onInstall: vi.fn(),
+    onLoadMore: vi.fn(),
     onRetry: vi.fn(),
-    onRetryGrouped: vi.fn(),
-    onRetryCategories: vi.fn(),
     ...overrides,
   };
 }
@@ -93,7 +91,18 @@ describe("renderPluginCatalogResults", () => {
   });
 
   it("focuses unified search and places discovery chips before grouped sections", async () => {
-    const container = mount(baseProps());
+    const container = mount(
+      baseProps({
+        result: {
+          items: [
+            plugin("official-tool"),
+            plugin("community-tool", {
+              catalog: { name: "Community tool", official: false, categories: ["tools"] },
+            }),
+          ],
+        },
+      }),
+    );
     const search = container.querySelector<HTMLInputElement>('input[type="search"]');
     await vi.waitFor(() => expect(document.activeElement).toBe(search));
     expect(
@@ -108,29 +117,95 @@ describe("renderPluginCatalogResults", () => {
     ).toEqual(["featured", "trending", "tools"]);
   });
 
-  it("renders search as an ungrouped grid", () => {
+  it.each([true, false, null])(
+    "keeps search flat for one publisher type or no matches (%s)",
+    (official) => {
+      const container = mount(
+        baseProps({
+          query: "notion",
+          result: {
+            items:
+              official === null
+                ? []
+                : [plugin("Notion", { catalog: { name: "Notion", official, categories: [] } })],
+          },
+        }),
+      );
+
+      expect(container.querySelectorAll(".plugin-catalog-section")).toHaveLength(0);
+      expect(
+        container.querySelectorAll(".plugin-catalog-grid--results .plugin-catalog-card"),
+      ).toHaveLength(official === null ? 0 : 1);
+      expect(container.querySelector("openclaw-panel-empty-state") !== null).toBe(
+        official === null,
+      );
+      expect(container.querySelector(".plugin-catalog-pagination")).toBeNull();
+    },
+  );
+
+  it("groups mixed search results by official status without truncating or changing each group's rank", () => {
+    const official = Array.from({ length: 10 }, (_, index) => plugin(`official-${index}`));
+    const community = ["community-first", "community-second"].map((id) =>
+      plugin(id, { catalog: { name: "OpenClaw integration", official: false, categories: [] } }),
+    );
+    const onLoadMore = vi.fn();
     const container = mount(
       baseProps({
-        query: "notion",
-        result: { items: [plugin("Notion")] },
+        query: "integration",
+        result: {
+          items: [community[0]!, ...official, community[1]!],
+          nextCursor: "catalog-page-2",
+        },
+        onLoadMore,
       }),
     );
 
-    expect(container.querySelectorAll(".plugin-catalog-section")).toHaveLength(0);
     expect(
-      container.querySelectorAll(".plugin-catalog-grid--results .plugin-catalog-card"),
-    ).toHaveLength(1);
-    expect(container.querySelector(".plugin-catalog-pagination")).toBeNull();
+      [...container.querySelectorAll(".plugin-catalog-section h2")].map((heading) =>
+        heading.textContent?.trim(),
+      ),
+    ).toEqual(["Official", "Community"]);
+    const sections = container.querySelectorAll(".plugin-catalog-section");
+    for (const [index, entries] of [official, community].entries()) {
+      expect(
+        [...sections[index]!.querySelectorAll<HTMLElement>(".plugin-catalog-card")].map(
+          (card) => card.dataset.pluginId,
+        ),
+      ).toEqual(entries.map((entry) => entry.id));
+    }
+    const loadMore = container.querySelectorAll<HTMLButtonElement>(
+      ".plugin-catalog-load-more button",
+    );
+    expect(loadMore).toHaveLength(1);
+    loadMore[0]!.click();
+    expect(onLoadMore).toHaveBeenCalledOnce();
+  });
+
+  it("offers bounded continuation only when the expanded result has another page", () => {
+    const onLoadMore = vi.fn();
+    const container = mount(
+      baseProps({
+        category: "tools",
+        result: { items: [plugin("tool")], nextCursor: "catalog-page-2" },
+        onLoadMore,
+      }),
+    );
+
+    const loadMore = container.querySelector<HTMLButtonElement>(".plugin-catalog-load-more button");
+    expect(loadMore?.textContent?.trim()).toBe("Load more");
+    loadMore?.click();
+    expect(onLoadMore).toHaveBeenCalledOnce();
   });
 
   it("keeps a partial ClawHub failure retryable", () => {
-    const onRetryGrouped = vi.fn();
+    const onRetry = vi.fn();
     const container = mount(
       baseProps({
         remoteError: "ClawHub is unavailable; local plugins remain available.",
-        featuredError: "ClawHub is unavailable; local plugins remain available.",
-        trendingError: "ClawHub is unavailable; local plugins remain available.",
-        onRetryGrouped,
+        result: { items: [] },
+        featured: [],
+        trending: [],
+        onRetry,
       }),
     );
 
@@ -138,8 +213,9 @@ describe("renderPluginCatalogResults", () => {
     expect(warnings).toHaveLength(1);
     const warning = warnings.item(0);
     expect(warning?.textContent).toContain("ClawHub is unavailable");
+    expect(container.querySelector("openclaw-panel-empty-state")).toBeNull();
     warning?.querySelector<HTMLButtonElement>("button")?.click();
-    expect(onRetryGrouped).toHaveBeenCalledOnce();
+    expect(onRetry).toHaveBeenCalledOnce();
   });
 
   it.each<{
@@ -153,12 +229,12 @@ describe("renderPluginCatalogResults", () => {
     expected: string | undefined;
   }>([
     {
-      name: "uninstalled first-party artwork",
+      name: "uninstalled first-party placeholder",
       packageName: "@openclaw/whatsapp",
       pluginId: undefined,
       pluginIconUrls: {},
       iconUrls: {},
-      expected: "/plugin-art/whatsapp.webp",
+      expected: undefined,
     },
     {
       name: "third-party identity without first-party artwork",
@@ -187,13 +263,13 @@ describe("renderPluginCatalogResults", () => {
       expected: "blob:package-icon",
     },
     {
-      name: "trusted bundled artwork before catalog imagery",
+      name: "published package icon before installation",
       packageName: "@openclaw/whatsapp",
       pluginId: undefined,
       imageUrl: "https://example.com/icon.png",
       pluginIconUrls: {},
       iconUrls: { "https://example.com/icon.png": "blob:catalog-icon" },
-      expected: "/plugin-art/whatsapp.webp",
+      expected: "blob:catalog-icon",
     },
   ])(
     "renders $name",
@@ -228,6 +304,44 @@ describe("renderPluginCatalogResults", () => {
     },
   );
 
+  it("shows initials when a package icon cannot decode, then accepts a new icon", async () => {
+    const entry = plugin("slack", {
+      catalog: {
+        name: "Slack",
+        categories: ["channels"],
+        official: true,
+        imageUrl: "https://example.com/icon.png",
+      },
+    });
+    const props = baseProps({
+      query: "slack",
+      result: { items: [entry] },
+      iconUrls: { "https://example.com/icon.png": "blob:broken" },
+    });
+    const container = mount(props);
+    container.querySelector(".plugin-catalog-card__art img")!.dispatchEvent(new Event("error"));
+    await vi.waitFor(() =>
+      expect(container.querySelector(".plugin-catalog-card__art img")).toBeNull(),
+    );
+    expect(
+      container
+        .querySelector(".plugin-catalog-card__art .plugins-tile--fallback")
+        ?.textContent?.trim(),
+    ).toBe("SL");
+    render(renderPluginCatalogResults(props), container);
+    expect(container.querySelector(".plugin-catalog-card__art img")).toBeNull();
+    render(
+      renderPluginCatalogResults({
+        ...props,
+        iconUrls: { "https://example.com/icon.png": "blob:repaired" },
+      }),
+      container,
+    );
+    expect(container.querySelector(".plugin-catalog-card__art img")?.getAttribute("src")).toBe(
+      "blob:repaired",
+    );
+  });
+
   it("caps grouped sections at two desktop rows and opens the selected category", () => {
     const onCategoryChange = vi.fn();
     const container = mount(
@@ -244,11 +358,10 @@ describe("renderPluginCatalogResults", () => {
     expect(onCategoryChange).toHaveBeenCalledWith("tools");
   });
 
-  it("preserves every catalog result under Uncategorized when category metadata is unavailable", () => {
+  it("preserves every catalog result under Uncategorized without category metadata", () => {
     const container = mount(
       baseProps({
         categories: [],
-        categoriesError: "Category metadata unavailable",
         result: {
           items: Array.from({ length: 10 }, (_, index) => plugin(`catalog-result-${index}`)),
         },
@@ -292,7 +405,7 @@ describe("renderPluginCatalogResults", () => {
     expect(uncategorized?.querySelector('[data-plugin-id="unmatched"]')).not.toBeNull();
   });
 
-  it("shows exactly one top-right status or install action and omits download counts", () => {
+  it("shows exactly one top-right status or install action and omits download counts", async () => {
     const onInstall = vi.fn();
     const installed = plugin("installed", {
       local: {
@@ -315,9 +428,30 @@ describe("renderPluginCatalogResults", () => {
     expect(installedCard?.querySelector("button")).toBeNull();
     const availableCard = container.querySelector('[data-plugin-id="available"]');
     const availableAction = availableCard?.querySelector(".plugin-catalog-card__action");
+    await availableAction?.querySelector("openclaw-plugin-install-action")?.updateComplete;
     expect(availableAction?.querySelectorAll("button")).toHaveLength(1);
     expect(container.querySelector(".plugin-download-count")).toBeNull();
     availableAction?.querySelector<HTMLButtonElement>("button")?.click();
     expect(onInstall).toHaveBeenCalledWith("available");
+  });
+
+  it("retains install progress when the catalog publishes installed status before the final response", async () => {
+    const entry = plugin("published", {
+      local: { present: true, installed: true, enabled: true, state: "enabled", action: "manage" },
+    });
+    const props = baseProps({ query: "published", result: { items: [entry] } });
+    const container = mount({
+      ...props,
+      installProgress: new Map([["install:published", { startedAt: Date.now(), activities: [] }]]),
+    });
+    const action = container.querySelector("openclaw-plugin-install-action");
+    await action?.updateComplete;
+    expect(action?.textContent).toContain("Installing");
+    expect(container.querySelector('[aria-label="Enabled"]')).toBeNull();
+    action?.querySelector("button")?.click();
+    expect(props.onInstall).not.toHaveBeenCalled();
+    render(renderPluginCatalogResults(props), container);
+    expect(container.querySelector("openclaw-plugin-install-action")).toBeNull();
+    expect(container.querySelector('[aria-label="Enabled"]')).not.toBeNull();
   });
 });

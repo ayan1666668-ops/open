@@ -7,7 +7,7 @@ import {
   validatePluginApprovalRequestParams,
   validatePluginApprovalResolveParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { sanitizeApprovalScope, type ApprovalScope } from "../../infra/approval-scope.js";
+import { sanitizeApprovalScope } from "../../infra/approval-scope.js";
 import type { ExecApprovalForwarder } from "../../infra/exec-approval-forwarder.js";
 import {
   exceedsApprovalTextLimit,
@@ -57,11 +57,11 @@ export function createPluginApprovalHandlers(
     "plugin.approval.list": async ({ respond, client, context }) => {
       respond(
         true,
-        listVisiblePendingApprovalRequests({
+        await listVisiblePendingApprovalRequests({
           manager,
           client,
           approvalKind: "plugin",
-          ...(client?.authenticatedUserProfile ? { cfg: context.getRuntimeConfig() } : {}),
+          ...(client?.authenticatedUserProfile ? { getCfg: context.getRuntimeConfig } : {}),
         }),
         undefined,
       );
@@ -77,27 +77,7 @@ export function createPluginApprovalHandlers(
       ) {
         return;
       }
-      const p = params as {
-        pluginId?: string | null;
-        title: string;
-        description: string;
-        detail?: string | null;
-        severity?: string | null;
-        scope?: ApprovalScope | null;
-        toolName?: string | null;
-        toolCallId?: string | null;
-        mcpTool?: { server: string; tool: string };
-        allowedDecisions?: string[] | null;
-        agentId?: string | null;
-        sessionKey?: string | null;
-        approvalReviewerDeviceIds?: string[] | null;
-        turnSourceChannel?: string | null;
-        turnSourceTo?: string | null;
-        turnSourceAccountId?: string | null;
-        turnSourceThreadId?: string | number | null;
-        timeoutMs?: number;
-        twoPhase?: boolean;
-      };
+      const p = params;
       const twoPhase = p.twoPhase === true;
       const timeoutMs = resolvePluginApprovalTimeoutMs(p.timeoutMs);
       const trustedAgentRuntime = client?.internal?.agentRuntimeIdentity;
@@ -248,14 +228,14 @@ export function createPluginApprovalHandlers(
         });
       }
 
-      const decisionPromise = registerPendingApprovalRecord({
+      const registration = await registerPendingApprovalRecord({
         manager,
         record,
         timeoutMs,
         respond,
         context,
       });
-      if (!decisionPromise) {
+      if (!registration) {
         return;
       }
 
@@ -277,7 +257,7 @@ export function createPluginApprovalHandlers(
         manager,
         inputId: (params as { id?: string }).id,
         client,
-        ...(client?.authenticatedUserProfile ? { cfg: context.getRuntimeConfig() } : {}),
+        ...(client?.authenticatedUserProfile ? { getCfg: context.getRuntimeConfig } : {}),
         respond,
       });
     },

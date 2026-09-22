@@ -7,10 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertNoUnmigratedWorkspaceState } from "../agents/workspace-legacy-state.js";
 import { readWorkspaceStateSnapshot } from "../agents/workspace-state-store.js";
 import { runCommandWithRuntime } from "../cli/cli-utils.js";
-import {
-  maybeStopManagedServiceBeforeMutableUpdate,
-  resolvePreparedGatewayUpdatePolicy,
-} from "../cli/update-cli/update-command-service-maintenance.js";
+import { maybeStopManagedServiceBeforeMutableUpdate } from "../cli/update-cli/update-command-service-maintenance.js";
 import { collectSecurityWarnings } from "../commands/doctor-security.js";
 import { noteSessionTranscriptHealth } from "../commands/doctor-session-transcripts.js";
 import { resolveSqliteTargetFromSessionStorePath } from "../config/sessions/session-sqlite-target.js";
@@ -23,6 +20,7 @@ import {
 } from "../infra/exec-approvals-sqlite.js";
 import { loadExecApprovalsReadOnly } from "../infra/exec-approvals-store.js";
 import { acquireGatewayLock } from "../infra/gateway-lock.js";
+import { openNodeSqliteDatabase } from "../infra/node-sqlite.js";
 import {
   resolveStateDatabaseCoordinatorPath,
   resolveStateLifecycleRuntimeDirectory,
@@ -47,27 +45,35 @@ import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
   OPENCLAW_AGENT_SCHEMA_VERSION,
+  resolveOpenClawAgentSqlitePath,
 } from "../state/openclaw-agent-db.js";
+import { removeCanonicalValidationFromHistoricalAgentFixture } from "../state/openclaw-agent-db.test-support.js";
 import { withLegacySessionParticipantsSchema } from "../state/openclaw-agent-participants-migration.js";
+import { seedOpenClawAgentSchemaV21 } from "../state/openclaw-agent-schema-v21.test-support.js";
 import { sessionParticipantsSchemaSql } from "../state/openclaw-agent-session-participants-schema.js";
 import { openOpenClawStateDatabase } from "../state/openclaw-state-db.js";
 import { resolveOpenClawStateSqlitePath } from "../state/openclaw-state-db.paths.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
-import type { DoctorHealthFlowContext } from "./doctor-health-contributions.js";
 import { runDoctorHealthFlow } from "./doctor-health.js";
 
-const postInstallAdvisory: NonNullable<DoctorHealthFlowContext["postInstallDoctorResult"]> = {
-  status: "advisory",
-  advisory: {
-    kind: "package-post-install-doctor",
-    message: "recoverable plugin repair",
-    reason: "deferred-configured-plugin-repair",
-    details: ["plugin repair deferred"],
-  },
-};
-
 const support = await import("./doctor-health.test-support.js");
-const { mocks, registerDoctorConfigReceiptTests } = support;
+const { mocks, registerDoctorConfigReceiptTests, postInstallAdvisory } = support;
+
+function openHistoricalAgentDatabase(options: {
+  agentId: string;
+  env: NodeJS.ProcessEnv;
+  path?: string;
+}) {
+  const databasePath = resolveOpenClawAgentSqlitePath(options);
+  fs.mkdirSync(path.dirname(databasePath), { recursive: true });
+  const db = openNodeSqliteDatabase(databasePath);
+  seedOpenClawAgentSchemaV21(db, options.agentId);
+  removeCanonicalValidationFromHistoricalAgentFixture(db);
+  db.exec(
+    "DROP TABLE session_participants; PRAGMA user_version = 17; UPDATE schema_meta SET schema_version = 17;",
+  );
+  return { db, path: databasePath };
+}
 
 describe("runDoctorHealthFlow", () => {
   afterEach(() => vi.unstubAllEnvs());
@@ -88,39 +94,8 @@ describe("runDoctorHealthFlow", () => {
     mocks.writeUpdatePostInstallDoctorResult.mockClear();
   });
 
-  it.each(
-    [
-      "inspection-failed",
-      "runtime-only",
-      "owned-unknown",
-      "foreign-running",
-      "foreign-unknown",
-      "foreign-stopped",
-      "foreign-stopped-loaded",
-      "foreign-stopped-loaded-disabled",
-      "foreign-stopped-loaded-unknown",
-      "foreign-respawning",
-      "unresolved-running",
-      "unresolved-unknown",
-      "unresolved-stopped",
-      "unresolved-stopped-loaded",
-      "unresolved-respawning",
-      "absent",
-      "absent-unknown",
-      "absent-busy-port",
-      "absent-unknown-port",
-      "windows-ready",
-      "windows-disabled",
-      "windows-queued",
-      "windows-running",
-      "windows-startup-stopped",
-      "windows-startup-unknown",
-    ].flatMap((kind) => [
-      { kind, updateParent: false },
-      { kind, updateParent: true },
-    ]),
-  )(
-    "admits offline state repair only after safe service inspection: $kind (update=$updateParent)",
+  it.each(support.doctorServiceInspectionCases)(
+    "admits state repair without claiming unavailable service authority: $kind (update=$updateParent)",
     async ({ kind, updateParent }) => {
       if (updateParent) {
         for (const [key, value] of Object.entries(
@@ -139,6 +114,21 @@ describe("runDoctorHealthFlow", () => {
       mocks.emulateNativeInstall = kind !== "runtime-only";
       mocks.servicePlatform = windows ? "win32" : undefined;
       await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
+        const inspectionUnavailable =
+          kind.startsWith("unresolved") ||
+          [
+            "inspection-failed",
+            "owned-unknown",
+            "foreign-unknown",
+            "absent-unknown",
+            "absent-busy-port",
+            "absent-unknown-port",
+          ].includes(kind) ||
+          (kind === "foreign-respawning" && process.platform === "linux");
+        const resultPath = state.path("doctor-result.json");
+        if (updateParent) {
+          vi.stubEnv("OPENCLAW_UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH", resultPath);
+        }
         const cfg: OpenClawConfig = {
           agents: { ownership: "explicit", entries: { main: { workspace: state.workspaceDir } } },
         };
@@ -234,7 +224,7 @@ describe("runDoctorHealthFlow", () => {
           const result = await migrateLegacyWorkspaceState({
             stateDir: state.stateDir,
             env: state.env,
-            detected: detectLegacyWorkspaceState({
+            detected: await detectLegacyWorkspaceState({
               cfg: ctx.cfg,
               stateDir: state.stateDir,
               env: state.env,
@@ -247,21 +237,34 @@ describe("runDoctorHealthFlow", () => {
         const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
         const run = runDoctorHealthFlow(runtime, { repair: true, nonInteractive: true });
         if (
+          inspectionUnavailable ||
           kind === "runtime-only" ||
           kind.endsWith("stopped") ||
           (kind.includes("stopped-loaded") && process.platform !== "darwin") ||
           kind === "absent" ||
           kind === "windows-ready" ||
           kind === "windows-disabled" ||
-          kind.endsWith("loaded-disabled")
+          (kind.endsWith("loaded-disabled") && process.platform !== "darwin")
         ) {
           await run;
-          expect(readWorkspaceStateSnapshot(state.workspaceDir).setup.setupCompletedAt).toBe(
-            completedAt,
-          );
+          expect(
+            (await readWorkspaceStateSnapshot(state.workspaceDir)).setup.setupCompletedAt,
+          ).toBe(completedAt);
           expect(fs.existsSync(sourcePath)).toBe(false);
           expect(mocks.outro).toHaveBeenCalledWith("Doctor complete.");
-          if (kind !== "absent" && kind !== "runtime-only") {
+          if (inspectionUnavailable) {
+            const action = "Restart the Gateway you launched manually after the update.";
+            expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining(action));
+            if (updateParent) {
+              expect(mocks.writeUpdatePostInstallDoctorResult).toHaveBeenCalledWith({
+                resultPath,
+                result: expect.objectContaining({
+                  status: "ok",
+                  warnings: expect.arrayContaining([expect.stringContaining(action)]),
+                }),
+              });
+            }
+          } else if (kind !== "absent" && kind !== "runtime-only") {
             expect(runtime.log).toHaveBeenCalledWith(
               expect.stringContaining("stopped Gateway service was left unchanged"),
             );
@@ -374,15 +377,12 @@ describe("runDoctorHealthFlow", () => {
             JSON.stringify({ version: 1, setupCompletedAt: "2026-07-15T00:00:00.000Z" }),
           );
         }
-        const initial = openOpenClawAgentDatabase({ agentId: "main", env: state.env });
-        const secondary = openOpenClawAgentDatabase({ agentId: "research", env: state.env });
+        const open = clean ? openOpenClawAgentDatabase : openHistoricalAgentDatabase;
+        const initial = open({ agentId: "main", env: state.env });
+        const secondary = open({ agentId: "research", env: state.env });
         if (!clean) {
-          secondary.db.exec(
-            "DROP TABLE session_participants; PRAGMA user_version = 17; UPDATE schema_meta SET schema_version = 17;",
-          );
-          initial.db.exec(
-            "DROP TABLE session_participants; PRAGMA user_version = 17; UPDATE schema_meta SET schema_version = 17;",
-          );
+          secondary.db.close();
+          initial.db.close();
         }
         closeOpenClawAgentDatabasesForTest();
         const leaseId = claimOpenClawAgentDatabaseLease({
@@ -393,6 +393,8 @@ describe("runDoctorHealthFlow", () => {
         const agentBefore = fs.readFileSync(initial.path);
         const events: string[] = [];
         let running = outcome !== "update-no-restart-stopped";
+        const pid = outcome === "ancestor-blocked" ? process.pid : 4200;
+        mocks.resident.mockImplementation(() => (running ? { pid } : undefined));
         const packageRoot = process.cwd();
         mocks.packageRoot.mockReturnValue(packageRoot);
         const command = {
@@ -433,7 +435,7 @@ describe("runDoctorHealthFlow", () => {
           readRuntime: async () => ({
             status: running ? "running" : "stopped",
             systemd: { managerUid: process.getuid?.() ?? 2001 },
-            ...(outcome === "ancestor-blocked" ? { pid: process.pid } : {}),
+            ...(running ? { pid } : {}),
           }),
           readLoadState: async () => ({ status: running ? "loaded" : "not-loaded" }),
           isLoaded: async () => running,
@@ -482,7 +484,7 @@ describe("runDoctorHealthFlow", () => {
             const migration = await migrateLegacyWorkspaceState({
               stateDir: state.stateDir,
               env: state.env,
-              detected: detectLegacyWorkspaceState({
+              detected: await detectLegacyWorkspaceState({
                 cfg: ctx.cfg,
                 stateDir: state.stateDir,
                 env: state.env,
@@ -494,9 +496,9 @@ describe("runDoctorHealthFlow", () => {
               },
             });
             expect(migration.warnings.join("\n")).toContain("legacy cleanup failed");
-            expect(readWorkspaceStateSnapshot(state.workspaceDir).setup.setupCompletedAt).toBe(
-              "2026-07-15T00:00:00.000Z",
-            );
+            expect(
+              (await readWorkspaceStateSnapshot(state.workspaceDir)).setup.setupCompletedAt,
+            ).toBe("2026-07-15T00:00:00.000Z");
           }
         });
         const runtime = { log: vi.fn(), error: vi.fn(), exit: vi.fn() };
@@ -534,12 +536,13 @@ describe("runDoctorHealthFlow", () => {
             expect(events).toEqual(parentRestarts ? ["stop"] : []);
             events.length = 0;
             stop.mockClear();
-            const policy = resolvePreparedGatewayUpdatePolicy(prepared, parentRestarts);
-            expect(policy).toEqual({
-              allowGatewayServiceRepair: true,
-              allowGatewayActivation: parentRestarts,
-            });
-            for (const [key, value] of Object.entries(buildUpdateDoctorEnv(policy))) {
+            // Published parents grant repair; the candidate still owns maintenance inspection.
+            for (const [key, value] of Object.entries(
+              buildUpdateDoctorEnv({
+                allowGatewayServiceRepair: true,
+                allowGatewayActivation: parentRestarts,
+              }),
+            )) {
               vi.stubEnv(key, value);
             }
           } else if (outcome === "update-legacy") {
@@ -647,47 +650,14 @@ describe("runDoctorHealthFlow", () => {
     },
   );
 
-  registerDoctorConfigReceiptTests(runDoctorHealthFlow, postInstallAdvisory);
-
-  it("reports a cron ownership refusal instead of a recoverable post-install advisory", async () => {
-    mocks.runContributions.mockImplementation(async (ctx) => {
-      ctx.configWriteRefusal = "cron-owner-safety";
-      ctx.postInstallDoctorResult = postInstallAdvisory;
-    });
-    const runtime = {
-      log: vi.fn(),
-      error: vi.fn(),
-      exit: vi.fn(),
-    };
-    vi.stubEnv(
-      "OPENCLAW_UPDATE_POST_INSTALL_DOCTOR_RESULT_PATH",
-      "/tmp/openclaw-update-doctor-result.json",
-    );
-
-    try {
-      await runDoctorHealthFlow(runtime, {});
-    } finally {
-      vi.unstubAllEnvs();
-    }
-
-    expect(mocks.outro).toHaveBeenCalledWith("Doctor finished, but config fixes were not applied.");
-    expect(mocks.outro).not.toHaveBeenCalledWith("Doctor complete.");
-    expect(runtime.exit).toHaveBeenCalledWith(1);
-    expect(runtime.exit).not.toHaveBeenCalledWith(86);
-    expect(mocks.writeUpdatePostInstallDoctorResult).toHaveBeenCalledWith({
-      resultPath: "/tmp/openclaw-update-doctor-result.json",
-      result: { status: "error", configHash: "unchanged" },
-    });
-  });
+  registerDoctorConfigReceiptTests(runDoctorHealthFlow);
 
   it.each([{ repair: true }, { yes: true }])(
     "refuses blocked required migration for %j, then completes after the writer releases",
     async (options) => {
       await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
-        const initial = openOpenClawAgentDatabase({ agentId: "main", env: state.env });
-        initial.db.exec(
-          "DROP TABLE session_participants; PRAGMA user_version = 17; UPDATE schema_meta SET schema_version = 17;",
-        );
+        const initial = openHistoricalAgentDatabase({ agentId: "main", env: state.env });
+        initial.db.close();
         closeOpenClawAgentDatabasesForTest();
         const before = fs.readFileSync(initial.path);
         const leaseId = claimOpenClawAgentDatabaseLease({
@@ -720,14 +690,23 @@ describe("runDoctorHealthFlow", () => {
           );
           expect(runtime.exit).toHaveBeenCalledExactlyOnceWith(1);
           expect(runtime.error).toHaveBeenCalledWith(
-            expect.stringMatching(
-              /Doctor could not enter maintenance.*Agent main database is still open.*stop that process/,
-            ),
+            "Doctor could not enter maintenance. An agent database is in use. Stop other OpenClaw processes using this state, then retry the update.",
           );
           expect(maintenanceOutcome()).toEqual({ outcome: "startup_failed" });
           expect(mocks.writeUpdatePostInstallDoctorResult).toHaveBeenCalledWith({
             resultPath: state.path("advisory.json"),
-            result: { status: "error", configHash: "unchanged" },
+            result: {
+              status: "error",
+              configHash: "unchanged",
+              failureFacts: [
+                {
+                  check: "doctor",
+                  code: "agent-database-lease-active",
+                  message:
+                    "Doctor could not enter maintenance. An agent database is in use. Stop other OpenClaw processes using this state, then retry the update.",
+                },
+              ],
+            },
           });
           expect(mocks.outro).not.toHaveBeenCalledWith("Doctor complete.");
           expect(fs.readFileSync(initial.path)).toEqual(before);
@@ -771,18 +750,16 @@ describe("runDoctorHealthFlow", () => {
               env: state.env,
             }).path
           : undefined;
-        const initial = openOpenClawAgentDatabase({
+        const initial = openHistoricalAgentDatabase({
           agentId: "main",
           env: state.env,
           ...(configuredPath ? { path: configuredPath } : {}),
         });
-        initial.db.exec(
-          "DROP TABLE session_participants; PRAGMA user_version = 17; UPDATE schema_meta SET schema_version = 17;",
-        );
         initial.db.exec(withLegacySessionParticipantsSchema(sessionParticipantsSchemaSql()));
         initial.db.exec(
           "CREATE INDEX unknown_participant_dependency ON session_participants(actor_id);",
         );
+        initial.db.close();
         closeOpenClawAgentDatabasesForTest();
         unregisterOpenClawAgentDatabase({ agentId: "main", path: initial.path, env: state.env });
         const before = fs.readFileSync(initial.path);
@@ -803,7 +780,11 @@ describe("runDoctorHealthFlow", () => {
         );
         expect(runtime.exit).toHaveBeenCalledExactlyOnceWith(1);
         expect(runtime.error).toHaveBeenCalledWith(
-          expect.stringMatching(/Doctor.*database readiness.*schema version 17/),
+          [
+            "Doctor could not complete repair because persisted database readiness could not be verified:",
+            `agent ${initial.path}: OpenClaw agent database ${initial.path} uses schema version 17; run openclaw doctor --fix before compacting it.`,
+            "Stop OpenClaw processes, then restore the affected database from a verified backup.",
+          ].join("\n"),
         );
         expect(mocks.outro).not.toHaveBeenCalledWith("Doctor complete.");
         expect(fs.readFileSync(initial.path)).toEqual(before);
@@ -951,7 +932,7 @@ describe("runDoctorHealthFlow", () => {
           const result = await migrateLegacyWorkspaceState({
             stateDir: state.stateDir,
             env: state.env,
-            detected: detectLegacyWorkspaceState({
+            detected: await detectLegacyWorkspaceState({
               cfg: ctx.cfg,
               stateDir: state.stateDir,
               env: state.env,
@@ -973,7 +954,7 @@ describe("runDoctorHealthFlow", () => {
           runDoctorHealthFlow(runtime, { repair: true, nonInteractive: true }),
         );
         expect(runtime.log).toHaveBeenCalledWith(expect.stringContaining("legacy cleanup failed"));
-        expect(readWorkspaceStateSnapshot(workspaceDir).setup.setupCompletedAt).toBe(
+        expect((await readWorkspaceStateSnapshot(workspaceDir)).setup.setupCompletedAt).toBe(
           "2026-07-15T00:00:00.000Z",
         );
         expect(fs.existsSync(`${sourcePath}.doctor-importing`)).toBe(true);

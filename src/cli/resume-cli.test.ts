@@ -131,6 +131,22 @@ describe("resolveResumeSession", () => {
       },
     },
     {
+      name: "ambiguous substrings preserve order and exclude fuzzy-only candidates",
+      query: "plan",
+      rows: [
+        { key: "agent:main:one", displayName: "Annual planning" },
+        { key: "agent:main:two", displayName: "Plan" },
+        { key: "agent:main:three", displayName: "Personal learning" },
+      ],
+      expected: { kind: "ambiguous", keys: ["agent:main:one", "agent:main:two"] },
+    },
+    {
+      name: "ambiguous fuzzy matches retain score order",
+      query: "pln",
+      rows: sessions,
+      expected: { kind: "ambiguous", keys: ["agent:work:beta", "agent:main:alpha"] },
+    },
+    {
       name: "no match",
       query: "unrelated-session-name",
       rows: sessions,
@@ -463,15 +479,21 @@ describe("resume command registration", () => {
 
 describe("real Gateway session boundary", () => {
   let harness: Awaited<ReturnType<typeof startMinimalRealGateway>>;
+  let closeHarness: (() => Promise<void>) | undefined;
 
   beforeAll(async () => {
-    harness = await startMinimalRealGateway([
-      { agentId: "work", key: "agent:work:global", visibility: "shared" },
-      { agentId: "main", key: "agent:main:alpha" },
-    ]);
+    harness = await startMinimalRealGateway({
+      sessions: [
+        { agentId: "work", key: "agent:work:global", visibility: "shared" },
+        { agentId: "main", key: "agent:main:alpha" },
+      ],
+      registerCleanup: (cleanup) => {
+        closeHarness = cleanup;
+      },
+    });
   });
 
-  afterAll(() => harness.close());
+  afterAll(() => closeHarness?.());
 
   it("preserves an agent-qualified global session through the TUI handoff", async () => {
     const { GatewayChatClient } =
@@ -594,7 +616,7 @@ describe("real Gateway session boundary", () => {
       clientVersion: "test",
       platform: "test",
       mode: GATEWAY_CLIENT_MODES.NODE,
-      deviceIdentity: harness.createDeviceIdentity("reconnect"),
+      deviceIdentity: await harness.createDeviceIdentity("reconnect"),
       hostDeps: {
         loadDeviceAuthToken: () => authState.value,
         storeDeviceAuthToken,

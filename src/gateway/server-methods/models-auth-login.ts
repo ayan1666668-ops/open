@@ -3,24 +3,28 @@ import {
   errorShape,
   validateSystemAgentSetupAuthStartParams,
 } from "../../../packages/gateway-protocol/src/index.js";
-import { runModelsAuthLoginFlowCore } from "../../commands/models/auth.js";
+import {
+  completeProviderModelAccess,
+  type PreparedProviderModelAccess,
+} from "../../commands/models/auth-model-policy.js";
+import { runModelsAuthLoginFlowForGateway } from "../../commands/models/auth.js";
 import { resolveManifestDeclaredProviderAuthChoices } from "../../plugins/provider-auth-choices.js";
 import {
   formatProviderLoginChoiceRef,
   isProviderLoginChoiceStartable,
 } from "../../plugins/provider-login-options.js";
 import { createNonExitingRuntime } from "../../runtime.js";
-import { WizardSession } from "../../wizard/session.js";
-import { bindWizardLoginOwner } from "../server-wizard-sessions.js";
-import { refreshModelAuthStateAfterMutation } from "./models-auth-refresh.js";
 import {
-  createAdmittedWizardSession,
-  respondSetupAdmissionBusy,
-  whenAdmittedWizardSessionSettled,
-} from "./setup-admission.js";
+  ProviderAuthConfigApplyError,
+  ProviderCredentialsSavedError,
+} from "../../shared/provider-auth-result.js";
+import { WizardSession } from "../../wizard/session.js";
+import { refreshModelAuthStateAfterMutation } from "../model-auth-refresh.js";
+import { createProviderBrowserAuthSession } from "../provider-browser-auth.js";
 import { rejectExistingSetupWizardSession } from "./system-agent-setup-wizard.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { assertValidParams } from "./validation.js";
+import { startWizardLogin } from "./wizard-login.js";
 
 export const modelsAuthLoginHandlers: GatewayRequestHandlers = {
   "models.authLogin": async ({ params, respond, context, client }) => {
@@ -84,70 +88,101 @@ export const modelsAuthLoginHandlers: GatewayRequestHandlers = {
         throw new Error("That provider login is no longer available.");
       }
     };
-    const session = await createAdmittedWizardSession(() => {
-      assertCurrent();
-      return new WizardSession(
-        async (prompter, signal, runner) => {
-          const result = await runModelsAuthLoginFlowCore({
-            provider: choice.providerId,
-            method: choice.methodId,
-            ownerPluginId: choice.pluginId,
-            credentialOnly: true,
-            agent: params.agentId,
-            config: context.getRuntimeConfig(),
-            runtime: createNonExitingRuntime(),
-            prompter,
-            signal,
-            isRemote: true,
-            openUrl: async (url) => {
-              assertCurrent();
+    await startWizardLogin({
+      client,
+      context,
+      sessionId: params.sessionId,
+      respond,
+      assertCurrent,
+      createSession: () =>
+        new WizardSession(
+          async (prompter, signal, runner) => {
+            const runtime = createNonExitingRuntime();
+            let modelAccess: PreparedProviderModelAccess | undefined;
+            const openUrl = async (url: string) => {
+              assertFlowCurrent();
               await prompter.openUrl?.(url);
-            },
-            assertCurrent: () => {
+              assertFlowCurrent();
+            };
+            const browser = client.browserOrigin
+              ? createProviderBrowserAuthSession({
+                  signal,
+                  openUrl,
+                  browserOrigin: client.browserOrigin,
+                })
+              : undefined;
+            const assertFlowCurrent = () => {
               signal.throwIfAborted();
               assertCurrent();
-            },
-            beforePersistentEffect: () => {
+              browser?.assertCurrent();
+            };
+            let result: Awaited<ReturnType<typeof runModelsAuthLoginFlowForGateway>>;
+            try {
+              result = await runModelsAuthLoginFlowForGateway({
+                provider: choice.providerId,
+                method: choice.methodId,
+                ownerPluginId: choice.pluginId,
+                credentialOnly: true,
+                onModelAccessRequested: (request) => {
+                  modelAccess = request;
+                },
+                agent: params.agentId,
+                config: context.getRuntimeConfig(),
+                runtime,
+                prompter,
+                signal: browser?.signal ?? signal,
+                isRemote: true,
+                openUrl,
+                browserAuthorization: browser?.available ? browser.authorize : undefined,
+                assertCurrent: assertFlowCurrent,
+                beforePersistentEffect: () => {
+                  assertFlowCurrent();
+                  runner.lockCancellationForPreparation();
+                },
+                refreshAfterLogin: (agentId) =>
+                  refreshModelAuthStateAfterMutation(context.getRuntimeConfig, agentId),
+              });
+              if (result.profiles.length === 0) {
+                throw new Error(`${choice.choiceLabel} did not return a credential profile.`);
+              }
+            } finally {
+              browser?.close();
+            }
+            const assertModelAccessCurrent = () => {
               signal.throwIfAborted();
               assertCurrent();
-              runner.lockCancellation();
-            },
-            refreshAfterLogin: (agentId) =>
-              refreshModelAuthStateAfterMutation(context, "login", agentId),
-          });
-          if (result.profiles.length === 0) {
-            throw new Error(`${choice.choiceLabel} did not return a credential profile.`);
-          }
-        },
-        { timeoutMs: 25 * 60_000 },
-      );
+            };
+            let modelAccessOutcome: Awaited<ReturnType<typeof completeProviderModelAccess>>;
+            try {
+              modelAccessOutcome = await completeProviderModelAccess({
+                prepared: modelAccess,
+                prompter,
+                runtime,
+                assertCurrent: assertModelAccessCurrent,
+                beforeCommit: () => {
+                  assertModelAccessCurrent();
+                  runner.lockCancellation();
+                },
+              });
+            } catch (error) {
+              throw new ProviderAuthConfigApplyError(error);
+            }
+            if (
+              modelAccessOutcome.kind === "saved" &&
+              modelAccessOutcome.application !== "applied"
+            ) {
+              throw new ProviderCredentialsSavedError(
+                "Your sign-in and model access were saved, but OpenClaw has not confirmed that model access is active. Close this dialog. Open Settings and select Apply changes, then send /models.",
+              );
+            }
+            if (result.authRefresh !== "refreshed") {
+              throw new ProviderCredentialsSavedError(
+                "Your sign-in was saved, but the connection update could not be confirmed. Send /login refresh in chat to try again.",
+              );
+            }
+          },
+          { timeoutMs: 25 * 60_000 },
+        ),
     });
-    if (!session) {
-      respondSetupAdmissionBusy(respond);
-      return;
-    }
-    // Admission can yield. Never publish a late session for a disconnected owner.
-    if (client.invalidated || client.connectionSignal?.aborted) {
-      session.close(new Error("Provider login connection closed."));
-      await whenAdmittedWizardSessionSettled(session);
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "Provider login connection closed."),
-      );
-      return;
-    }
-    bindWizardLoginOwner(session, client);
-    context.wizardSessions.set(params.sessionId, session);
-    const cancel = () => session.close(new Error("Provider login connection closed."));
-    client.connectionSignal?.addEventListener("abort", cancel, { once: true });
-    const settled = () => {
-      client.connectionSignal?.removeEventListener("abort", cancel);
-      if (client.connectionSignal?.aborted || client.invalidated) {
-        context.purgeWizardSession(params.sessionId);
-      }
-    };
-    void whenAdmittedWizardSessionSettled(session).then(settled, settled);
-    respond(true, { sessionId: params.sessionId, done: false, status: "running" }, undefined);
   },
 };

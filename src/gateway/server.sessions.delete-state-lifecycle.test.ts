@@ -18,8 +18,14 @@ import {
   onSessionIdentityMutation,
   type SessionIdentityMutation,
 } from "../sessions/session-lifecycle-events.js";
-import { closeOpenClawAgentDatabasesForTest } from "../state/openclaw-agent-db.js";
-import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import {
+  closeOpenClawAgentDatabasesAsync,
+  closeOpenClawAgentDatabasesForTest,
+} from "../state/openclaw-agent-db.js";
+import {
+  closeOpenClawStateDatabaseAsync,
+  closeOpenClawStateDatabaseForTest,
+} from "../state/openclaw-state-db.js";
 import { getSessionRepositoryWorkspaceStore } from "../state/session-repository-workspaces.js";
 import { loadGatewayWorkerEnvironmentStartupState } from "./server-worker-environment-startup.js";
 import type { SessionCompanionAskDeps } from "./session-companion-ask.js";
@@ -54,13 +60,15 @@ const {
 } = setupGatewaySessionsHandlerTestHarness();
 const companions = new Set<SessionCompanionService>();
 
-afterEach(() => {
+afterEach(async () => {
   for (const companion of companions) {
     companion.dispose();
   }
   companions.clear();
   vi.restoreAllMocks();
+  await closeOpenClawAgentDatabasesAsync();
   closeOpenClawAgentDatabasesForTest();
+  await closeOpenClawStateDatabaseAsync();
   closeOpenClawStateDatabaseForTest();
 });
 
@@ -182,7 +190,7 @@ test("sessions.delete removes the session board from its agent database", async 
     }),
     env: process.env,
   });
-  store.putWidget({
+  await store.putWidget({
     sessionKey,
     name: "status",
     content: { kind: "html", html: "ok" },
@@ -194,7 +202,7 @@ test("sessions.delete removes the session board from its agent database", async 
 
   expect(deleted.ok).toBe(true);
   expect(deleted.payload?.deleted).toBe(true);
-  expect(store.getSnapshot({ sessionKey })).toEqual({
+  expect(await store.getSnapshot({ sessionKey })).toEqual({
     sessionKey,
     revision: 0,
     tabs: [],

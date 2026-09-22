@@ -117,7 +117,7 @@ export async function releaseCodexAppServerBindingSubscription(
   options: { allowUntracked?: boolean; assertCurrent?: () => void } = {},
 ): Promise<void> {
   options.assertCurrent?.();
-  const clientLease = retainSharedCodexAppServerClientByInstanceId(binding.clientId);
+  const clientLease = await retainSharedCodexAppServerClientByInstanceId(binding.clientId);
   if (!clientLease) {
     return;
   }
@@ -154,7 +154,9 @@ export async function releaseCodexAppServerBindingSubscription(
       );
     }
   } finally {
-    clientLease.release();
+    await clientLease.release(
+      !isCodexAppServerLiveThreadClaimed(clientLease.client, binding.threadId),
+    );
   }
 }
 

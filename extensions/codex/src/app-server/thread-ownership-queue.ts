@@ -1,3 +1,4 @@
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { resolveGlobalSingleton } from "openclaw/plugin-sdk/global-singleton";
 import { KeyedAsyncQueue } from "openclaw/plugin-sdk/keyed-async-queue";
 
@@ -16,32 +17,34 @@ export async function withCodexAppServerThreadMutation<T>(
   return await nativeThreadOwners.enqueue(`thread:${threadId}`, run);
 }
 
-/** Runs a mutation while retaining the lane after an uncertain cleanup. */
-export function withCodexAppServerThreadMutationHold<T>(
+/** Queued cancellation settles the caller without letting successors overtake its lane. */
+export async function withCodexAppServerThreadMutationHold<T>(
   threadId: string,
   run: (hold: (until: Promise<unknown>) => void) => Promise<T>,
+  signal?: AbortSignal,
 ): Promise<T> {
-  let resolveResult!: (value: T | PromiseLike<T>) => void;
-  let rejectResult!: (reason?: unknown) => void;
-  const result = new Promise<T>((resolve, reject) => {
-    resolveResult = resolve;
-    rejectResult = reject;
-  });
-  let heldUntil: Promise<unknown> | undefined;
+  signal?.throwIfAborted();
+  const { promise, resolve, reject } = createDeferred<T>();
+  const abort = () =>
+    reject(signal?.reason instanceof Error ? signal.reason : new Error("compaction aborted"));
+  signal?.addEventListener("abort", abort, { once: true });
   const queued = nativeThreadOwners.enqueue(`thread:${threadId}`, async () => {
+    signal?.removeEventListener("abort", abort);
+    let heldUntil: Promise<unknown> | undefined;
     try {
-      resolveResult(
+      signal?.throwIfAborted();
+      resolve(
         await run((until) => {
           heldUntil ??= until;
         }),
       );
     } catch (error) {
-      rejectResult(error);
+      reject(error);
     }
     await heldUntil;
   });
-  void queued.catch((error: unknown) => rejectResult(error));
-  return result;
+  void queued.catch(reject);
+  return promise;
 }
 
 /** Serializes bound turns and retirement so detach cannot unsubscribe an active turn. */
