@@ -9,8 +9,9 @@ import {
   listNativeHookRelayBridgeSnapshotsInDatabase,
 } from "../agents/harness/native-hook-relay-store.kernel.js";
 import { executeNativeHookRelayMutation } from "../agents/harness/native-hook-relay-store.worker.js";
+import { readMcpOAuthStoreInDatabase } from "../agents/mcp-oauth-store.kernel.js";
 import { writeSubagentRunValuesInDatabase } from "../agents/subagents/registry/subagent-registry.store.kernel.js";
-import { listRegistryWorktreesInDatabase } from "../agents/worktrees/registry-read.kernel.js";
+import * as worktreeRegistry from "../agents/worktrees/registry-read.kernel.js";
 import { listAuditEventsInDatabase } from "../audit/audit-event-read.kernel.js";
 import { executeAuditWriterCommand } from "../audit/audit-event-writer.worker.js";
 import { readClawInstallSchemaVersionRows } from "../claws/provenance-runtime-read.kernel.js";
@@ -32,7 +33,13 @@ import {
   listManagedImageRecordEntriesInDatabase,
   listManagedImageOriginalMediaIdsInDatabase,
 } from "../gateway/managed-image-record-store.kernel.js";
+import {
+  executeOperatorApprovalCommand,
+  isOperatorApprovalCommand,
+} from "../gateway/operator-approval-store.worker.js";
 import { registerSessionGroupInDatabase } from "../gateway/session-group-registration.kernel.js";
+import { isWorkerEnvironmentCommand } from "../gateway/worker-environments/store-worker-contract.js";
+import { executeWorkerEnvironmentCommand } from "../gateway/worker-environments/store.worker.js";
 import { readDeferredPluginMigrations } from "../infra/deferred-plugin-migrations.js";
 import * as deliveryQueue from "../infra/delivery-queue.worker.js";
 import * as deviceAuth from "../infra/device-auth-store.kernel.js";
@@ -61,6 +68,7 @@ import {
   persistTelemetrySuccessInDatabase,
   readTelemetryStateInWorker,
 } from "../infra/telemetry-store.kernel.js";
+import { persistInterruptedUpdateObservation } from "../infra/update-run-interruption-store.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { readRemoteModelCatalog } from "../model-catalog/remote-store.js";
 import { isNodeWorkerJournalCommand } from "../node-host/node-worker-journal.worker-contract.js";
@@ -125,7 +133,7 @@ import type {
 } from "./openclaw-state-worker-contract.js";
 import { readUserModelAuthProfile } from "./user-model-accounts.js";
 import { executeUserPreferenceCommand } from "./user-preferences.worker.js";
-import { executeUserProfileCommand } from "./user-profiles.worker.js";
+import { executeUserProfileCommand, isUserProfileCommand } from "./user-profiles.worker.js";
 
 type Operations = OpenClawStateWorkerOperations &
   OpenClawStateWorkerInspectionOperations &
@@ -146,12 +154,22 @@ export function executeSharedStateCommand(
   open: () => OpenClawStateDatabase,
   hasNativeDatabase: boolean,
 ): Operations[keyof Operations]["output"] {
-  if (command.type === "execApprovals.commitAuthorizations") {
-    return commitExecAuthorizationsInWorker(command.input, {
+  // Dispatch preparation has loaded this module; do not open or observe token state.
+  if (command.type === "deviceAuth.prepare") {
+    return undefined;
+  }
+  if (command.type === "mcpOAuth.read") {
+    return readMcpOAuthStoreInDatabase(open().db, command.input);
+  }
+  if (command.type === "execApprovals.commitAuthorizations" || isOperatorApprovalCommand(command)) {
+    const databaseOptions = {
       database: open(),
       path: context.databasePath,
       env: getSqliteWorkerStateContext().environment,
-    });
+    };
+    return command.type === "execApprovals.commitAuthorizations"
+      ? commitExecAuthorizationsInWorker(command.input, databaseOptions)
+      : executeOperatorApprovalCommand(command, databaseOptions);
   }
   if (isDevicePairingMutationCommand(command)) {
     return executeDevicePairingMutationInWorker(command, open());
@@ -162,6 +180,9 @@ export function executeSharedStateCommand(
       open(),
       getSqliteWorkerStateContext().environment,
     );
+  }
+  if (isWorkerEnvironmentCommand(command)) {
+    return executeWorkerEnvironmentCommand(command, open());
   }
   if (command.type === "audit.events.list") {
     return listAuditEventsInDatabase(open().db, command.input);
@@ -309,6 +330,13 @@ export function executeSharedStateCommand(
       { database, path: context.databasePath, env: getSqliteWorkerStateContext().environment },
     );
   }
+  if (command.type === "updateRuns.reconcileInterrupted") {
+    return persistInterruptedUpdateObservation(
+      command.input,
+      { path: context.databasePath, env: getSqliteWorkerStateContext().environment },
+      (stage) => requestSqliteWorkerOperationAdmission({ stage, facts: undefined }),
+    );
+  }
   if (command.type === "plugins.deferredMigrations.read") {
     return readDeferredPluginMigrations({
       path: context.databasePath,
@@ -349,13 +377,7 @@ export function executeSharedStateCommand(
       env: getSqliteWorkerStateContext().environment,
     });
   }
-  if (
-    command.type === "userProfiles.list" ||
-    command.type === "userProfiles.directory" ||
-    command.type === "userProfiles.email.ensure" ||
-    command.type === "userProfiles.avatar.inspect" ||
-    command.type === "userProfiles.avatar.adopt"
-  ) {
+  if (isUserProfileCommand(command)) {
     return executeUserProfileCommand(command, {
       database: open(),
       path: context.databasePath,
@@ -428,6 +450,7 @@ export function executeSharedStateCommand(
     case "transcripts.summaryRevision":
     case "transcripts.summarySnapshot":
     case "transcripts.utterances":
+    case "transcripts.exportDigest":
     case "transcripts.summary": {
       return executeTranscriptRead({ database, path: context.databasePath }, command);
     }
@@ -602,8 +625,10 @@ export function executeSharedStateCommand(
     ensureProjectRegistrySchema(writeOptions);
     return listProjectRegistryInDatabase(database.db);
   }
-  if (command.type === "worktrees.list") {
-    return listRegistryWorktreesInDatabase(database.db);
+  if (command.type === "worktrees.list" || command.type === "worktrees.liveIds") {
+    return command.type === "worktrees.list"
+      ? worktreeRegistry.listRegistryWorktreesInDatabase(database.db)
+      : worktreeRegistry.listLiveRegistryWorktreeIdsInDatabase(database.db);
   }
   if (command.type === "projects.resolve") {
     ensureProjectRegistrySchema(writeOptions);
