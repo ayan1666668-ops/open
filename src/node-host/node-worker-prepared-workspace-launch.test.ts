@@ -26,6 +26,8 @@ describe("prepared workspace launch custody", () => {
         state: "running",
         supervisor: { pid: 1, startTime: 1 },
         worker: null,
+        workerCleanupMode: null,
+        workerLineageSettled: false,
         resultJson: null,
         errorText: null,
         completedAtMs: null,

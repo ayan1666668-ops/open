@@ -11,18 +11,18 @@ export function executeNodeWorkerJournalCommand(
   databasePath: string,
   open: () => NonNullable<OpenClawStateDatabaseOptions["database"]>,
 ): NodeWorkerJournalWorkerOperations[keyof NodeWorkerJournalWorkerOperations]["output"] {
-  const options: OpenClawStateDatabaseOptions = {
+  const contextOptions = {
     path: databasePath,
     env: getSqliteWorkerStateContext().environment,
-    ...(command.type === "nodeWorker.prepared.find" || command.type === "nodeWorker.prepared.list"
-      ? {}
-      : { database: open() }),
   };
+  if (command.type === "nodeWorker.prepared.find") {
+    return new NodeWorkerPreparedWorkspaceKernel(contextOptions).find(...command.input);
+  }
+  if (command.type === "nodeWorker.prepared.list") {
+    return new NodeWorkerPreparedWorkspaceKernel(contextOptions).list(...command.input);
+  }
+  const options = { ...contextOptions, database: open() };
   switch (command.type) {
-    case "nodeWorker.prepared.find":
-      return new NodeWorkerPreparedWorkspaceKernel(options).find(...command.input);
-    case "nodeWorker.prepared.list":
-      return new NodeWorkerPreparedWorkspaceKernel(options).list(...command.input);
     case "nodeWorker.prepared.register":
       return new NodeWorkerPreparedWorkspaceKernel(options).register(...command.input);
     case "nodeWorker.prepared.bind":

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createDeferredCore } from "../shared/deferred.js";
 import { NodeWorkerPreparedWorkspaceStore } from "./node-worker-prepared-workspace-store.js";
 import type { NodeWorkerPreparedWorkspaceRow } from "./node-worker-prepared-workspace-store.kernel.js";
 
@@ -42,7 +43,7 @@ describe("prepared workspace mutation admission", () => {
     "fences legacy reads through permit %s",
     async (outcome) => {
       const store = new NodeWorkerPreparedWorkspaceStore({});
-      const admitted = Promise.withResolvers<NodeWorkerPreparedWorkspaceRow>();
+      const admitted = createDeferredCore<NodeWorkerPreparedWorkspaceRow>();
       mock.execute.mockReturnValueOnce(admitted.promise);
       expect(store.findSync(bound.environment_id)).toBe(bound);
       const pending = store.beginMutation(bound);
@@ -52,8 +53,11 @@ describe("prepared workspace mutation admission", () => {
         admitted.resolve(retiring);
         permit = await pending;
         expect(() => store.findSync(bound.environment_id)).toThrow(/mutation/i);
-        if (outcome === "complete") await permit.complete();
-        else permit.close();
+        if (outcome === "complete") {
+          await permit.complete();
+        } else {
+          permit.close();
+        }
         expect(store.findSync(bound.environment_id)).toBe(bound);
       } finally {
         admitted.resolve(retiring);
@@ -64,7 +68,7 @@ describe("prepared workspace mutation admission", () => {
 
   it("releases the local fence when retirement is refused", async () => {
     const store = new NodeWorkerPreparedWorkspaceStore({});
-    const admitted = Promise.withResolvers<NodeWorkerPreparedWorkspaceRow>();
+    const admitted = createDeferredCore<NodeWorkerPreparedWorkspaceRow>();
     mock.execute.mockReturnValueOnce(admitted.promise);
     const failure = new Error("synthetic retirement refused");
     const pending = store.beginMutation(bound);
@@ -83,7 +87,7 @@ describe("prepared workspace mutation admission", () => {
     mock.execute.mockResolvedValueOnce(retiring);
     const previous = await store.beginMutation(bound);
     await previous.complete();
-    const admitted = Promise.withResolvers<NodeWorkerPreparedWorkspaceRow>();
+    const admitted = createDeferredCore<NodeWorkerPreparedWorkspaceRow>();
     mock.execute.mockReturnValueOnce(admitted.promise);
     const pending = store.beginMutation(bound);
     try {

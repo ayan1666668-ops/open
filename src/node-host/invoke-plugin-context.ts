@@ -8,7 +8,7 @@ export async function withNodeHostPluginInvocation<T>(
     signal,
   }: {
     context?: OpenClawPluginNodeHostCommandContext;
-    sessionKey?: string;
+    sessionKey?: string | null;
     signal?: AbortSignal;
   },
   operation: (context: OpenClawPluginNodeHostCommandContext | undefined) => Promise<T>,
