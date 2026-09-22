@@ -72,7 +72,9 @@ export function buildDynamicsDiagnostic(
     candidateEntropy: snapshot.candidateEntropy,
     systemPressure: pressures.length > 0 ? Math.max(...pressures) : null,
     hostMeasurementCount: snapshot.measurements.filter((item) => item.source === "host").length,
-    externalMeasurementCount: snapshot.measurements.filter((item) => item.source === "external").length,
+    externalMeasurementCount: snapshot.measurements.filter(
+      (item) => item.source === "external",
+    ).length,
     decisionKinds: decision.actions.map((action) => action.kind),
     unresolved,
   };
