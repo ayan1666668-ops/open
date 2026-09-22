@@ -2551,11 +2551,16 @@ export const en: TranslationMap & {
       "Labs contains experimental capabilities that may change, break, or disappear between releases.",
     sectionTitle: "Experimental features",
     sectionDescription:
-      "Changes save without restarting the Gateway. Code Mode and Tool Search apply to future agent runs.",
+      "Changes save without restarting the Gateway. Decision assistance, Code Mode, and Tool Search apply to future agent runs.",
     documentation: "Documentation",
     restartRequired: "Gateway restart required.",
     saveErrorTitle: "Could not update feature",
     saveFailed: "The feature setting could not be saved.",
+    decisionAssistance: {
+      title: "Decision-assisted features",
+      description:
+        "Allow eligible experiments to use an agent's selected Decision model. This does not choose a provider, grant tools, or enable features that have their own mode.",
+    },
     codeMode: {
       title: "Code Mode",
       description:

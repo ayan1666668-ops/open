@@ -95,6 +95,7 @@ export const AgentDefaultsBaseSchema = z
     bootstrapTotalMaxChars: z.number().int().positive().optional(),
     experimental: z
       .object({
+        decisionAssistance: z.boolean().optional(),
         localModelLean: z.boolean().optional(),
       })
       .strict()

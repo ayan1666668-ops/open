@@ -213,6 +213,16 @@ describe("LabsPage", () => {
 
   it.each([
     {
+      label: "Decision-assisted features",
+      sourceConfig: {
+        agents: { defaults: { experimental: { decisionAssistance: true } } },
+      },
+      expectedPatch: {
+        agents: { defaults: { experimental: { decisionAssistance: null } } },
+      },
+      note: "labs: update decisionAssistance",
+    },
+    {
       label: "Code Mode",
       sourceConfig: { tools: { codeMode: { enabled: true } } },
       expectedPatch: { tools: { codeMode: { enabled: null } } },
@@ -276,6 +286,14 @@ describe("LabsPage", () => {
   });
 
   it.each([
+    {
+      label: "Decision-assisted features",
+      sourceConfig: {},
+      expectedPatch: {
+        agents: { defaults: { experimental: { decisionAssistance: true } } },
+      },
+      note: "labs: update decisionAssistance",
+    },
     {
       // The on position selects the "auto" tier, never `true`: Labs offers
       // Auto/Off, and force-on stays a config-only power-user state.
