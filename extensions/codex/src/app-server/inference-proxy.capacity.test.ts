@@ -4,7 +4,6 @@ import {
   child,
   clients,
   complete,
-  completed,
   connect,
   holdHttpResponses,
   holdUploads,
@@ -20,7 +19,7 @@ import {
 } from "./inference-proxy.capacity-test-support.js";
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
-import { request, type IncomingMessage } from "node:http";
+import type { IncomingMessage } from "node:http";
 import { createConnection, Socket } from "node:net";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { WebSocket } from "openclaw/plugin-sdk/websocket-runtime";
