@@ -102,6 +102,7 @@ function projectAgentEventToAudit(event: AgentEventPayload): AuditEventInput | u
   const inputs: AuditEventInput[] = [];
   const recorder = createAgentEventAuditRecorder({
     writer: captureAuditWriter(inputs),
+    getConfig: () => ({}),
     terminalSettleMs: 60_000,
   });
   recorder.record(event);
@@ -113,7 +114,10 @@ function projectToolExecutionEventToAudit(
   event: TrustedToolExecutionEvent,
 ): ToolActionAuditEventInput | undefined {
   const inputs: AuditEventInput[] = [];
-  const recorder = createAgentEventAuditRecorder({ writer: captureAuditWriter(inputs) });
+  const recorder = createAgentEventAuditRecorder({
+    writer: captureAuditWriter(inputs),
+    getConfig: () => ({}),
+  });
   recorder.recordTool(event);
   void recorder.stop();
   return inputs.at(-1) as ToolActionAuditEventInput | undefined;
@@ -495,7 +499,10 @@ describe("agent activity audit projection", () => {
 
   it("does not let tool events inherit remembered lifecycle provenance", async () => {
     const inputs: AuditEventInput[] = [];
-    const recorder = createAgentEventAuditRecorder({ writer: captureAuditWriter(inputs) });
+    const recorder = createAgentEventAuditRecorder({
+      writer: captureAuditWriter(inputs),
+      getConfig: () => ({}),
+    });
     const runId = "run-tool-no-provenance";
     recorder.record(
       agentEvent({
@@ -816,10 +823,14 @@ describe("agent activity audit projection", () => {
     expect(projected?.runId).toBe(runId);
   });
 
-  it("settles an error followed by a cleanup end as one failed outcome", async () => {
+  it.each([true, false])("settles accepted errors while collection is %s", async (enabled) => {
     const inputs: AuditEventInput[] = [];
     const writer = captureAuditWriter(inputs);
-    const recorder = createAgentEventAuditRecorder({ writer });
+    let collectionEnabled = true;
+    const recorder = createAgentEventAuditRecorder({
+      writer,
+      getConfig: () => ({ logging: { audit: { enabled: collectionEnabled } } }),
+    });
     const lifecycleGeneration = "gateway-1";
 
     recorder.record(agentEvent({ lifecycleGeneration, seq: 1 }));
@@ -830,6 +841,7 @@ describe("agent activity audit projection", () => {
         data: { phase: "error", error: "request failed" },
       }),
     );
+    collectionEnabled = enabled;
     recorder.record(agentEvent({ lifecycleGeneration, seq: 3, data: { phase: "end" } }));
     await recorder.stop();
 
@@ -874,7 +886,11 @@ describe("agent activity audit projection", () => {
   it("keeps one start when a retry cancels a pending terminal", async () => {
     const inputs: AuditEventInput[] = [];
     const writer = captureAuditWriter(inputs);
-    const recorder = createAgentEventAuditRecorder({ writer, terminalSettleMs: 60_000 });
+    const recorder = createAgentEventAuditRecorder({
+      writer,
+      getConfig: () => ({}),
+      terminalSettleMs: 60_000,
+    });
     const lifecycleGeneration = "gateway-retry";
 
     recorder.record(agentEvent({ lifecycleGeneration, seq: 1 }));
@@ -896,7 +912,11 @@ describe("agent activity audit projection", () => {
   it("persists definitive successful terminals immediately in source order", async () => {
     const inputs: AuditEventInput[] = [];
     const writer = captureAuditWriter(inputs);
-    const recorder = createAgentEventAuditRecorder({ writer, terminalSettleMs: 60_000 });
+    const recorder = createAgentEventAuditRecorder({
+      writer,
+      getConfig: () => ({}),
+      terminalSettleMs: 60_000,
+    });
 
     recorder.record(agentEvent({ seq: 1 }));
     recorder.record(agentEvent({ seq: 2, data: { phase: "end" } }));
@@ -919,7 +939,7 @@ describe("agent activity audit projection", () => {
   it("merges multiple terminal observations through the canonical outcome contract", async () => {
     const inputs: AuditEventInput[] = [];
     const writer = captureAuditWriter(inputs);
-    const recorder = createAgentEventAuditRecorder({ writer });
+    const recorder = createAgentEventAuditRecorder({ writer, getConfig: () => ({}) });
 
     recorder.record(agentEvent({ seq: 1 }));
     recorder.record(agentEvent({ seq: 2, data: { phase: "error" } }));
