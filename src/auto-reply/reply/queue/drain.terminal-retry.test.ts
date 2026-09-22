@@ -13,7 +13,7 @@ import {
 import { createQueueTestRun as createRun } from "../queue.test-helpers.js";
 import { admitFollowupRunLifecycle, completeFollowupRunLifecycle } from "./lifecycle.js";
 import { FOLLOWUP_QUEUES } from "./state.js";
-import { type FollowupRun, type QueueSettings } from "./types.js";
+import type { FollowupRun, QueueSettings } from "./types.js";
 
 const SETTINGS: QueueSettings = { mode: "followup", debounceMs: 0, cap: 50 };
 const CAP = 7;
@@ -160,6 +160,39 @@ describe("followup drain failure ownership", () => {
       expect(FOLLOWUP_QUEUES.has(key)).toBe(false);
     },
   );
+
+  it("delivers a successor enqueued during suspension after the retained work", async () => {
+    enqueueFollowupRun(key, createRun({ prompt: "retained", messageId: "retained" }), SETTINGS);
+    let failing = true;
+    const delivered: string[] = [];
+    scheduleFollowupDrain(key, async (run) => {
+      if (failing) {
+        throw new Error("temporary");
+      }
+      await admitFollowupRunLifecycle(run);
+      delivered.push(run.prompt);
+      completeFollowupRunLifecycle(run);
+    });
+    await finish();
+    expect(FOLLOWUP_QUEUES.get(key)?.drainSuspended).toBe(true);
+
+    // A message accepted while the queue is parked waits behind the failed
+    // work; it must not restart draining on its own.
+    enqueueFollowupRun(key, createRun({ prompt: "successor", messageId: "successor" }), SETTINGS);
+    await finish();
+    expect(delivered).toEqual([]);
+    expect(FOLLOWUP_QUEUES.get(key)?.items.map((item) => item.prompt)).toEqual([
+      "retained",
+      "successor",
+    ]);
+
+    failing = false;
+    const response = await applyQueueDirective("/queue reset");
+    expect(response?.text).toContain("Retained queued messages will retry.");
+    await finish();
+    expect(delivered).toEqual(["retained", "successor"]);
+    expect(FOLLOWUP_QUEUES.has(key)).toBe(false);
+  });
 
   it.each([
     { command: "/queue reset", authorized: false },

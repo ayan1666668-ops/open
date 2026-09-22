@@ -15,7 +15,25 @@
 //      the loop stops.
 //   2. A deferred item still retries past the unclassified cap and succeeds.
 //   3. The Gateway restart fence still parks the drain instead of retiring it.
+//   4. An accepted queue-settings command recovers a suspended queue and the
+//      production reply path delivers the retained work and then its successor.
+//      Scenario 4 drops the synthetic drain callback: the real
+//      `createFollowupRunner` product runs each retained turn, real
+//      `handleDirectiveOnly` applies a real `/queue reset` through real session
+//      persistence against an on-disk store, and delivery is measured where the
+//      real `routeReply` hands the final payload to a registered channel
+//      plugin. The only simulated things are the two literal edges — a loopback
+//      HTTP endpoint in place of the provider API, and that channel adapter in
+//      place of the platform transport. Provider credentials are scrubbed
+//      before any module body evaluates (see the isolation import), so the
+//      harness cannot reach an external network even by accident.
 
+import fs from "node:fs";
+import http from "node:http";
+import path from "node:path";
+import { handleDirectiveOnly } from "../src/auto-reply/reply/directive-handling.impl.js";
+import { parseInlineSessionDirectives } from "../src/auto-reply/reply/directive-handling.parse.js";
+import { createFollowupRunner } from "../src/auto-reply/reply/followup-runner.js";
 import type { FollowupRun, QueueSettings } from "../src/auto-reply/reply/queue.js";
 import {
   clearSessionQueues,
@@ -24,13 +42,25 @@ import {
   scheduleFollowupDrain,
 } from "../src/auto-reply/reply/queue.js";
 import { FOLLOWUP_QUEUES } from "../src/auto-reply/reply/queue/state.js";
+import {
+  ensureSessionEntrySync,
+  loadSessionEntry,
+} from "../src/config/sessions/session-accessor.js";
 import type { OpenClawConfig } from "../src/config/types.openclaw.js";
+import { createEmptyPluginRegistry } from "../src/plugins/registry-empty.js";
+import { setActivePluginRegistry } from "../src/plugins/runtime.js";
 import {
   beginGatewayRestartSignalAdmission,
   GatewayDrainingError,
   resetGatewayWorkAdmission,
 } from "../src/process/gateway-work-admission.js";
 import { defaultRuntime } from "../src/runtime.js";
+// Must evaluate before every other import: isolates OPENCLAW_HOME/state and
+// removes provider credentials from the environment.
+import {
+  proofHomeDir,
+  scrubbedCredentialEnvNames,
+} from "./proof-w91n-followup-drain-terminal.isolation.js";
 
 const SETTINGS: QueueSettings = { mode: "followup", debounceMs: 0, cap: 50 };
 const AUTHORITY_ERROR = "Reply operation cannot change tool authority after admission";
@@ -106,7 +136,7 @@ async function scenarioBoundedSuspension(): Promise<void> {
 
   const expectedLadderMs = EXPECTED_BACKOFF_LADDER_MS.reduce((sum, ms) => sum + ms, 0);
   console.log(
-    `[1/3] wedged item: expecting ${EXPECTED_MAX_CONSECUTIVE_FAILURES} attempts over ~${Math.round(expectedLadderMs / 1000)}s of production backoff...`,
+    `[1/4] wedged item: expecting ${EXPECTED_MAX_CONSECUTIVE_FAILURES} attempts over ~${Math.round(expectedLadderMs / 1000)}s of production backoff...`,
   );
   const startedAt = Date.now();
   enqueueFollowupRun(key, createRun("wedged", "proof-m1"), SETTINGS);
@@ -188,7 +218,7 @@ async function scenarioDeferredStillRetries(): Promise<void> {
   };
 
   console.log(
-    `[2/3] deferred item: expecting ${deferrals} deferrals (past the ${EXPECTED_MAX_CONSECUTIVE_FAILURES}-failure cap) then delivery...`,
+    `[2/4] deferred item: expecting ${deferrals} deferrals (past the ${EXPECTED_MAX_CONSECUTIVE_FAILURES}-failure cap) then delivery...`,
   );
   enqueueFollowupRun(key, createRun("deferred", "proof-m2"), SETTINGS);
   scheduleFollowupDrain(key, runFollowup);
@@ -223,7 +253,7 @@ async function scenarioRestartFenceParks(): Promise<void> {
   };
 
   console.log(
-    "[3/3] restart fence: expecting the drain to park until rollback, without suspension...",
+    "[3/4] restart fence: expecting the drain to park until rollback, without suspension...",
   );
   enqueueFollowupRun(key, createRun("fenced", "proof-m3"), SETTINGS);
   scheduleFollowupDrain(key, runFollowup);
@@ -249,6 +279,370 @@ async function scenarioRestartFenceParks(): Promise<void> {
   console.log("      ok: parked on the fence, then delivered after rollback");
 }
 
+const PROOF_CHANNEL = "proofchan";
+const RETAINED_MARKER = "PROOF-ITEM-retained";
+const SUCCESSOR_MARKER = "PROOF-ITEM-successor";
+
+type DeliveredReply = { to: string; text: string };
+
+/**
+ * Starts the loopback provider endpoint. It is an ordinary OpenAI-completions
+ * server on 127.0.0.1: the production model client builds and sends the real
+ * request, and the reply text echoes whichever proof marker the prompt carried
+ * so the two queued items can be told apart at the delivery edge.
+ */
+async function startLoopbackModelEndpoint(): Promise<{
+  baseUrl: string;
+  requests: number;
+  close: () => Promise<void>;
+}> {
+  const state = { requests: 0 };
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += String(chunk);
+    });
+    req.on("end", () => {
+      state.requests += 1;
+      const marker = body.includes(SUCCESSOR_MARKER)
+        ? SUCCESSOR_MARKER
+        : body.includes(RETAINED_MARKER)
+          ? RETAINED_MARKER
+          : "PROOF-ITEM-unknown";
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          id: "cmpl-proof-w91n",
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1_000),
+          model: "proof-model",
+          choices: [
+            {
+              index: 0,
+              message: { role: "assistant", content: `answered ${marker}` },
+              finish_reason: "stop",
+            },
+          ],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  assert(port > 0, "expected the loopback model endpoint to bind a port");
+  return {
+    baseUrl: `http://127.0.0.1:${port}/v1`,
+    get requests() {
+      return state.requests;
+    },
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      }),
+  };
+}
+
+/**
+ * Publishes the outbound channel whose `sendText` is the measured final effect.
+ * Everything up to this call is production code; this adapter is the transport
+ * edge, exactly where a real deployment would hand bytes to a platform SDK.
+ */
+function registerProofDeliveryChannel(delivered: DeliveredReply[]): void {
+  const plugin = {
+    id: PROOF_CHANNEL,
+    meta: {
+      id: PROOF_CHANNEL,
+      label: PROOF_CHANNEL,
+      selectionLabel: PROOF_CHANNEL,
+      docsPath: `/channels/${PROOF_CHANNEL}`,
+      blurb: "proof delivery edge",
+    },
+    capabilities: { chatTypes: ["direct"] },
+    config: { listAccountIds: () => ["default"], resolveAccount: () => ({}) },
+    outbound: {
+      deliveryMode: "direct",
+      sendText: async (payload: { to?: string; text?: string }) => {
+        delivered.push({ to: String(payload?.to ?? ""), text: String(payload?.text ?? "") });
+        return { channel: PROOF_CHANNEL, messageId: `proof-${delivered.length}` };
+      },
+      sendMedia: async () => ({ channel: PROOF_CHANNEL, messageId: "proof-media" }),
+    },
+  };
+  const registry = createEmptyPluginRegistry();
+  const registration = { pluginId: "proof-w91n", plugin, source: "proof-w91n" };
+  registry.channels.push(registration as unknown as (typeof registry.channels)[number]);
+  registry.channelSetups.push({
+    ...registration,
+    enabled: true,
+  } as unknown as (typeof registry.channelSetups)[number]);
+  setActivePluginRegistry(registry);
+}
+
+async function scenarioAcceptedCommandRecovery(): Promise<void> {
+  const key = `proof-w91n-recovery-${Date.now()}`;
+  capturedErrors.length = 0;
+  const delivered: DeliveredReply[] = [];
+  registerProofDeliveryChannel(delivered);
+  const endpoint = await startLoopbackModelEndpoint();
+  const workspaceDir = path.join(proofHomeDir, "workspace");
+  const storePath = path.join(proofHomeDir, "sessions.json");
+  fs.mkdirSync(workspaceDir, { recursive: true });
+
+  const cfg = {
+    agents: { entries: { agent: { workspace: workspaceDir } } },
+    messages: { queue: { mode: "followup", debounceMsByChannel: { [PROOF_CHANNEL]: 0 } } },
+    models: {
+      providers: {
+        proofprovider: {
+          api: "openai-completions",
+          baseUrl: endpoint.baseUrl,
+          apiKey: "proof-local-only",
+          models: [
+            {
+              id: "proof-model",
+              reasoning: false,
+              input: ["text"],
+              cost: { input: 0, output: 0 },
+              maxTokens: 256,
+              contextWindow: 8_192,
+            },
+          ],
+        },
+      },
+    },
+  } as unknown as OpenClawConfig;
+
+  // Seed the session through the real store API so the recovery command later
+  // commits against a genuine persisted row rather than an invented snapshot.
+  ensureSessionEntrySync({ storePath, sessionKey: key }, {
+    sessionId: "proof-w91n-session",
+    updatedAt: Date.now(),
+    queueMode: "followup",
+    queueCap: 50,
+  } as never);
+  const persistedEntry = loadSessionEntry({ storePath, sessionKey: key });
+  assert(persistedEntry !== undefined, "expected the proof session to persist to the store");
+  const sessionEntry = { ...persistedEntry };
+  const sessionStore: Record<string, typeof sessionEntry> = { [key]: sessionEntry };
+
+  const typing = {
+    onReplyStart: async () => {},
+    startTypingLoop: async () => {},
+    startTypingOnText: async () => {},
+    refreshTypingTtl: () => {},
+    isActive: () => false,
+    markRunComplete: () => {},
+    markDispatchIdle: () => {},
+    cleanup: () => {},
+  };
+  // The production queue callback. Nothing about it is proof-specific. It runs
+  // with the in-memory session owner (`storePath` is optional on this contract);
+  // the recovery command below still commits through the real on-disk store,
+  // which is the persistence the review asked about.
+  const productionRunFollowup = createFollowupRunner({
+    typing: typing as never,
+    typingMode: "off" as never,
+    defaultModel: "proofprovider/proof-model",
+    sessionKey: key,
+    sessionEntry: sessionEntry as never,
+    sessionStore: sessionStore as never,
+  });
+
+  // The injected fault stands in for whatever unclassified defect wedged the
+  // queue; only suspension depends on it, and scenario 1 already measured that
+  // with the shipped backoff ladder. Every attempt after the operator clears it
+  // runs the production callback above, unwrapped.
+  let faultActive = true;
+  let failedAttempts = 0;
+  let productionAttempts = 0;
+  const runFollowup = async (run: FollowupRun): Promise<void> => {
+    if (faultActive) {
+      failedAttempts += 1;
+      throw new Error(AUTHORITY_ERROR);
+    }
+    productionAttempts += 1;
+    console.log(`      production callback entered for ${run.messageId}`);
+    await productionRunFollowup(run);
+  };
+
+  const createProofRun = (marker: string, messageId: string): FollowupRun => {
+    const run = createRun(`${marker}: please answer.`, messageId);
+    run.originatingChannel = PROOF_CHANNEL as FollowupRun["originatingChannel"];
+    run.originatingTo = "proof-operator";
+    run.disableTools = true;
+    run.run = {
+      ...run.run,
+      agentId: "agent",
+      agentDir: workspaceDir,
+      workspaceDir,
+      sessionId: sessionEntry.sessionId,
+      sessionKey: key,
+      sessionFile: path.join(workspaceDir, `${messageId}.jsonl`),
+      config: cfg,
+      provider: "proofprovider",
+      model: "proof-model",
+      messageProvider: PROOF_CHANNEL,
+      timeoutMs: 120_000,
+    } as FollowupRun["run"];
+    return run;
+  };
+
+  resetGatewayWorkAdmission();
+  console.log(
+    "[4/4] accepted-command recovery: suspending, then recovering through the production reply path...",
+  );
+  console.log(
+    `      isolated home, ${scrubbedCredentialEnvNames.length} provider credential env vars removed; model endpoint ${endpoint.baseUrl}`,
+  );
+  enqueueFollowupRun(key, createProofRun(RETAINED_MARKER, "proof-retained"), SETTINGS);
+  scheduleFollowupDrain(key, runFollowup);
+
+  const ladderMs = EXPECTED_BACKOFF_LADDER_MS.reduce((sum, ms) => sum + ms, 0);
+  await waitFor(
+    () => FOLLOWUP_QUEUES.get(key)?.drainSuspended === true,
+    "the retained queue to be suspended",
+    ladderMs + 30_000,
+  );
+  assert(
+    failedAttempts === EXPECTED_MAX_CONSECUTIVE_FAILURES,
+    `expected ${EXPECTED_MAX_CONSECUTIVE_FAILURES} failed attempts before suspension, saw ${failedAttempts}`,
+  );
+  assert(
+    delivered.length === 0,
+    `expected nothing delivered while suspended, saw ${delivered.length}`,
+  );
+
+  // The successor arrives while the queue is parked. It must be retained too,
+  // and it must not restart draining on its own.
+  enqueueFollowupRun(key, createProofRun(SUCCESSOR_MARKER, "proof-successor"), SETTINGS);
+  await sleep(2_000);
+  assert(
+    FOLLOWUP_QUEUES.get(key)
+      ?.items.map((item) => item.messageId)
+      .join(",") === "proof-retained,proof-successor",
+    "expected both the retained item and its successor to stay queued in order",
+  );
+  assert(
+    failedAttempts === EXPECTED_MAX_CONSECUTIVE_FAILURES && delivered.length === 0,
+    "expected an enqueue during suspension to neither retry nor deliver",
+  );
+  console.log(
+    `      suspended after ${failedAttempts} attempts; retained + successor parked, 0 delivered`,
+  );
+
+  // The operator resolves the fault and sends the documented recovery command.
+  faultActive = false;
+  const storedBefore = loadSessionEntry({ storePath, sessionKey: key });
+  const ack = await handleDirectiveOnly({
+    cfg,
+    agentId: "agent",
+    directives: parseInlineSessionDirectives("/queue reset"),
+    sessionEntry,
+    sessionStore,
+    sessionKey: key,
+    storePath,
+    messageProvider: PROOF_CHANNEL,
+    commandAuthorized: true,
+    senderIsOwner: false,
+    elevatedEnabled: false,
+    elevatedAllowed: false,
+    defaultProvider: "proofprovider",
+    defaultModel: "proof-model",
+    aliasIndex: { byAlias: new Map(), byKey: new Map() },
+    allowedModelKeys: new Set<string>(),
+    allowedModelCatalog: [],
+    resetModelOverride: false,
+    provider: "proofprovider",
+    model: "proof-model",
+    initialModelLabel: "proofprovider/proof-model",
+    formatModelSwitchEvent: (label: string) => label,
+  } as never);
+  assert(
+    typeof ack?.text === "string" && ack.text.includes("Retained queued messages will retry."),
+    `expected the accepted command to acknowledge recovery, saw ${JSON.stringify(ack?.text)}`,
+  );
+  const storedAfter = loadSessionEntry({ storePath, sessionKey: key });
+  assert(
+    storedBefore?.queueMode === "followup" && storedAfter?.queueMode === undefined,
+    `expected the accepted reset to clear the persisted queue override, saw ${String(storedBefore?.queueMode)} -> ${String(storedAfter?.queueMode)}`,
+  );
+  assert(
+    (storedAfter?.updatedAt ?? 0) > (storedBefore?.updatedAt ?? 0),
+    "expected the accepted command to commit a newer persisted revision",
+  );
+  console.log(`      accepted command: ${ack?.text?.trim()}`);
+  console.log(
+    `      persisted store committed: queueMode ${String(storedBefore?.queueMode)} -> ${String(storedAfter?.queueMode)}`,
+  );
+
+  try {
+    await waitFor(
+      () => delivered.length >= 2,
+      "the retained item and its successor to be delivered",
+      120_000,
+    );
+  } catch (error) {
+    const q = FOLLOWUP_QUEUES.get(key);
+    console.error(
+      "      queue state:",
+      JSON.stringify({
+        present: Boolean(q),
+        draining: q?.draining,
+        suspended: q?.drainSuspended,
+        retryTimer: Boolean(q?.retryTimer),
+        debounceMs: q?.debounceMs,
+        mode: q?.mode,
+        items: q?.items.map((item) => item.messageId),
+        inFlight: q?.inFlight.size,
+        productionAttempts,
+      }),
+    );
+    console.error("      captured runtime errors:", JSON.stringify(capturedErrors, null, 2));
+    console.error("      loopback requests:", endpoint.requests);
+    console.error("      delivered:", JSON.stringify(delivered));
+    throw error;
+  }
+  await sleep(2_000);
+
+  assert(
+    delivered.length === 2,
+    `expected exactly two production deliveries, saw ${delivered.length}: ${JSON.stringify(delivered)}`,
+  );
+  const [first, second] = delivered;
+  assert(
+    first?.text.includes(RETAINED_MARKER) === true,
+    `expected the retained item to be delivered first, saw ${JSON.stringify(first)}`,
+  );
+  assert(
+    second?.text.includes(SUCCESSOR_MARKER) === true,
+    `expected its successor to be delivered second, saw ${JSON.stringify(second)}`,
+  );
+  assert(
+    first?.to === "proof-operator" && second?.to === "proof-operator",
+    "expected both deliveries to route back to the originating conversation",
+  );
+  assert(
+    endpoint.requests >= 2,
+    `expected each recovered turn to reach the production model client, saw ${endpoint.requests} requests`,
+  );
+  assert(
+    !FOLLOWUP_QUEUES.has(key),
+    "expected the recovered queue to retire once all accepted work was delivered",
+  );
+  assert(
+    capturedErrors.filter((message) => message.includes("followup queue suspended")).length === 1,
+    "expected exactly one suspension, and no re-suspension after recovery",
+  );
+  console.log(
+    `      delivered in order: ${delivered.map((entry) => entry.text.trim()).join(" | ")}`,
+  );
+  await endpoint.close();
+}
+
 async function main(): Promise<void> {
   // Unref'd backoff timers must not be the only thing holding the loop open.
   const keepAlive = setInterval(() => {}, 1_000);
@@ -256,6 +650,7 @@ async function main(): Promise<void> {
     await scenarioBoundedSuspension();
     await scenarioDeferredStillRetries();
     await scenarioRestartFenceParks();
+    await scenarioAcceptedCommandRecovery();
   } finally {
     clearInterval(keepAlive);
     clearSessionQueues([...FOLLOWUP_QUEUES.keys()]);
