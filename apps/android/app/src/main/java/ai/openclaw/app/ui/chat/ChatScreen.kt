@@ -349,7 +349,6 @@ internal fun ChatScreen(
   val historyLoading by viewModel.chatHistoryLoading.collectAsState()
   val sessionCreating by viewModel.chatSessionCreating.collectAsState()
   val errorText by viewModel.chatError.collectAsState()
-  val talkFailureText by viewModel.talkFailureText.collectAsState()
   val talkStatusText by viewModel.talkModeStatusText.collectAsState()
   val pendingRunCount by viewModel.pendingRunCount.collectAsState()
   val selectedActiveRun by viewModel.chatSelectedActiveRunPresentation.collectAsState()
@@ -969,9 +968,6 @@ internal fun ChatScreen(
     }
     if (talkActive) {
       ChatNotice(title = nativeString("Talk"), body = talkStatusText)
-    }
-    talkFailureText?.takeIf { !talkActive && it.isNotBlank() }?.let { failure ->
-      ChatNotice(title = nativeString("Talk stopped"), body = failure)
     }
     ChatSwarmProgress(groups = swarmGroups)
   }
