@@ -522,7 +522,7 @@ describeBrowserLayout.concurrent("chat footer browser layout", () => {
       await withBrowserPage(openBrowserPage(320, 844, { isolated: true }), async (page) => {
         await page.addInitScript({ content: createControlUiMockSameOriginGatewayScript() });
         await installMockGateway(page, {
-          historyMessages: ["failed", "unconfirmed", "waiting-reconnect"].flatMap(
+          historyMessages: ["failed", "unconfirmed", "waiting-reconnect", "held"].flatMap(
             (state, index) => [
               {
                 role: "user",
@@ -551,7 +551,12 @@ describeBrowserLayout.concurrent("chat footer browser layout", () => {
         });
         await page.goto(server.baseUrl + "chat");
         const statuses = page.locator(".chat-send-status");
-        await expectBrowser(statuses).toHaveCount(3, { timeout: 30_000 });
+        await expectBrowser(statuses).toHaveCount(4, { timeout: 30_000 });
+        const held = page.locator('.chat-send-status[data-send-state="held"]');
+        await expectBrowser(held).toContainText("Delivery uncertain");
+        await expectBrowser(
+          held.getByRole("button", { name: "Discard", exact: true }),
+        ).toBeVisible();
         // Enlarged text must not push recovery controls outside the conversation.
         await page.addStyleTag({ content: ".chat-send-status { font-size: 24px; }" });
         for (const theme of ["light", "dark"]) {
