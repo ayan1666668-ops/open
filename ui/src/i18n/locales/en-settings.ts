@@ -785,6 +785,8 @@ const enSettings = {
         "The extension is installed but not enabled. Open Chrome and approve or enable OpenClaw.",
       chromeExtensionStatusUnsupported:
         "Automatic installation checks require an updated Mac app. Open Chrome to check whether OpenClaw is installed and enabled.",
+      chromeExtensionStatusFailed:
+        "Could not check Chrome installation automatically. You can still run setup or refresh status. Make sure the OpenClaw app and CLI are up to date.",
       chromeExtensionSetup: "Set up Chrome on this device",
       chromeExtensionHint:
         "Prepare the OpenClaw extension on this device, then approve it in Chrome. This does not install on a remote Gateway.",

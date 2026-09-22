@@ -73,7 +73,7 @@ private runtime, so a remote-only Mac does not need a separate CLI install.
 Automatic registration belongs to the default app profile; named profiles keep
 explicit setup because Chrome shares one native-host registration per user.
 
-**Dashboard → Settings → This Mac → Browser → Set up Chrome on this Mac** retries
+**Dashboard → Settings → This Mac → Browser → Set up Chrome on this device** retries
 the same serialized canonical setup controller. It always prepares this Mac,
 not the remote Gateway. Browser setup and the native helper read configuration
 without Gateway-wide Doctor or migration of an independently managed Gateway
@@ -92,9 +92,9 @@ still need a browser node on the Chrome host to expose its tabs to the Gateway.
 
 The **This Mac** page checks installation when opened and when you return from
 Chrome. An existing extension shows **Installed**, including when Chrome still
-needs you to enable it. If its local helper is missing, **Repair Mac connection**
-repairs automatic pairing without treating the extension as absent. **Check
-again** refreshes this status without installing anything. Installation status
+needs you to enable it. If its local helper is missing, **Set up Chrome on this device**
+repairs automatic pairing without treating the extension as absent. **Refresh setup
+status** refreshes this status without installing anything. Installation status
 does not prove a live connection; open the extension to check that separately.
 Older Mac app versions keep their setup action when automatic status checks are
 unavailable. Update the Mac app to detect an existing installation without

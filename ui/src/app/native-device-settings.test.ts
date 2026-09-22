@@ -44,17 +44,31 @@ describe("native device settings wire contract", () => {
       await expect(capability!.setupChromeExtension(action)).rejects.toThrow("does not advertise");
     }
     expect(post).not.toHaveBeenCalled();
+    const status = { ...legacy, installedProfiles: 1 };
+    post.mockResolvedValueOnce(status);
+    await expect(capability!.chromeExtensionStatus!()).resolves.toEqual(status);
+    expect(post).toHaveBeenLastCalledWith({ type: "chrome-extension-status" });
+    post.mockResolvedValueOnce(legacy);
+    await expect(capability!.chromeExtensionStatus!()).rejects.toThrow("invalid result");
   });
-  it("rejects legacy installation completion after document retirement", async () => {
-    const post = installBridge();
-    const pending = createDeferred<unknown>();
-    post.mockReturnValueOnce(pending.promise);
-    const response = capability!.installChromeExtension!();
-    const rejected = expect(response).rejects.toThrow("invalid result");
-    capability!.dispose();
-    pending.resolve({ nativeHostRegistered: true, installRequested: true, discoveredProfiles: 0 });
-    await rejected;
-  });
+  it.each(["installChromeExtension", "chromeExtensionStatus"] as const)(
+    "rejects legacy %s completion after document retirement",
+    async (operation) => {
+      const post = installBridge();
+      const pending = createDeferred<unknown>();
+      post.mockReturnValueOnce(pending.promise);
+      const response = capability![operation]!();
+      const rejected = expect(response).rejects.toThrow("invalid result");
+      capability!.dispose();
+      pending.resolve({
+        nativeHostRegistered: true,
+        installRequested: true,
+        installedProfiles: 0,
+        discoveredProfiles: 0,
+      });
+      await rejected;
+    },
+  );
 
   it.each(["inspect", "install", "verify"] as const)(
     "forwards only the explicit %s action and validates its host-bound result",

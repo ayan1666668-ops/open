@@ -64,7 +64,7 @@ profile, including remote-only and attach-only Macs. It uses the validated
 private runtime, registers the native helper before requesting the Store
 extension, and leaves Chrome’s permission approval to you. Browser setup does not
 run Gateway-wide Doctor or migrate Gateway state. The Dashboard’s **Set up Chrome
-on this Mac** action retries the same serialized operation. See
+on this device** action retries the same serialized operation. See
 [Chrome extension](/tools/chrome-extension).
 
 ## Manual recovery

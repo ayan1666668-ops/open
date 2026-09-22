@@ -14,8 +14,12 @@ export function renderChromeSetupStatus({
   result: NativeChromeExtensionSetupResult | null;
   legacyResult?: LegacyChromeInstallResult | null;
   running: boolean;
-  failed: boolean;
+  failed: "inspection" | "setup" | null;
 }) {
+  if (failed === "inspection") {
+    return html`<p role="status">${t("configPage.deviceSettings.chromeExtensionUnknown")}</p>
+      <p>${t("configPage.deviceSettings.chromeExtensionStatusFailed")}</p>`;
+  }
   if (running || failed) {
     return html`<p role="status">
       ${t(running ? "configPage.deviceSettings.chromeExtensionPreparing" : "configPage.deviceSettings.chromeExtensionFailed")}

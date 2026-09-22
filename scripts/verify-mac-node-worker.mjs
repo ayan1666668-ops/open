@@ -282,8 +282,6 @@ function proveBrowserSetupRuntime(home) {
 
 const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-worker-proof-")));
 try {
-  // This plugin-owned entry must survive pruning without reopening the sealed worker CLI.
-  proveBrowserSetupRuntime(home);
   // Ready manifests do not load lazy native capabilities. Exercise their real
   // package loaders so omitted optional packages and wrong slices fail staging.
   const require = createRequire(path.join(packageRoot, "package.json"));
@@ -298,6 +296,9 @@ try {
       stdio: "inherit",
     },
   );
+  // Browser setup consumes native file operations; prove that prerequisite first.
+  // Its plugin-owned entry must survive pruning without reopening the sealed worker CLI.
+  proveBrowserSetupRuntime(home);
   const database = new DatabaseSync(":memory:", { allowExtension: true });
   try {
     require("sqlite-vec").load(database);

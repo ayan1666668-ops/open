@@ -195,18 +195,26 @@ describe("native device settings pages", () => {
     expect(page.textContent).not.toContain("Keep computer awake");
   });
 
-  it("uses the shared explicit Chrome setup flow from device settings", async () => {
+  it("inspects Chrome on entry and focus without installing, and keeps explicit refresh", async () => {
     const { capability } = createCapability();
     const page = await mount("openclaw-device-page", capability);
     const setup = page.querySelector<DevicePageElement>("openclaw-native-chrome-setup")!;
     await setup.updateComplete;
-    expect(capability.setupChromeExtension).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(setup.textContent).toContain("Setup required on this device"));
+    expect(capability.setupChromeExtension).toHaveBeenCalledExactlyOnceWith("inspect");
+    window.dispatchEvent(new Event("focus"));
+    await vi.waitFor(() => expect(capability.setupChromeExtension).toHaveBeenCalledTimes(2));
+    await setup.updateComplete;
     const refresh = [...setup.querySelectorAll("button")].find(
       (button) => button.textContent?.trim() === "Refresh setup status",
     )!;
     refresh.click();
     await vi.waitFor(() => expect(setup.textContent).toContain("Setup required on this device"));
-    expect(capability.setupChromeExtension).toHaveBeenCalledExactlyOnceWith("inspect");
+    expect(capability.setupChromeExtension.mock.calls).toEqual([
+      ["inspect"],
+      ["inspect"],
+      ["inspect"],
+    ]);
     expect(capability.installChromeExtension).not.toHaveBeenCalled();
   });
   it.each(["openclaw-device-page", "openclaw-device-permissions-page"] as const)(

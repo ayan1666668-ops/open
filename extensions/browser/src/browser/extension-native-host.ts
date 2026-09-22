@@ -11,7 +11,6 @@ import {
   encodeBrowserNativeResponse,
   readBrowserNativeFrame,
 } from "./extension-native-protocol.js";
-export { BROWSER_NATIVE_HOST_NAME } from "./extension-native-host.constants.js";
 const EXTENSION_ORIGIN_PATTERN = /^chrome-extension:\/\/[a-p]{32}\/$/;
 
 type NativeHostManifest = {

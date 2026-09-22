@@ -1,6 +1,6 @@
 import { consume } from "@lit/context";
 import { html, nothing } from "lit";
-import { state } from "lit/decorators.js";
+import { property, state } from "lit/decorators.js";
 import { applicationContext, type ApplicationContext } from "../app/context.ts";
 import type {
   NativeChromeExtensionSetupAction,
@@ -16,8 +16,9 @@ import "./native-chrome-setup.css";
 class NativeChromeSetup extends OpenClawLightDomElement {
   @consume({ context: applicationContext, subscribe: true })
   private context?: ApplicationContext;
+  @property({ type: Boolean, attribute: "auto-inspect" }) autoInspect = false;
   @state() private running = false;
-  @state() private failed = false;
+  @state() private failed: "inspection" | "setup" | null = null;
   @state() private result: NativeChromeExtensionSetupResult | null = null;
   @state() private legacyResult: LegacyChromeInstallResult | null = null;
   private generation = 0;
@@ -29,6 +30,18 @@ class NativeChromeSetup extends OpenClawLightDomElement {
     .effect(
       () => this.context?.nativeDeviceSettings,
       () => () => this.reset(),
+    )
+    .effect(
+      () => (this.autoInspect && this.capability?.snapshot?.browser ? this.capability : undefined),
+      () => {
+        const inspect = () => void this.setup("inspect");
+        window.addEventListener("focus", inspect);
+        inspect();
+        return () => {
+          window.removeEventListener("focus", inspect);
+          this.reset();
+        };
+      },
     );
 
   override disconnectedCallback() {
@@ -45,17 +58,29 @@ class NativeChromeSetup extends OpenClawLightDomElement {
     if (!capability || !browser) {
       return [];
     }
+    if (browser.chromeSetupActions) {
+      return browser.chromeSetupActions;
+    }
+    if (capability.snapshot?.device.platform !== "macos") {
+      return [];
+    }
+    return [
+      ...(capability.installChromeExtension ? ["install" as const] : []),
+      ...(this.autoInspect && capability.chromeExtensionStatus ? ["inspect" as const] : []),
+    ];
+  }
+  private get needsInstall() {
+    const installation = this.result?.installation ?? this.legacyResult;
     return (
-      browser.chromeSetupActions ??
-      (capability.snapshot?.device.platform === "macos" && capability.installChromeExtension
-        ? ["install"]
-        : [])
+      !installation ||
+      !installation.nativeHostRegistered ||
+      (installation.installedProfiles ?? installation.discoveredProfiles) === 0
     );
   }
   private reset() {
     this.generation += 1;
     this.running = false;
-    this.failed = false;
+    this.failed = null;
     this.result = null;
     this.legacyResult = null;
   }
@@ -68,15 +93,19 @@ class NativeChromeSetup extends OpenClawLightDomElement {
     const isCurrent = () =>
       this.isConnected && this.capability === capability && this.generation === generation;
     this.running = true;
-    this.failed = false;
+    this.failed = null;
     this.result = null;
     this.legacyResult = null;
     try {
       if (capability.snapshot?.browser?.chromeSetupActions === undefined) {
-        if (action !== "install" || !capability.installChromeExtension) {
+        let result: LegacyChromeInstallResult;
+        if (action === "inspect" && capability.chromeExtensionStatus) {
+          result = await capability.chromeExtensionStatus();
+        } else if (action === "install" && capability.installChromeExtension) {
+          result = await capability.installChromeExtension();
+        } else {
           return;
         }
-        const result = await capability.installChromeExtension();
         if (isCurrent() && this.actions.includes(action)) {
           this.legacyResult = result;
         }
@@ -88,7 +117,7 @@ class NativeChromeSetup extends OpenClawLightDomElement {
       }
     } catch {
       if (isCurrent()) {
-        this.failed = true;
+        this.failed = this.autoInspect && action === "inspect" ? "inspection" : "setup";
       }
     } finally {
       if (isCurrent()) {
@@ -111,7 +140,11 @@ class NativeChromeSetup extends OpenClawLightDomElement {
               ["verify", "chromeExtensionVerify"],
             ] as const
           )
-            .filter(([action]) => this.actions.includes(action))
+            .filter(
+              ([action]) =>
+                this.actions.includes(action) &&
+                (action !== "install" || !this.autoInspect || this.needsInstall),
+            )
             .map(
               ([action, label]) => html`
                 <button

@@ -212,6 +212,7 @@ type NativeDeviceSettingsMessage =
   | { type: "open"; panel: NativePanel }
   | { type: "check-for-updates" }
   | { type: "chrome-extension-setup"; action: NativeChromeExtensionSetupAction }
+  | { type: "chrome-extension-status" }
   | { type: "install-chrome-extension" };
 
 const legacyChromeInstallResultSchema = z.object({
@@ -223,6 +224,9 @@ const legacyChromeInstallResultSchema = z.object({
   discoveredProfiles: z.number().int().nonnegative(),
 });
 export type LegacyChromeInstallResult = z.infer<typeof legacyChromeInstallResultSchema>;
+const legacyChromeStatusResultSchema = legacyChromeInstallResultSchema.required({
+  installedProfiles: true,
+});
 
 export type NativeDeviceSettingsCapability = {
   readonly snapshot: NativeDeviceSettingsSnapshot | null;
@@ -237,6 +241,7 @@ export type NativeDeviceSettingsCapability = {
   ): Promise<NativeChromeExtensionSetupResult>;
   /** Released native contract-1 installation projection; not a second installer. */
   installChromeExtension?(): Promise<LegacyChromeInstallResult>;
+  chromeExtensionStatus?(): Promise<LegacyChromeInstallResult>;
   refresh(): void;
   dispose(): void;
 };
@@ -326,6 +331,23 @@ export function createNativeDeviceSettingsCapability(): NativeDeviceSettingsCapa
   window.addEventListener(CHANGE_EVENT, onChange);
   window.addEventListener("focus", refresh);
   refresh();
+  const legacyChromeRequest = async (
+    type: "chrome-extension-status" | "install-chrome-extension",
+  ) => {
+    if (!isCurrent() || snapshot?.device.platform !== "macos") {
+      throw new Error("Native device settings is unavailable");
+    }
+    const reply = await post({ type });
+    const schema =
+      type === "chrome-extension-status"
+        ? legacyChromeStatusResultSchema
+        : legacyChromeInstallResultSchema;
+    const result = schema.safeParse(reply);
+    if (!isCurrent() || snapshot?.device.platform !== "macos" || !result.success) {
+      throw new Error("Native Chrome setup returned an invalid result");
+    }
+    return result.data;
+  };
   return {
     get snapshot() {
       return snapshot;
@@ -368,17 +390,8 @@ export function createNativeDeviceSettingsCapability(): NativeDeviceSettingsCapa
       }
       return result.data;
     },
-    async installChromeExtension() {
-      if (!isCurrent() || snapshot?.device.platform !== "macos") {
-        throw new Error("Native device settings is unavailable");
-      }
-      const reply = await post({ type: "install-chrome-extension" });
-      const result = legacyChromeInstallResultSchema.safeParse(reply);
-      if (!isCurrent() || !result.success) {
-        throw new Error("Native Chrome setup returned an invalid result");
-      }
-      return result.data;
-    },
+    installChromeExtension: () => legacyChromeRequest("install-chrome-extension"),
+    chromeExtensionStatus: () => legacyChromeRequest("chrome-extension-status"),
     refresh,
     dispose() {
       disposed = true;

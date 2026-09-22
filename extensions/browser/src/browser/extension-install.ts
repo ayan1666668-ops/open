@@ -27,12 +27,12 @@ import {
   installRegistration,
   type NativeHostRegistrationStatus,
 } from "./extension-install-registration.js";
+import { isValidProfileName } from "./profiles.js";
 export {
   repairChromeExtensionNativeHosts,
   resolveNativeHostPath,
   uninstallChromeExtensionNativeHosts,
 } from "./extension-install-registration.js";
-import { isValidProfileName } from "./profiles.js";
 
 const BROWSER_EXTENSION_INSTALL_WAIT_DEFAULT_MS = 30_000;
 const BROWSER_EXTENSION_INSTALL_WAIT_MIN_MS = 1_000;
