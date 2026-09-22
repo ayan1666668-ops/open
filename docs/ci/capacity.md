@@ -73,6 +73,13 @@ timing weights, process boundaries, runner requirements, and admission limits
 remain authoritative. If compaction cannot fit the complete inventory, preflight
 fails instead of dropping work or increasing either cap.
 
+Hybrid serial tooling tails can share the stronger declared runner within the
+existing 150-second exclusive budget. Complete child groups retain their file
+partitions, two-worker pins and timing identities; ordinary and CLI bins are
+unchanged. Balanced splitting omits empty stripes before creating timing keys,
+because an empty include list would execute a whole config without a priced
+workload.
+
 The approved row-cap increase raises compact plans from 80 to 90 rows and final Node matrices from 64/120 to 70/130 push/PR rows. It reserves room for the measured isolated Gateway-server family and measured plugin-envelope packing. At the limits, each run can admit six more Node registrations on push or ten more on PR; compact rows are already included in that total. Across the retained four-main/21-PR arrival envelope, the increase is `4 × 6 + 21 × 10 = 234`, taking the conservative ceiling from 4,776 to 5,010. Runner classes, workers, matrix concurrency and timeouts retain their existing policies. The cap increase alone does not establish a runtime improvement.
 
 The shared plugin catch-all, QA and provider suites use native Vitest sharding, sized from the existing 90-file envelope budget. Their complete configs still own discovery and exclusions; the counting inventory never narrows execution to the directly changed plugin. At `2f7fb353`, the catch-all has 486 counting entries and 474 effective files across six jobs, QA has 238/232 across three, and providers have 275/256 across four. Counting entries include files excluded by Vitest, so the budget is conservative. Each job retains its existing worker limits, isolation policy and per-file module cleanup.
@@ -256,12 +263,14 @@ speedup. Existing two-worker timing generations stay
 as advisory floors until the normal complete-group refit replaces them.
 
 Commands splitting and packing retain the conservative two-worker retry budget.
-After placement, their predicted child seconds use the expected allocation:
-eight on uncapped serial 32-class rows and two on constrained or overlapping rows, capped
-by file count and bounded below by the longest file. Runtime preparation is not
-divided. Separate timing identities preserve direct two/eight-worker samples;
-new parallel observations are not divided as though they were serial. Live
-CPU load and memory pressure can lower the scheduler's allocation.
+Their wall estimates include imports, transforms and startup, so additional
+workers do not divide that entire cost. Parallel observations replace only the
+files they cover; compatible serial observations price the remaining files,
+without overlapping the two timing epochs. After placement, an
+exact target-worker parallel observation can replace the fallback, bounded below
+by the longest file. Separate timing identities preserve direct two/eight-worker
+samples. Runtime preparation is charged once and never divided. Live CPU load
+and memory pressure can lower the scheduler's allocation.
 
 Embedded base, attempt-runner, and tool files follow the shared scheduler's file
 parallelism. The base keeps three balanced stripes for its large harness files;
@@ -502,6 +511,42 @@ jobs retain `planConcurrency: 1`. The refit preserves each complete child span,
 including contention, without subtracting setup or rewriting historical costs. Runner-profile
 calibration remains a separate admission policy.
 
+Compact child observations also retain the requested runner label, observed CPU
+count, effective child workers, timing family, and admitted plan concurrency. The planner uses
+matching configuration, environment, and complete file membership on the
+candidate job's execution class before packing. A two-worker observation on the
+2-CPU class cannot be replaced by a faster eight-worker observation on the
+32-class. Direct observations are wall seconds, including serial configurations;
+they are not multiplied by a worker ratio or discounted by the hybrid profile.
+An exact observation for the current workload and allocation can replace a
+fallback projection. Other admission floors remain conservative.
+Worker pins and measured-worker fallback eligibility use the runtime's existing
+owner. Multiple compatible observed allowances retain the largest measured wall
+for admission. When files are added, the largest contained observation remains a
+fallback floor without summing overlapping workloads. Timing-family changes keep
+older serial observations separate from newly parallel execution. Command worker-count
+suffixes remain compatible within parallel execution; actual observed workers govern
+conservative projection, without assuming a speedup on larger allocations. If placement
+loses a larger runner, a matching workload observation remains a fallback floor.
+Only families already using the measured-worker policy
+project that wall to fewer workers using the observed allowance ratio; serial
+groups keep the unscaled wall, and additional workers never imply a speedup.
+Observed job allowances remain separate from each child's worker pin. The lowest observed memory remains current even when duration changes stay below the refit threshold; memory-only updates are written independently. Missing
+workload observations retain the existing positive fallback costs.
+
+Before repartitioning a family, the splitter preserves a measured work floor
+from compatible observations with disjoint file sets. It deduplicates repeated
+workloads and never sums overlapping snapshots. The floor feeds the existing
+stripe weights and admission budgets; changed child membership cannot silently
+fall back to a smaller stale parent or static per-file estimate. These sums
+already contain child walls, so worker projection does not divide them again.
+During admission, each observed workload's cost is distributed over its files
+using the existing stripe weights at the candidate job's actual allocation.
+Unobserved files retain their fallback cost. If a job loses capacity, its costs
+are recalculated before admission; an eight-worker sample cannot price a
+two-worker placement as though the allocation were unchanged.
+Tooling retains its per-file parallel timing owner.
+
 For split compact groups, the refit also records the parent cost from a complete
 generation within one run and runner profile. It sums each part's median span,
 takes the largest complete generation or direct parent measurement in that run,
@@ -533,14 +578,22 @@ compact measurements. Docs-only runs and unparseable logs do not fill that quota
 It also reads the newest five successful `ci.yml` `pull_request` runs for the
 PR-only numbered tooling family. These tests execute the PR merge-ref, not a
 canonical main revision; that provenance is appropriate for PR-only tooling.
-PR logs update only `toolingFileSeconds`, never main compact or release weights.
-Tooling measurements are collected ahead of planner activation: run `35506602947`
-exceeds the current hosted and hybrid row caps when applied. Keep activation
-separate until measured test improvements or approved capacity make every profile fit.
-The map keeps separate Blacksmith and GitHub measurements. Numbered tooling
-parents and their child timing keys change when files move, so per-file costs
-can survive repacking and serve local tooling scheduling after activation. Unmeasured files use
-the remaining cold hints or the positive two-second default.
+PR logs update `toolingFileSeconds` and exact `compactWorkerTimings`; they never
+update legacy main compact parents or release weights. Capacity observations
+retain their exact file inventory, including partial PR selections, so a partial
+selection cannot become a complete parent measurement. Main and PR provenance
+remain separate in the generated source description. Each capacity class uses
+the existing two-independent-run minimum, median, outlier filter, and 15% write
+threshold; missing observations are retained across partial plans.
+CI tooling packing uses the retained per-file measurements because numbered
+parents and child keys change when files move. Blacksmith and hybrid use the
+Blacksmith map; direct GitHub measurements remain unscaled, while missing
+GitHub measurements use the existing hosted fallback scale. The shared worker
+scheduler preserves the longest file and divides only aggregate file work by
+the admitted workers. Unmeasured files retain cold hints or the positive
+two-second default. Local tooling ordering retains its static weights.
+Honest prices can exceed the existing row caps; preflight refuses that plan
+until the maintainer resolves capacity, without reducing coverage.
 
 Only successful complete tooling invocations contribute. Native file summaries
 include suite hooks; older verbose-only logs supply summed case durations.

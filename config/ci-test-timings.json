@@ -1994,5 +1994,6 @@
     "perFileOverheadSeconds": 0.8
   },
   "updatedAt": "2026-09-21",
-  "version": 1
+  "version": 1,
+  "compactWorkerTimings": []
 }

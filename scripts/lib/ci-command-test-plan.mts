@@ -31,6 +31,16 @@ export function isParallelCommandsGroup(group: CommandGroup): boolean {
   return group.configs.length === 1 && group.configs[0] === "test/vitest/vitest.commands.config.ts";
 }
 
+export function commandWorkerTimingFamily(
+  group: CommandGroup,
+  timingOwner: string,
+): string | undefined {
+  // This suffix records the command worker allocation, not a new timing epoch.
+  return isParallelCommandsGroup(group)
+    ? /^(.*)#file-parallel-[1-9]\d*$/u.exec(timingOwner)?.[1]
+    : undefined;
+}
+
 export function commandFileSecondsFloor(
   files: readonly string[],
   runnerBackend: string | undefined,
@@ -95,28 +105,20 @@ export function estimateSerialCommandSeconds(
           ) ?? 0) * scale;
     seconds += Math.max(fullSeconds * fraction, runtimeSeconds);
   }
-  // A file occupies one fork even when siblings share the two-worker budget.
-  return Math.max(
-    seconds / Math.max(1, Math.min(2, files.length)),
-    commandFileSecondsFloor(files, runnerBackend),
-  );
+  // Legacy walls include imports and setup; worker counts do not establish a speedup.
+  return Math.max(seconds, commandFileSecondsFloor(files, runnerBackend));
 }
 
 export function estimateLegacyCommandStripeSeconds(
-  files: readonly string[],
   timingKey: string | undefined,
   runnerBackend: string | undefined,
 ): number {
   const profile = runnerBackend === "github" ? "github" : "blacksmith";
   const seconds = timingKey ? (readCompactGroupTimings(profile)[timingKey] ?? 0) : 0;
-  return (
-    (seconds * (runnerBackend === "hybrid" ? COMPACT_HYBRID_GROUP_SECONDS_SCALE : 1)) /
-    Math.max(1, Math.min(2, files.length))
-  );
+  return seconds * (runnerBackend === "hybrid" ? COMPACT_HYBRID_GROUP_SECONDS_SCALE : 1);
 }
 
-// Admission uses the hosted/retry allocation. Reprice only the test portion
-// after placement; an indivisible file and a direct parallel sample remain floors.
+// Only a target-worker observation can replace the admission wall with a speedup.
 export function estimateCommandWorkerSeconds(
   group: CommandGroup & { timing_key?: string },
   fallbackSeconds: number,
@@ -129,15 +131,10 @@ export function estimateCommandWorkerSeconds(
     `#file-parallel-${maxWorkers}`,
   );
   const profile = runnerBackend === "github" ? "github" : "blacksmith";
-  const measured = timingKey ? (readCompactGroupTimings(profile)[timingKey] ?? 0) : 0;
+  const measured = timingKey ? readCompactGroupTimings(profile)[timingKey] : undefined;
   return {
     timingKey,
-    seconds: Math.max(
-      (fallbackSeconds * Math.max(1, Math.min(2, files.length))) /
-        Math.max(1, Math.min(maxWorkers, files.length)),
-      commandFileSecondsFloor(files, runnerBackend),
-      measured * (runnerBackend === "hybrid" ? COMPACT_HYBRID_GROUP_SECONDS_SCALE : 1),
-    ),
+    seconds: Math.max(measured ?? fallbackSeconds, commandFileSecondsFloor(files, runnerBackend)),
   };
 }
 
