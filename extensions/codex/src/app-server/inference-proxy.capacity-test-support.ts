@@ -279,7 +279,6 @@ export {
   child,
   clients,
   complete,
-  completed,
   connect,
   holdHttpResponses,
   holdUploads,
