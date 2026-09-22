@@ -1,4 +1,5 @@
 // Proves dispatcher root-work accounting and fail-closed suspension behavior.
+import { expectDefined } from "@openclaw/normalization-core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createGatewayHostLifecycle } from "../cli/gateway-cli/host-lifecycle.js";
 import {
@@ -113,7 +114,7 @@ describe("gateway request suspension admission", () => {
       method: "update.runs.get",
       scope: "operator.admin",
       core: true,
-      handler: handlers["update.runs.get"],
+      handler: expectDefined(handlers["update.runs.get"], "lazy update-run handler"),
       context: { requestEntryLifetime, logGateway: { warn: vi.fn() } } as unknown as Parameters<
         typeof handleGatewayRequest
       >[0]["context"],
