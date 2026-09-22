@@ -1,4 +1,5 @@
 // Session memory transcript helpers persist compact session transcript excerpts.
+import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { classifySessionMessageOrigin } from "../../../../packages/memory-host-sdk/src/host/session-provenance.js";
 import type { MemoryOriginClass } from "../../../../packages/memory-host-sdk/src/host/types.js";
 import { sanitizeModelSpecialTokens } from "../../../security/external-content.js";
@@ -175,7 +176,23 @@ export function countSessionMemoryMessages(events: readonly unknown[]): number {
 export type SessionMemoryProjection = {
   content: string;
   originClass: "agent" | "untrusted";
+  /** Latest captured message time, so artifacts describe the conversation rather than the reset. */
+  lastMessageTimestamp?: number;
 };
+
+function resolveLastMessageTimestamp(events: readonly unknown[]): number | undefined {
+  let latest: number | undefined;
+  for (const event of events) {
+    if (!isRecord(event) || event.type !== "message") {
+      continue;
+    }
+    const timestamp = event.timestamp;
+    if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
+      latest = latest === undefined ? timestamp : Math.max(latest, timestamp);
+    }
+  }
+  return latest;
+}
 
 export function getRecentSessionProjectionFromEvents(
   events: readonly unknown[],
@@ -189,6 +206,7 @@ export function getRecentSessionProjectionFromEvents(
   if (records.length === 0) {
     return null;
   }
+  const lastMessageTimestamp = resolveLastMessageTimestamp(events);
   return {
     content: records.map((record) => record.line).join("\n"),
     originClass: records.some(
@@ -196,5 +214,6 @@ export function getRecentSessionProjectionFromEvents(
     )
       ? "untrusted"
       : "agent",
+    ...(lastMessageTimestamp === undefined ? {} : { lastMessageTimestamp }),
   };
 }
