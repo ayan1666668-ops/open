@@ -501,7 +501,7 @@ class UserDriver:
         print(link)
         print("")
 
-    def resolve_chat(self, chat):
+    def resolve_chat(self, chat, *, local_only=False):
         chat = chat or default_chat(self.config, self.bot_config)
         if not chat:
             raise DriverError("Missing chat. Pass --chat or configure defaultChatId. Run `user-driver.py chats --json` to list chats visible to the tester account.")
@@ -520,9 +520,24 @@ class UserDriver:
                 and error.tdlib_message == "Chat not found"
             ):
                 raise
+            if local_only:
+                raise DriverError(
+                    f"Chat {chat} is missing from the cold-restored TDLib state. Disable and republish the pooled credential with a snapshot where getChat(groupId) succeeds.",
+                    diagnostic_code=CREDENTIAL_STATE_MISSING_GROUP,
+                ) from error
+            chats = self.client.request(
+                {
+                    "@type": "getChats",
+                    "chat_list": {"@type": "chatListMain"},
+                    "limit": 100,
+                },
+                timeout=30,
+            )
+            chat_id = int(chat)
+            if chat_id in chats.get("chat_ids", []):
+                return chat_id
             raise DriverError(
-                f"Chat {chat} is missing from the cold-restored TDLib state. Disable and republish the pooled credential with a snapshot where getChat(groupId) succeeds.",
-                diagnostic_code=CREDENTIAL_STATE_MISSING_GROUP,
+                f"Chat not found for tester account: {chat}. Add the QA user to the group, or configure the TDLib chat id from `user-driver.py chats --json`."
             ) from error
 
     def formatted_text(self, text):
@@ -821,7 +836,9 @@ def command_status(args):
         sys.exit(1)
     me = driver.client.request({"@type": "getMe"})
     version = driver.client.request({"@type": "getOption", "name": "version"})
-    chat_id = driver.resolve_chat(args.require_chat) if args.require_chat else None
+    chat_id = (
+        driver.resolve_chat(args.require_chat, local_only=True) if args.require_chat else None
+    )
     save_tester_identity(config, me)
     print_result(
         {

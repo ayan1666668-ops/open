@@ -76,13 +76,37 @@ class PhotoContentTest(unittest.TestCase):
         instance = driver.UserDriver.__new__(driver.UserDriver)
         instance.client = FakeClient()
         with self.assertRaisesRegex(driver.DriverError, "cold-restored TDLib state") as raised:
-            instance.resolve_chat("-1001")
+            instance.resolve_chat("-1001", local_only=True)
         self.assertEqual(
             raised.exception.diagnostic_code, driver.CREDENTIAL_STATE_MISSING_GROUP
         )
         self.assertEqual(
             [payload["@type"] for payload, _timeout in instance.client.requests],
             ["getChat"],
+        )
+
+    def test_ordinary_numeric_chat_can_load_from_the_main_chat_list(self):
+        class FakeClient:
+            def __init__(self):
+                self.requests = []
+
+            def request(self, payload, timeout=20):
+                self.requests.append((payload, timeout))
+                if payload["@type"] == "getChat":
+                    raise driver.DriverError(
+                        "getChat failed (400): Chat not found",
+                        tdlib_code=400,
+                        tdlib_message="Chat not found",
+                        tdlib_method="getChat",
+                    )
+                return {"chat_ids": [-1001]}
+
+        instance = driver.UserDriver.__new__(driver.UserDriver)
+        instance.client = FakeClient()
+        self.assertEqual(instance.resolve_chat("-1001"), -1001)
+        self.assertEqual(
+            [payload["@type"] for payload, _timeout in instance.client.requests],
+            ["getChat", "getChats"],
         )
 
     def test_numeric_chat_propagates_unrelated_tdlib_failures(self):
