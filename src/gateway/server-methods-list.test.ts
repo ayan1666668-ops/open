@@ -233,6 +233,10 @@ describe("listGatewayMethods", () => {
       "themes.set",
       "themes.import",
       "controlUi.githubDetail",
+      "progressCard.refresh",
+      "webSearch.status",
+      "webSearch.test",
+      "sessions.providerReview.continue",
     ];
     expect(listGatewayMethods().slice(-expectedSuffix.length)).toEqual(expectedSuffix);
     const methods = listGatewayMethods();
@@ -286,6 +290,10 @@ describe("listGatewayMethods", () => {
       "themes.set",
       "themes.import",
       "controlUi.githubDetail",
+      "progressCard.refresh",
+      "webSearch.status",
+      "webSearch.test",
+      "sessions.providerReview.continue",
     ]);
   });
 
@@ -468,6 +476,10 @@ describe("listGatewayMethods", () => {
       "themes.set",
       "themes.import",
       "controlUi.githubDetail",
+      "progressCard.refresh",
+      "webSearch.status",
+      "webSearch.test",
+      "sessions.providerReview.continue",
     ];
     expect(coreMethods.slice(-expectedCoreSuffix.length)).toEqual(expectedCoreSuffix);
     expect(methods.indexOf("approval.get")).toBeGreaterThan(methods.indexOf("tts.speak"));
