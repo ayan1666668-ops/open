@@ -237,7 +237,7 @@ public final class RealtimeTalkRelaySession {
     private nonisolated static let bargeInCooldownMs: Double = 900
     private nonisolated static let minOutputBeforeBargeInMs: Double = 250
     private nonisolated static let startupReadyTimeoutSeconds = 12
-    /// At the protocol's 20 ms cadence this bounds queued relay audio to 640 ms / 30,720 bytes.
+    /// At the decoder's local 20 ms cadence this bounds queued relay audio to 640 ms / 30,720 bytes.
     /// Overflow terminates the session so recovery replaces a lagging playback path.
     private nonisolated static let maxBufferedOutputChunks = 32
 

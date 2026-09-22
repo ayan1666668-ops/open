@@ -365,14 +365,13 @@ function resolveClientVoiceToolConfirmationPolicy(
   }
   const state = getPrunedConfirmationScope(scopeKey, now) ?? getOrCreateConfirmationScope(scopeKey);
   const pending = state.pending;
-  const existing =
-    pending && pending.runId === params.runId && pending.fingerprint === fingerprint
-      ? pending
-      : undefined;
+  // A retry is a new run, not a new action. Keep the exact pending challenge
+  // without extending its expiry or granting execution to the retry.
+  const existing = pending?.fingerprint === fingerprint ? pending : undefined;
   if (!existing) {
     clearPendingConfirmation(state);
   }
-  const confirmation =
+  const confirmation: PendingVoiceConfirmation =
     existing ??
     ({
       confirmationId: randomUUID(),
@@ -381,20 +380,23 @@ function resolveClientVoiceToolConfirmationPolicy(
       createdAt: now,
       expiresAt: now + CONFIRMATION_TTL_MS,
       changed: createDeferredCore(),
-      ...(params.runId &&
-      params.toolCallId &&
-      params.runId.length <= 256 &&
-      params.toolCallId.length <= 256 &&
-      params.toolName.length <= 128
-        ? {
-            blockedCall: {
-              runId: params.runId,
-              toolCallId: params.toolCallId,
-              toolName: params.toolName,
-            },
-          }
-        : {}),
     } satisfies PendingVoiceConfirmation);
+  if (params.runId) {
+    confirmation.runId = params.runId;
+  }
+  if (
+    params.runId &&
+    params.toolCallId &&
+    params.runId.length <= 256 &&
+    params.toolCallId.length <= 256 &&
+    params.toolName.length <= 128
+  ) {
+    confirmation.blockedCall = {
+      runId: params.runId,
+      toolCallId: params.toolCallId,
+      toolName: params.toolName,
+    };
+  }
   state.pending = confirmation;
   const observation = params.runId ? state.observationsByRun.get(params.runId) : undefined;
   if (observation) {

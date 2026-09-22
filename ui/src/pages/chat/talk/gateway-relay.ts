@@ -372,6 +372,7 @@ export class GatewayRelayRealtimeTalkTransport implements RealtimeTalkTransport 
               role: event.role,
               text: event.text,
               final: event.final ?? false,
+              ...(event.textMode ? { textMode: event.textMode } : {}),
             });
           }
           return;

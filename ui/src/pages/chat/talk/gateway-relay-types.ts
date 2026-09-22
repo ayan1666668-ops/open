@@ -13,6 +13,7 @@ export type GatewayRelayEvent = {
       role?: "user" | "assistant";
       text?: string;
       final?: boolean;
+      textMode?: "snapshot";
     }
   | {
       type?: "toolCall";

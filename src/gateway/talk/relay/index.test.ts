@@ -2123,7 +2123,7 @@ describe("talk realtime gateway relay", () => {
       supportsToolResultContinuation: true,
       connect: vi.fn(async () => {
         bridgeRequest?.onReady?.();
-        bridgeRequest?.onTranscript?.("user", "hel", false);
+        bridgeRequest?.onTranscript?.("user", "hel", false, { textMode: "snapshot" });
         bridgeRequest?.onEvent?.({
           direction: "server",
           type: "response.created",
@@ -2239,6 +2239,7 @@ describe("talk realtime gateway relay", () => {
       markName: "mark-1",
     });
     expectDelivery(markPayload, false);
+    expect(markPayload.talkEvent).toBeUndefined();
 
     const partialTranscript = findEventPayload(
       events,
@@ -2246,6 +2247,7 @@ describe("talk realtime gateway relay", () => {
         payload.type === "transcript" && payload.role === "user" && payload.final === false,
     );
     expectDelivery(partialTranscript, true);
+    expect(partialTranscript.textMode).toBe("snapshot");
 
     const userTranscript = findEventPayload(
       events,
@@ -3626,7 +3628,7 @@ describe("talk realtime gateway relay", () => {
     expect(relaySessions.has(session.relaySessionId)).toBe(true);
   });
 
-  it("splits large provider audio into ordered 20 ms relay frames", () => {
+  it("splits large provider audio into ordered 200 ms relay frames", () => {
     let bridgeRequest: RealtimeVoiceBridgeCreateRequest | undefined;
     const provider: RealtimeVoiceProviderPlugin = {
       id: "relay-test",
@@ -3655,7 +3657,7 @@ describe("talk realtime gateway relay", () => {
       connId: "conn-1",
       audioBase64: Buffer.from("audio").toString("base64"),
     });
-    const audio = Buffer.alloc(960 * 33 + 137);
+    const audio = Buffer.alloc(9_600 * 33 + 137);
     for (let index = 0; index < audio.length; index += 1) {
       audio[index] = index % 251;
     }
@@ -3679,7 +3681,7 @@ describe("talk realtime gateway relay", () => {
       Buffer.from(String(payload.audioBase64), "base64"),
     );
     expect(frames).toHaveLength(34);
-    expect(frames.every((frame) => frame.byteLength <= 960)).toBe(true);
+    expect(frames.every((frame) => frame.byteLength <= 9_600)).toBe(true);
     expect(frames.at(-1)?.byteLength).toBe(137);
     expect(Buffer.concat(frames)).toEqual(audio);
     for (const [index, payload] of audioPayloads.entries()) {

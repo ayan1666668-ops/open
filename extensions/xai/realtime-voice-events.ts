@@ -17,6 +17,12 @@ export class XaiRealtimeMalformedAudioError extends Error {}
 export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
   private assistantTranscriptBuffer = "";
   private assistantTranscriptFinalized = false;
+  private pendingInputTranscript: { key: string; text: string } | undefined;
+  private finalizedInputTranscriptKeys = new Set<string>();
+  private inputSpeechSequence = 0;
+  private inputResponseStarted = false;
+  private inputResponseFinished = false;
+  private inputResponseId: string | undefined;
   private finalizedToolCallItems = new Set<string>();
   private inputTranscriptReplacements = new Map<string, string>();
 
@@ -26,6 +32,9 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
   protected handleEvent(event: XaiRealtimeEvent, connection: RealtimeVoiceSessionConnection): void {
     if (event.type === "response.created" && this.acceptsEvent(connection)) {
       // Publish the response owner before observers can interrupt its first PCM.
+      this.inputResponseStarted = true;
+      this.inputResponseFinished = false;
+      this.inputResponseId = event.response_id ?? event.response?.id;
       this.outputAudioGeneration += 1;
       this.responseActive = true;
       this.responseCreateInFlight = false;
@@ -116,6 +125,10 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
         return;
       }
       case "input_audio_buffer.speech_started":
+        this.flushPendingInputTranscript();
+        this.inputSpeechSequence += 1;
+        this.inputResponseStarted = false;
+        this.inputResponseFinished = false;
         this.handleServerVadBargeIn();
         return;
       case "response.text.delta":
@@ -128,6 +141,12 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
       case "response.text.done":
       case "response.output_text.done":
       case "response.output_audio_transcript.done":
+        if (this.isCurrentInputResponse(event)) {
+          this.flushPendingInputTranscript();
+          if (!this.acceptsEvent(connection)) {
+            return;
+          }
+        }
         this.flushAssistantTranscript(event.transcript ?? event.text);
         return;
       case "conversation.item.input_audio_transcription.delta":
@@ -144,16 +163,39 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
         const key = this.inputTranscriptKey(event);
         const transcript = event.transcript ?? this.inputTranscriptReplacements.get(key);
         this.inputTranscriptReplacements.delete(key);
-        if (transcript) {
-          this.config.onTranscript?.("user", transcript, true);
+        if (!transcript || this.finalizedInputTranscriptKeys.has(key)) {
+          return;
+        }
+        if (this.pendingInputTranscript && this.pendingInputTranscript.key !== key) {
+          this.flushPendingInputTranscript();
+          if (!this.acceptsEvent(connection)) {
+            return;
+          }
+        }
+        this.pendingInputTranscript = { key, text: transcript };
+        // xAI's completed events are cumulative snapshots, not utterance boundaries.
+        // Preview immediately; commit once the response settles, so later corrections
+        // cannot either duplicate the user message or truncate it permanently.
+        this.config.onTranscript?.("user", transcript, false, { textMode: "snapshot" });
+        if (this.inputResponseFinished && this.acceptsEvent(connection)) {
+          this.flushPendingInputTranscript();
         }
         return;
       }
       case "conversation.item.input_audio_transcription.failed":
+        this.pendingInputTranscript = undefined;
         this.inputTranscriptReplacements.delete(this.inputTranscriptKey(event));
         this.config.onError?.(new Error(readXaiRealtimeErrorDetail(event.error)));
         return;
       case "response.done": {
+        // A trailing terminal from an interrupted response must not settle new speech.
+        if (this.isCurrentInputResponse(event)) {
+          this.inputResponseFinished = true;
+          this.flushPendingInputTranscript();
+          if (!this.acceptsEvent(connection)) {
+            return;
+          }
+        }
         const output = Array.isArray(event.response?.output)
           ? event.response.output.filter(isRecord)
           : [];
@@ -276,8 +318,36 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
   }
 
   protected resetInputTranscripts(): void {
+    this.flushPendingInputTranscript();
     this.inputTranscriptReplacements.clear();
+    this.finalizedInputTranscriptKeys.clear();
+    this.inputResponseStarted = false;
+    this.inputResponseFinished = false;
     this.finalizedToolCallItems.clear();
+  }
+
+  private isCurrentInputResponse(event: XaiRealtimeEvent): boolean {
+    const responseId = event.response_id ?? event.response?.id;
+    return (
+      this.inputResponseStarted &&
+      (!responseId || !this.inputResponseId || responseId === this.inputResponseId)
+    );
+  }
+
+  private flushPendingInputTranscript(): void {
+    const pending = this.pendingInputTranscript;
+    this.pendingInputTranscript = undefined;
+    if (!pending) {
+      return;
+    }
+    this.finalizedInputTranscriptKeys.add(pending.key);
+    if (this.finalizedInputTranscriptKeys.size > 1_024) {
+      const oldest = this.finalizedInputTranscriptKeys.values().next().value;
+      if (oldest !== undefined) {
+        this.finalizedInputTranscriptKeys.delete(oldest);
+      }
+    }
+    this.config.onTranscript?.("user", pending.text, true, { textMode: "snapshot" });
   }
 
   private emitCompletedToolCall(item: XaiRealtimeEvent["item"], event: XaiRealtimeEvent): void {
@@ -335,7 +405,7 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
   }
 
   private inputTranscriptKey(event: XaiRealtimeEvent): string {
-    return event.item_id ?? event.response_id ?? "default";
+    return event.item_id ?? event.response_id ?? `speech-${this.inputSpeechSequence}`;
   }
 
   private handleErrorEvent(error: unknown): void {

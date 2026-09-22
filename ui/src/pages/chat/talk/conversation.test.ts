@@ -6,6 +6,37 @@ import {
 } from "./conversation.ts";
 
 describe("realtime Talk conversation", () => {
+  it("keeps a corrected snapshot before the answer without adding another user entry", () => {
+    let state = createRealtimeTalkConversationState();
+    state = updateRealtimeTalkConversation(state, {
+      role: "user",
+      text: "How",
+      final: false,
+      textMode: "snapshot",
+    });
+    state = updateRealtimeTalkConversation(state, {
+      role: "assistant",
+      text: "Earth is",
+      final: false,
+    });
+    state = updateRealtimeTalkConversation(state, {
+      role: "user",
+      text: "What size is Earth?",
+      final: false,
+      textMode: "snapshot",
+    });
+    state = updateRealtimeTalkConversation(state, {
+      role: "user",
+      text: "What size is Earth?",
+      final: true,
+      textMode: "snapshot",
+    });
+    expect(state.entries).toMatchObject([
+      { role: "user", text: "What size is Earth?", isStreaming: false },
+      { role: "assistant", text: "Earth is" },
+    ]);
+  });
+
   it("inserts spacing between adjacent transcript fragments", () => {
     let state = createRealtimeTalkConversationState();
 

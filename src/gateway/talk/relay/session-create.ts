@@ -58,8 +58,9 @@ import {
 } from "./tool-call-ledger.js";
 import { enqueueRelayVoiceTranscript } from "./voice.js";
 
-// The relay contract is 20 ms of 24 kHz mono PCM16 per browser event.
-const RELAY_OUTPUT_AUDIO_FRAME_BYTES = 960;
+// Bound browser source count without waiting to fill a frame. Small provider packets
+// still pass through immediately; large packets use at most 200 ms of 24 kHz PCM16.
+const RELAY_OUTPUT_AUDIO_FRAME_BYTES = 9_600;
 
 /** Creates a realtime voice relay session and returns the browser audio contract. */
 export function createTalkRealtimeRelaySession(
@@ -283,15 +284,8 @@ export function createTalkRealtimeRelaySession(
           }
           return;
         }
-        emit(
-          { relaySessionId, type: "mark", markName },
-          {
-            type: "output.audio.done",
-            turnId: outputTurnId,
-            payload: { markName },
-            final: true,
-          },
-        );
+        // A playback checkpoint is not the end of the provider's response.
+        emit({ relaySessionId, type: "mark", markName });
       },
     },
     onEvent: (event) => {
@@ -411,7 +405,7 @@ export function createTalkRealtimeRelaySession(
         });
       }
     },
-    onTranscript: (role, text, final) => {
+    onTranscript: (role, text, final, metadata) => {
       const relay = getActiveRelay() ?? (relayRef.current?.closing ? relayRef.current : undefined);
       if (!relay || relay.voiceSessionClose) {
         return;
@@ -426,7 +420,7 @@ export function createTalkRealtimeRelaySession(
         return;
       }
       if (relay.closing) {
-        emit({ relaySessionId, type: "transcript", role, text, final });
+        emit({ relaySessionId, type: "transcript", role, text, final, ...metadata });
         return;
       }
       const outputTurnId = role === "assistant" ? outputOwnership.resolve(true) : undefined;
@@ -444,7 +438,7 @@ export function createTalkRealtimeRelaySession(
             : "transcript.delta";
       const payload = role === "assistant" ? { text } : { role, text };
       emit(
-        { relaySessionId, type: "transcript", role, text, final },
+        { relaySessionId, type: "transcript", role, text, final, ...metadata },
         {
           type: eventType,
           turnId,

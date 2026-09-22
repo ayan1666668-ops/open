@@ -50,6 +50,7 @@ export type TalkRealtimeRelayEventPayload =
       role: "user" | "assistant";
       text: string;
       final: boolean;
+      textMode?: "snapshot";
     }
   | {
       relaySessionId: string;
