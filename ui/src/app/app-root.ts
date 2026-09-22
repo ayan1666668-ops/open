@@ -29,7 +29,7 @@ import {
   QUESTION_PAGE_ELEMENT,
   TERMINAL_PANEL_ELEMENT,
 } from "./lazy-custom-element.ts";
-import { availableLinkPreviewReaders } from "./link-reader-routing.ts";
+import { availableLinkReaders, availableLinkPreviewReaders } from "./link-reader-routing.ts";
 import { nativeEmbedHost, isNativeWebChromeHost } from "./native-web-chrome.ts";
 import { resolveOnboardingMode } from "./onboarding-mode.ts";
 import { isDesktopPanelAvailable } from "./panel-availability.ts";
@@ -611,6 +611,7 @@ export class OpenClawApp extends OpenClawLightDomElement {
         <openclaw-login-gate
           .props=${{
             resourceBasePath: context.resourceBasePath,
+            mascot: context.theme.branding.mascot,
             connected: gatewayConnected,
             lastError: gatewaySnapshot.lastError,
             reconnectPending:
@@ -658,6 +659,8 @@ export class OpenClawApp extends OpenClawLightDomElement {
       <openclaw-link-reader-hovercard-provider
         .client=${gatewayConnected ? gatewaySnapshot.client : null}
         .readers=${availableLinkPreviewReaders(gatewaySnapshot)}
+        .claimedReaders=${availableLinkReaders(gatewaySnapshot)}
+        .pagePreviewContext=${context}
         .agentId=${
           context.agentSelection.state.selectedId ?? gatewaySnapshot.assistantAgentId ?? undefined
         }

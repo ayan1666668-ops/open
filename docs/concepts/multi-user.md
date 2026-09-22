@@ -114,6 +114,8 @@ Administrators can still create shared profiles through the CLI (`openclaw model
 
 ### Pin and default rules
 
+Creating your own session with `operator.sessions.write` applies your saved new-chat default when available, or uses the Gateway's configured selection otherwise. Explicit personal account selection and changes to your new-chat default still require `operator.write`. Both creation paths retain the current connection, profile, and role checks.
+
 When a linked person creates a session, OpenClaw captures their default as that session's auth selection. The selection has the same strength as a `/model ...@profile` pin. This happens before an initial message is dispatched, including when creation and the first message are separate requests. Sessions first created by turn admission capture the default at that admission. The pin is **session-sticky**: other people steering into that session use its selected account, and forks inherit it. An explicit `/model ...@profile -s` pin outranks the link. A fresh personal selection must belong to the authenticated human making it. Knowing another person's account id is not permission to select it. Agent- and channel-originated turns do not create personal links. For runtimes using OpenClaw's auth fallback planner, the ordered shared profiles for the same provider remain failover candidates if the pinned account fails. This matches the behavior of an explicit pin. Claude CLI requires its selected account and does not substitute shared profiles or its native login when that account cannot be used.
 
 **Use Gateway defaults for new chats**, CLI `clear-default`, and API `users.unlinkAuthProfile` affect future sessions only. Changing a default does not repin existing chats, including unpinned chats using shared credentials. Adopting or forking an existing chat does not apply the current participant's default, and changing providers does not silently select their personal account. Expand the **Account** category in the model menu to make that explicit choice. Clearing a default neither deletes the saved credential nor revokes a provider token. Revoke it with the provider if existing sessions must stop using it. Links and existing session credentials follow verified profile merges, but an explicit unlink on the surviving profile is not reversed by a merge.
@@ -166,13 +168,21 @@ In the transcript, selected mentions show a small inline avatar beside the origi
 In a normal Control UI chat, type `@` and search by a person's display name (including spaces) or any linked verified GitHub handle, then select the person from the picker. The composer shows **Will notify** with your selected recipients. You can select up to ten mentions per message. Typing or pasting `@name` without selecting a person sends ordinary text and does not notify anyone. **Remove mention** clears the recipient selections while keeping the message text.
 
 Use Up/Down to move through people, Home/End to jump to the first or last result,
-and Enter or Tab to insert the selected mention. Escape closes the picker. Filtering
-keeps the selected person when they still match. The picker shows placeholders while
-searching, an empty message when nobody matches, and **Retry** if the lookup fails.
+and Enter or Tab to insert the selected mention. Escape closes the picker. Typing a
+space immediately after `@` also closes it, so a standalone `@` and the prose after it
+stay ordinary text. Moving the cursor outside the active mention also closes the picker.
+Spaces within a typed name still search for that full name. Filtering
+keeps the selected person when they still match. The picker reuses recent results
+for the same search in the same composer, including after closing it or starting
+another mention. After five minutes, it refreshes cached results in the background
+without hiding the people you can already select. Switching sessions, profiles,
+or connections clears that cache. Results older than 30 minutes are discarded.
+The picker shows placeholders for uncached searches, an empty message when nobody
+matches, and **Retry** if a search without usable cached results fails.
 **Will notify** reuses the selected person's photo, with initials while it loads or
 when the photo is unavailable.
 
-Selected mentions render as distinct person references in the transcript. Hover, focus, or tap a reference to open a card with the person's current name, avatar, and Activity link. The original message label and copied text stay unchanged. Cards follow explicit profile merges; ordinary unselected `@name` text does not become a person reference.
+Selected mentions render as distinct person references in the transcript. Hover, focus, or tap a reference to open the same information card used in the sidebar: current name and avatar, observed presence and connection details, visible watched and recent sessions, and the Activity link. The original message label and copied text stay unchanged. Cards follow explicit profile merges; ordinary unselected `@name` text does not become a person reference.
 
 The picker includes known Gateway profiles eligible to read the session, including people who are offline. Its online indicator is only a connection hint, not an eligibility requirement. Sign in with a durable Gateway profile to use human mentions. A mention adds personal discovery involvement, not authored participation or Git contributor credit. It never adds session membership, changes visibility, or grants access. The Gateway rechecks the recipient's current access when creating and displaying it.
 

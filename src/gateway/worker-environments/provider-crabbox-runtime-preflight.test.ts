@@ -108,7 +108,9 @@ describe("Crabbox runtime preflight cleanup", () => {
       const service = support.createService(await registerProvider(), {
         prepareNodeEnrollment: vi.fn(),
       });
-      await expect(service.create("development", "fresh-preflight")).rejects.toMatchObject({
+      await expect(
+        service.createWithRequest({ profileId: "development", idempotencyKey: "fresh-preflight" }),
+      ).rejects.toMatchObject({
         code: "provider_failure",
       });
       const failed = expectDefined(support.testState.store.list()[0], "failed fresh intent");
@@ -135,14 +137,14 @@ describe("Crabbox runtime preflight cleanup", () => {
   it.each(["restart reconciliation", "direct destroy"])(
     "retains unresolved legacy allocation responsibility after %s and cleanup restart",
     async (entrance) => {
-      const intent = support.testState.store.createIntent({
+      const intent = await support.testState.store.createIntent({
         environmentId: "worker-legacy-provision",
         providerId: "crabbox",
         profileId: "development",
         profileSnapshot: { settings: PROFILE },
         provisionOperationId: `provision:${"0".repeat(64)}`,
       });
-      const original = support.testState.store.transition({
+      const original = await support.testState.store.transition({
         environmentId: intent.environmentId,
         from: intent.state,
         to: "provisioning",
@@ -241,6 +243,8 @@ describe("Crabbox runtime preflight cleanup", () => {
     };
     support.getDevelopmentProfile().provider = "crabbox";
     support.getDevelopmentProfile().settings = profile;
+    // This replay fixture owns lifecycle commands; periodic heartbeats have separate coverage.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let changed = false;
     let live = false;
     let leaseId = "";
@@ -304,7 +308,11 @@ describe("Crabbox runtime preflight cleanup", () => {
     };
     let service = support.createService(await makeProvider(), { prepareNodeEnrollment });
     await expect(
-      service.create("development", "runtime-replay", undefined, "worker-turn"),
+      service.createWithRequest({
+        profileId: "development",
+        idempotencyKey: "runtime-replay",
+        executionMode: "worker-turn",
+      }),
     ).rejects.toMatchObject({ code: "provider_failure" });
     const original = expectDefined(support.testState.store.list()[0], "unreported allocation");
     expect(original).toMatchObject({ state: "provisioning", leaseId: null });
@@ -394,7 +402,12 @@ describe("Crabbox runtime preflight cleanup", () => {
         });
       const provider = await registerProvider();
       const service = support.createService(provider, { prepareNodeEnrollment: vi.fn() });
-      await expect(service.create("development", "invalid-immutable")).rejects.toMatchObject({
+      await expect(
+        service.createWithRequest({
+          profileId: "development",
+          idempotencyKey: "invalid-immutable",
+        }),
+      ).rejects.toMatchObject({
         code: "invalid_profile",
         message: expect.stringContaining(message),
       });

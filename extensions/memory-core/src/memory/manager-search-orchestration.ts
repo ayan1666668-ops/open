@@ -1,3 +1,4 @@
+import { getAgentWorkspaceAccess } from "openclaw/plugin-sdk/agent-workspace-runtime";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 import { classifyMemoryMultimodalPath } from "openclaw/plugin-sdk/memory-core-host-engine-embeddings";
 import {
@@ -29,7 +30,8 @@ import { MemoryKeywordRetrieval, type KeywordSearchHit } from "./manager-keyword
 import type { MemoryIndexIdentityState } from "./manager-reindex-state.js";
 import { runVectorKnnInSubprocess } from "./manager-search-knn-subprocess.js";
 import { resolveMemorySearchPreflight } from "./manager-search-preflight.js";
-import { prepareExactPathMatcher, searchVector } from "./manager-search.js";
+import { searchVector } from "./manager-search-vector.js";
+import { prepareExactPathMatcher } from "./manager-search.js";
 import { applyProjectRanking, prepareActiveProjectKeys } from "./project-ranking.js";
 import { applyTemporalDecayToHybridResults } from "./temporal-decay.js";
 
@@ -89,7 +91,13 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
     from?: number;
     lines?: number;
   }): Promise<MemoryReadResult> {
-    return await readMemoryFile({
+    // Session-only indexing is local, but explicit file reads still use the workspace owner.
+    const access = this.memoryFiles
+      ? undefined
+      : getAgentWorkspaceAccess(this.workspaceDir, "memoryFiles");
+    const files = this.memoryFiles ?? access?.memoryFiles;
+    files?.assertCurrent();
+    return await (files?.readFile ?? readMemoryFile)({
       workspaceDir: this.workspaceDir,
       extraPaths: this.settings.extraPaths,
       relPath: params.relPath,
@@ -268,11 +276,12 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
       // No watcher can observe later edits after kernel capacity exhaustion.
       // Record a fresh generation at the search boundary so detached maintenance
       // receives the fact instead of starting from a clean transient manager.
-      if (this.memoryWatchCapacityDegraded) {
+      if (this.memoryWatchCapacityDegraded || this.memoryWatchUnavailable) {
         this.dirty = true;
       }
       const capacitySyncInFlight =
-        this.memoryWatchCapacityDegraded && this.activeBackgroundSearchSyncs.size > 0;
+        (this.memoryWatchCapacityDegraded || this.memoryWatchUnavailable) &&
+        this.activeBackgroundSearchSyncs.size > 0;
       if (
         searchSyncEnabled &&
         !capacitySyncInFlight &&
@@ -515,6 +524,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
           temporalDecay: hybrid.temporalDecay,
           workspaceDir: this.workspaceDir,
           sessionSourceMtimes: this.loadSessionSourceMtimes(vectorResults),
+          memorySourceMtimes: this.loadRemoteMemorySourceMtimes(vectorResults),
         });
         // Decay and importance can reverse the order returned by vector retrieval.
         const activeProjects = prepareActiveProjectKeys(opts?.activeProjectKeys);
@@ -669,6 +679,7 @@ export abstract class MemorySearchOrchestration extends MemoryKeywordRetrieval {
       activeProjectKeys: params.activeProjectKeys,
       workspaceDir: this.workspaceDir,
       sessionSourceMtimes: this.loadSessionSourceMtimes([...params.vector, ...params.keyword]),
+      memorySourceMtimes: this.loadRemoteMemorySourceMtimes([...params.vector, ...params.keyword]),
     });
   }
 }

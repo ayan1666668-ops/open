@@ -372,6 +372,9 @@ export interface CronJobs {
   declaration_key: string | null;
   description: string | null;
   enabled: number;
+  grant_definition_generation: number | null;
+  grant_definition_revision: string | null;
+  grant_definition_updated_at: number | null;
   job_id: string;
   job_json: string;
   name: string;
@@ -769,6 +772,7 @@ export interface GithubPublicationSessionLifecycles {
   lifecycle_revision: string | null;
   publication_kind: string;
   request_id: string;
+  requester_authority_json: string | null;
 }
 
 export interface GithubRepositoryPublicationRequests {
@@ -805,6 +809,7 @@ export interface GithubRepositoryPublicationRequests {
   repository: string | null;
   request_digest: string;
   request_id: string;
+  requester_authority_json: string | null;
   run_id: string | null;
   session_id: string;
   session_key: string;
@@ -1039,6 +1044,11 @@ export interface OperatorApprovalExecutionIdentities {
   source_execution_id: string;
 }
 
+export interface OperatorApprovalStandingGrantGenerations {
+  grant_id: string;
+  job_definition_generation: number;
+}
+
 export interface OperatorApprovalStandingGrants {
   agent_id: string;
   created_at_ms: number;
@@ -1271,6 +1281,7 @@ export interface SessionWatchCursors {
   target_session_key: string;
   updated_at: number;
   watcher_session_key: string;
+  watcher_store_path: string | null;
 }
 
 export interface SkillLibraryEntries {
@@ -1416,9 +1427,11 @@ export interface StateLeases {
 export interface SubagentRuns {
   child_session_key: string;
   controller_session_key: string | null;
+  controller_store_path: string | null;
   created_at: number;
   payload_json: Generated<string>;
   requester_session_key: string;
+  requester_store_path: string | null;
   run_id: string;
 }
 
@@ -1835,6 +1848,7 @@ export interface DB {
   node_worker_turns: NodeWorkerTurns;
   official_external_plugin_catalog_snapshots: OfficialExternalPluginCatalogSnapshots;
   operator_approval_execution_identities: OperatorApprovalExecutionIdentities;
+  operator_approval_standing_grant_generations: OperatorApprovalStandingGrantGenerations;
   operator_approval_standing_grants: OperatorApprovalStandingGrants;
   operator_approvals: OperatorApprovals;
   outbound_media_provenance: OutboundMediaProvenance;

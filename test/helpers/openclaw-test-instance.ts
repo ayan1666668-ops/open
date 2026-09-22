@@ -3,7 +3,6 @@ import { type ChildProcess, type ChildProcessByStdio, spawnSync } from "node:chi
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
@@ -21,21 +20,18 @@ import {
   terminateManagedChild,
 } from "../../scripts/lib/managed-child-process.mts";
 import { hasErrnoCode } from "../../src/infra/errno.js";
-import { createFileLockManager } from "../../src/infra/file-lock-manager.js";
-import { FILE_LOCK_TIMEOUT_ERROR_CODE } from "../../src/infra/file-lock.js";
-import { isLockOwnerDefinitelyStale } from "../../src/infra/stale-lock-file.js";
 import {
   appendCapturedOutput,
   createCapturedOutputBuffers,
   finalizeCapturedOutput,
   resolveMaxOutputBytes,
 } from "../../src/process/exec-output.js";
-import { getFileLockProcessStartTime } from "../../src/shared/pid-alive.js";
 import {
   createOpenClawTestState,
   type OpenClawTestState,
 } from "../../src/test-utils/openclaw-test-state.js";
-import { getDeterministicFreePortBlock } from "../../src/test-utils/ports.js";
+import { reserveTestPortListener } from "../../src/test-utils/port-claims.js";
+import { cleanupSessionStateForTest } from "../../src/test-utils/session-state-cleanup.js";
 import { sleep } from "../../src/utils.js";
 import { decodeUtf8Tail } from "./bounded-child-output.js";
 import { runQaGatewayFixture } from "./qa-gateway-cleanup.js";
@@ -270,46 +266,6 @@ async function resolveGatewayEntrypoint(cwd: string): Promise<string[]> {
     entrypointPromises.set(cwd, promise);
   }
   return await promise;
-}
-
-const portClaims = createFileLockManager("openclaw.test-gateway-ports");
-let portClaimOwnerStartTime: number | null | undefined;
-const isDefinitelyStalePortClaim = ({ payload }: { payload: unknown }) =>
-  isLockOwnerDefinitelyStale({ payload: isRecord(payload) ? payload : null });
-
-async function claimGatewayPortBlock(port: number): Promise<() => Promise<void>> {
-  const root = await fs.realpath(tmpdir());
-  const claims: Awaited<ReturnType<typeof portClaims.acquire>>[] = [];
-  const release = () =>
-    runQaGatewayFixture(async () => {}, ...claims.map((claim) => () => claim.release()));
-  try {
-    for (const candidate of [port, port + 1]) {
-      claims.push(
-        await portClaims.acquire(path.join(root, `openclaw-test-port-${candidate}`), {
-          retry: { retries: 0 },
-          staleMs: 30_000,
-          staleRecovery: "remove-if-unchanged",
-          shouldReclaim: isDefinitelyStalePortClaim,
-          shouldRemoveStaleLock: isDefinitelyStalePortClaim,
-          payload: () => {
-            if (portClaimOwnerStartTime === undefined) {
-              portClaimOwnerStartTime = getFileLockProcessStartTime(process.pid);
-            }
-            return {
-              pid: process.pid,
-              createdAt: new Date().toISOString(),
-              ...(portClaimOwnerStartTime === null ? {} : { starttime: portClaimOwnerStartTime }),
-            };
-          },
-        }),
-      );
-    }
-    return release;
-  } catch (error) {
-    return runQaGatewayFixture(async (): Promise<never> => {
-      throw error;
-    }, release);
-  }
 }
 
 async function reserveGatewayPort(
@@ -798,24 +754,15 @@ export async function createOpenClawTestInstance(
     if (options.port !== undefined) {
       port = options.port;
     } else {
-      const seen = new Set<number>();
-      while (true) {
-        signal?.throwIfAborted();
-        port = await getDeterministicFreePortBlock({ offsets: [0, 1] });
-        if (seen.has(port)) {
-          throw new Error("no unclaimed test Gateway port block available");
-        }
-        seen.add(port);
-        try {
-          releasePortClaims = await claimGatewayPortBlock(port);
-          break;
-        } catch (error) {
-          if (!hasErrnoCode(error, FILE_LOCK_TIMEOUT_ERROR_CODE)) {
-            throw error;
-          }
-        }
-      }
-      reservation = await reserveGatewayPort(port, options.verifyCleanup);
+      const reserved = await reserveTestPortListener({
+        offsets: [0, 1],
+        signal,
+        createListener: () => net.createServer((socket) => socket.destroy()),
+        verifyCleanup: options.verifyCleanup,
+      });
+      port = reserved.claim.port;
+      releasePortClaims = reserved.claim.release;
+      reservation = { release: reserved.releaseListener };
     }
     signal?.throwIfAborted();
     state = await createOpenClawTestState({
@@ -902,7 +849,7 @@ export async function createOpenClawTestInstance(
     args: string[],
     attemptStderr: string[],
   ): OpenClawTestProcess => {
-    const [command = "node", ...prefixArgs] = options.gatewayCommandPrefix ?? [];
+    const [command = process.execPath, ...prefixArgs] = options.gatewayCommandPrefix ?? [];
     signal?.throwIfAborted();
     const next = spawnManagedChild(command, [...prefixArgs, ...args], {
       cwd,
@@ -983,7 +930,7 @@ export async function createOpenClawTestInstance(
         const commandEntrypoint = await entrypoint();
         signal?.throwIfAborted();
         return await runCommand({
-          args: [commandOptions.execPath ?? "node", ...commandEntrypoint, ...args],
+          args: [commandOptions.execPath ?? process.execPath, ...commandEntrypoint, ...args],
           cwd,
           env,
           timeoutMs: commandOptions.timeoutMs ?? COMMAND_TIMEOUT_MS,
@@ -1027,6 +974,8 @@ export async function createOpenClawTestInstance(
           ...(options.gatewayArgs ?? []),
         ];
         await stopGatewayChild({ forceWindowsTree: true });
+        // Parent-side seeds retain leases that the child's startup maintenance must acquire.
+        await cleanupSessionStateForTest({ stateDir: state.stateDir, rootPath: state.root });
         signal?.throwIfAborted();
         const deadline = Date.now() + (options.startTimeoutMs ?? GATEWAY_START_TIMEOUT_MS);
         let restarts = 0;

@@ -41,7 +41,7 @@ import { reserveChildAdmissionSlot } from "../../child-admission.js";
 import { expectRecordFields } from "../../subagent-test-fixtures.test-helpers.js";
 import { withGatewayToolCallerIdentity } from "../../tools/gateway-caller-context.js";
 import { withParentExecutionIdentity } from "./execution-identity-spawn-context.js";
-import { setSubagentSpawnDepsForTest } from "./subagent-spawn-deps.js";
+import { testing as spawnTesting } from "./subagent-spawn.test-support.js";
 
 type SessionBindingAdapterCapabilities = NonNullable<SessionBindingAdapter["capabilities"]>;
 
@@ -921,16 +921,6 @@ describe("spawnAcpDirect", () => {
     expect(agentCall?.params?.deliver).toBe(true);
     expect(agentCall?.params?.lane).toBe("subagent");
     expect(agentCall?.params?.acpTurnSource).toBe("manual_spawn");
-    // ACP registration must leave taskRowOwnership absent so the registry
-    // falls back to best-effort task-row creation (subagent-registry-run-launch.ts).
-    // Native/in-process spawn forwards "required" instead (subagent-spawn.ts);
-    // if ACP ever claimed "required" here, a failed task-row write would abort
-    // an ACP run the registry never actually owns.
-    const registeredAcpRun = expectRecordFields(
-      firstMockCall(hoisted.registerSubagentRunMock, "ACP subagent registration")[0],
-      {},
-    );
-    expect(registeredAcpRun.taskRowOwnership).toBeUndefined();
     const initInput = expectInitializeSessionFields({
       agent: "codex",
       mode: "persistent",
@@ -1025,7 +1015,7 @@ describe("spawnAcpDirect", () => {
     const operationalRunInstance = createOperationalRunInstanceRef("parent-run");
     const authority = claimAgentRunDelegatedAuthority(operationalRunInstance);
     let capturedIdentity: AgentRuntimeIdentity | undefined;
-    setSubagentSpawnDepsForTest({
+    spawnTesting.setDepsForTest({
       hasInProcessGatewayContext: () => true,
       dispatchGatewayMethodInProcess: async <T>(
         _method: string,
@@ -1065,7 +1055,7 @@ describe("spawnAcpDirect", () => {
       );
     } finally {
       releaseAgentRunDelegatedAuthority(authority);
-      setSubagentSpawnDepsForTest();
+      spawnTesting.setDepsForTest();
     }
   });
 

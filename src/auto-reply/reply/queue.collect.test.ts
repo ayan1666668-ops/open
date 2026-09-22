@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createChannelParticipantAdmissionEvidence } from "../../../test/helpers/channel-admission-evidence.js";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import {
-  configureChannelAdmissionEvidenceCollection,
+  createChannelAdmissionAudit,
   consumeChannelAdmissionEvidence,
 } from "../../channels/message-access/admission-evidence.js";
 import {
@@ -28,6 +28,7 @@ import {
   createQueueTestRun as createRun,
   createQueueSettings,
   createDrainRecorder,
+  drainRecordedQueue,
   installQueueRuntimeErrorSilencer,
 } from "./queue.test-helpers.js";
 import { resolveFollowupDeliveryContextKey } from "./queue/delivery-context.js";
@@ -95,15 +96,6 @@ function enqueueRoutedRuns(
   for (const prompt of prompts) {
     enqueueTestRun(key, { prompt, ...route }, settings);
   }
-}
-
-async function drainRecordedQueue(
-  key: string,
-  runFollowup: ReturnType<typeof createDrainRecorder>["runFollowup"],
-  done: ReturnType<typeof createDrainRecorder>["done"],
-) {
-  scheduleFollowupDrain(key, runFollowup);
-  await done.promise;
 }
 
 describe("followup queue collect routing", () => {
@@ -597,31 +589,25 @@ describe("followup queue collect routing", () => {
     expect(calls.map((call) => call.originatingChatType)).toEqual(["direct", "channel"]);
   });
 
-  it("does not collect when source delivery policy differs", async () => {
+  it.each([
+    ["sourceReplyDeliveryMode", "automatic", "message_tool_only"],
+    ["terminalReplyExpectation", "required", "optional"],
+  ] as const)("does not collect when %s differs", async (policy, first, second) => {
     const { key, calls, done, runFollowup, settings } = createQueueCase(
-      `test-collect-diff-delivery-policy-${Date.now()}`,
+      `test-collect-diff-${policy}-${Date.now()}`,
       {},
       2,
     );
     const route = { originatingChatType: "channel" };
-    enqueueSlackRun(key, settings, "automatic", { sourceReplyDeliveryMode: "automatic" }, route);
-    enqueueSlackRun(
-      key,
-      settings,
-      "private",
-      { sourceReplyDeliveryMode: "message_tool_only" },
-      route,
-    );
+    enqueueSlackRun(key, settings, "first", { [policy]: first }, route);
+    enqueueSlackRun(key, settings, "second", { [policy]: second }, route);
     await drainRecordedQueue(key, runFollowup, done);
 
-    expect(calls.map((call) => call.prompt)).toEqual([
-      "[Queued messages while agent was busy]\n\n---\nQueued #1\nautomatic",
-      "[Queued messages while agent was busy]\n\n---\nQueued #1\nprivate",
-    ]);
-    expect(calls.map((call) => call.run.sourceReplyDeliveryMode)).toEqual([
-      "automatic",
-      "message_tool_only",
-    ]);
+    expect(calls.map((call) => call.run[policy])).toEqual([first, second]);
+    expect(calls[0]?.prompt).toContain("first");
+    expect(calls[0]?.prompt).not.toContain("second");
+    expect(calls[1]?.prompt).toContain("second");
+    expect(calls[1]?.prompt).not.toContain("first");
   });
 
   it("does not collect when task suggestion delivery differs", async () => {
@@ -1217,27 +1203,18 @@ describe("followup queue collect routing", () => {
     expect(calls[2]?.prompt).toContain("survivor");
   });
 
-  it("splits overflow groups when source delivery policy changes", async () => {
+  it.each([
+    ["sourceReplyDeliveryMode", "automatic", "message_tool_only"],
+    ["terminalReplyExpectation", "required", "optional"],
+  ] as const)("splits overflow groups when %s changes", async (policy, first, second) => {
     const { key, calls, done, runFollowup, settings } = createQueueCase(
-      `test-collect-overflow-delivery-policy-${Date.now()}`,
+      `test-collect-overflow-${policy}-${Date.now()}`,
       { cap: 2 },
       3,
     );
     const route = { originatingChatType: "channel" };
-    enqueueSlackRun(
-      key,
-      settings,
-      "automatic source",
-      { sourceReplyDeliveryMode: "automatic" },
-      route,
-    );
-    enqueueSlackRun(
-      key,
-      settings,
-      "private source",
-      { sourceReplyDeliveryMode: "message_tool_only" },
-      route,
-    );
+    enqueueSlackRun(key, settings, "first source", { [policy]: first }, route);
+    enqueueSlackRun(key, settings, "second source", { [policy]: second }, route);
     for (const prompt of ["survivor one", "survivor two"]) {
       enqueueTestRun(
         key,
@@ -1254,10 +1231,12 @@ describe("followup queue collect routing", () => {
     await drainRecordedQueue(key, runFollowup, done);
 
     expect(calls).toHaveLength(3);
-    expect(calls[0]?.prompt).toContain("- automatic source");
-    expect(calls[0]?.run.sourceReplyDeliveryMode).toBe("automatic");
-    expect(calls[1]?.prompt).toContain("- private source");
-    expect(calls[1]?.run.sourceReplyDeliveryMode).toBe("message_tool_only");
+    expect(calls[0]?.prompt).toContain("- first source");
+    expect(calls[0]?.prompt).not.toContain("- second source");
+    expect(calls[0]?.run[policy]).toBe(first);
+    expect(calls[1]?.prompt).toContain("- second source");
+    expect(calls[1]?.prompt).not.toContain("- first source");
+    expect(calls[1]?.run[policy]).toBe(second);
     expect(calls[2]?.prompt).toContain("survivor one");
     expect(calls[2]?.prompt).toContain("survivor two");
   });
@@ -2168,7 +2147,7 @@ describe("followup queue collect routing", () => {
   });
 
   it("preserves sender-scoped batching while identity collection is disabled", async () => {
-    const cleanup = configureChannelAdmissionEvidenceCollection(false);
+    const audit = createChannelAdmissionAudit({ enabled: false });
     try {
       const { key, calls, done, runFollowup, settings } = createQueueCase(
         `test-collect-identity-disabled-${Date.now()}`,
@@ -2185,6 +2164,11 @@ describe("followup queue collect routing", () => {
           key,
           {
             ...item,
+            channelAdmissionEvidence: createChannelParticipantAdmissionEvidence({
+              audit,
+              channelId: "slack",
+              participantId: senderId,
+            }),
             run: { ...item.run, senderId, senderIsOwner: false },
           },
           settings,
@@ -2196,12 +2180,12 @@ describe("followup queue collect routing", () => {
 
       expect(calls.map((call) => call.run.senderId)).toEqual(["user-1", "user-2"]);
     } finally {
-      cleanup();
+      audit.close();
     }
   });
 
   it("keeps same-participant evidence for a collected batch", async () => {
-    const cleanup = configureChannelAdmissionEvidenceCollection(true);
+    const audit = createChannelAdmissionAudit({ enabled: true });
     try {
       const sameCase = createQueueCase(`test-collect-identity-same-${Date.now()}`);
       for (const prompt of ["same one", "same two"]) {
@@ -2215,6 +2199,7 @@ describe("followup queue collect routing", () => {
           {
             ...item,
             channelAdmissionEvidence: createChannelParticipantAdmissionEvidence({
+              audit,
               channelId: "slack",
               accountId: "default",
               participantId: "user-1",
@@ -2235,7 +2220,7 @@ describe("followup queue collect routing", () => {
         invoker: { state: "present", kind: "person" },
       });
     } finally {
-      cleanup();
+      audit.close();
     }
   });
 
@@ -2885,11 +2870,11 @@ describe("followup queue collect routing", () => {
     expect(calls[1]?.deliveryCorrelations?.[0]?.begin).toBe(begin);
   });
 
-  it("keeps mixed overflow summaries as normal followups", async () => {
+  it("keeps room-event and user-request overflow summaries separate", async () => {
     const { key, calls, done, runFollowup, settings } = createQueueCase(
       `test-overflow-summary-mixed-kind-${Date.now()}`,
       { mode: "followup", cap: 1 },
-      2,
+      3,
     );
 
     enqueueFollowupRun(
@@ -2912,10 +2897,14 @@ describe("followup queue collect routing", () => {
 
     await drainRecordedQueue(key, runFollowup, done);
 
-    expect(calls).toHaveLength(2);
-    expect(calls[0]?.prompt).toContain("[Queue overflow] Dropped 2 messages due to cap.");
-    expect(calls[0]?.currentInboundEventKind).toBeUndefined();
-    expect(calls[1]?.prompt).toBe("live followup");
+    expect(calls).toHaveLength(3);
+    expect(calls[0]?.prompt).toContain("- dropped ambient");
+    expect(calls[0]?.prompt).not.toContain("- dropped request");
+    expect(calls[0]?.currentInboundEventKind).toBe("room_event");
+    expect(calls[1]?.prompt).toContain("- dropped request");
+    expect(calls[1]?.prompt).not.toContain("- dropped ambient");
+    expect(calls[1]?.currentInboundEventKind).toBeUndefined();
+    expect(calls[2]?.prompt).toBe("live followup");
   });
 
   it("drops an aborted summarized room event before overflow delivery", async () => {
