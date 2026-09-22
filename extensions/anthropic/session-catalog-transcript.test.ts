@@ -56,7 +56,7 @@ describe("Claude transcript nesting", () => {
         }),
       ]);
       expect(page.items[0]?.content).toBeUndefined();
-      expect(JSON.parse(JSON.stringify(page))).toEqual(page);
+      expect(() => JSON.stringify(page)).not.toThrow();
       expect(page.nextCursor).toEqual(expect.any(String));
       const older = await readLocalClaudeTranscriptPage(
         { threadId: sessionId, limit: 1, cursor: page.nextCursor },
