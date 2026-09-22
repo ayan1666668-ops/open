@@ -290,7 +290,7 @@ export function createTalkClientAgentConsultRunner(params: {
     const getAdditionalSystemPrompt = () => confirmationRetryContext;
     const runtime = owner
       ? createOwnedAgentRuntime(owner, assertCurrent, getAdditionalSystemPrompt)
-      : assertCurrent || source === "native-delegation"
+      : assertCurrent || source === "native-delegation" || confirmationGrant
         ? createTalkClientAgentRuntime({
             config: params.config,
             ...(params.ownerConnId ? { rawSourceRef: params.ownerConnId } : {}),
@@ -378,8 +378,7 @@ export function createTalkClientAgentConsultRunner(params: {
             }
             if (
               confirmationGrant &&
-              bindAuthorizedClientVoiceConfirmation({ grant: confirmationGrant, runId }) &&
-              source === "native-delegation"
+              bindAuthorizedClientVoiceConfirmation({ grant: confirmationGrant, runId })
             ) {
               confirmationRetryContext = confirmationGrant.retryContext;
             }
