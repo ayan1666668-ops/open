@@ -228,7 +228,7 @@ export async function observeUpdateGatewayReadiness(params: UpdateGatewayReadine
     config: context.config,
     port: params.gatewayPort,
     attempts: Math.ceil(remainingMs() / DEFAULT_RESTART_HEALTH_DELAY_MS),
-    deadlineAt: Date.now() + remainingMs(),
+    deadlineAt: performance.now() + remainingMs(),
     probeTimeoutMs: remainingMs(),
     delayMs: DEFAULT_RESTART_HEALTH_DELAY_MS,
     ...(params.signal ? { signal: params.signal } : {}),
