@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect } from "vitest";
+import { resolveVitestNodeArgs } from "../../scripts/lib/vitest-process-env.mts";
 import { requireNodeTool } from "../helpers/node-toolchain.js";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
 import { landingSnapshotQuery } from "./pr-merge-snapshot.test-support.js";
@@ -23,6 +24,7 @@ export function createMergeOutcomeFixtureHarness() {
   let fixtureTemplate: ReturnType<typeof createFixtureTemplate> | undefined;
   const scripts = join(process.cwd(), "scripts");
   const nodeExecutable = requireNodeTool("node");
+  const nodeArgs = resolveVitestNodeArgs();
   const outcomeRef = "refs/openclaw/pr-merge-outcomes/123";
   const lockRef = "refs/openclaw/pr-operation-locks/123";
   const describePosix = process.platform === "win32" ? describe.skip : describe;
@@ -282,6 +284,7 @@ export function createMergeOutcomeFixtureHarness() {
       }>,
       mainAdvances: [] as string[],
       calls: [] as string[][],
+      nodeArgs: [] as string[],
       mutations: 0,
       cancellations: 0,
       cancellation: "success",
@@ -367,6 +370,7 @@ if(route==="watch") {
   process.exit(s.ciExit);
 }
 if(route==="sleep") {s.settlementSleeps.push(Number(args[0]));save();process.exit(0);}
+s.nodeArgs=process.execArgv;
 s.calls.push([route,...args]);save();
 if(args.some(arg=>arg.includes("{owner}")||arg.includes("{repo}"))) fail("protected unresolved repository placeholder");
 const main=()=>git(["--git-dir="+process.env.FIXTURE_REMOTE,"rev-parse","refs/heads/main"]);
@@ -759,7 +763,14 @@ fi
     chmodSync(shell, 0o755);
     const bin = join(root, "bin");
     mkdirSync(bin);
-    writeFileSync(join(bin, "gh"), '#!/bin/sh\nexec "$FIXTURE_NODE" "$FIXTURE_GH" direct "$@"\n', {
+    // The fixture isolates its environment; carry the test runner's Node 24
+    // shutdown policy through shell-launched helpers as well as the supervisor.
+    writeFileSync(
+      join(bin, "node"),
+      `#!/bin/sh\nexec "$FIXTURE_NODE" ${nodeArgs.map((arg) => JSON.stringify(arg)).join(" ")} "$@"\n`,
+      { mode: 0o755 },
+    );
+    writeFileSync(join(bin, "gh"), '#!/bin/sh\nexec node "$FIXTURE_GH" direct "$@"\n', {
       mode: 0o755,
     });
     const env = {
@@ -792,6 +803,7 @@ fi
       const result = spawnSync(
         nodeExecutable,
         [
+          ...nodeArgs,
           join(scripts, "pr-lib/process-group-runner.mjs"),
           repo,
           shell,
@@ -874,7 +886,7 @@ fi
       JSON.parse(
         execFileSync(
           nodeExecutable,
-          [gh, "path", "pr", "view", "123", "--json", "state,headRefOid,mergeCommit"],
+          [...nodeArgs, gh, "path", "pr", "view", "123", "--json", "state,headRefOid,mergeCommit"],
           { cwd: repo, env, encoding: "utf8" },
         ),
       );
