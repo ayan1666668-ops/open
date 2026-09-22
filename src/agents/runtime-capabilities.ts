@@ -11,6 +11,7 @@ import { supportsThreadBindingSpawn } from "../channels/conversation-resolution.
 import { resolveThreadBindingSpawnPolicy } from "../channels/thread-bindings-policy.js";
 import { resolveChannelCapabilities } from "../config/channel-capabilities.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel-constants.js";
 import { resolveChannelPromptCapabilities } from "./channel-tools.js";
 
 const THREAD_BOUND_SUBAGENT_SPAWN_CAPABILITY = "threadbound-subagent-spawn";
@@ -45,14 +46,14 @@ export function collectRuntimeChannelCapabilities(params: {
   if (!params.channel) {
     return undefined;
   }
-  // Browser Control UI advertises markdown-details; do not grant it from the
-  // channel name alone (Windows Companion also uses webchat).
-  const internalChannelCapabilities = hasGatewayClientCap(
-    params.clientCaps,
-    GATEWAY_CLIENT_CAPS.MARKDOWN_DETAILS,
-  )
-    ? ["markdownDetails"]
-    : [];
+  // An explicit handshake list is authoritative. Omitted or empty caps are
+  // legacy clients; only those still receive the webchat disclosure grant.
+  const advertisedClientCaps = Array.isArray(params.clientCaps) && params.clientCaps.length > 0;
+  const internalChannelCapabilities =
+    hasGatewayClientCap(params.clientCaps, GATEWAY_CLIENT_CAPS.MARKDOWN_DETAILS) ||
+    (!advertisedClientCaps && params.channel === INTERNAL_MESSAGE_CHANNEL)
+      ? ["markdownDetails"]
+      : [];
   const threadSpawnCapabilities: string[] = [];
   if (params.cfg && supportsThreadBindingSpawn(params.channel)) {
     for (const [kind, capability] of [

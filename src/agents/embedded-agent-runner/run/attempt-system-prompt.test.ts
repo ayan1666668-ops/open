@@ -64,6 +64,7 @@ async function preparePermissionPrompt(
   thinkLevel?: EmbeddedRunAttemptParams["thinkLevel"],
   requireExplicitMessageTarget?: boolean,
   session?: Pick<EmbeddedRunAttemptParams, "sessionKey" | "sandboxSessionKey">,
+  client?: { messageChannel?: string; clientCaps?: string[] },
 ) {
   const tool = (name: string): AgentTool => ({
     name,
@@ -101,6 +102,8 @@ async function preparePermissionPrompt(
     thinkLevel,
     sourceReplyDeliveryMode:
       requireExplicitMessageTarget === undefined ? undefined : "message_tool_only",
+    ...(client?.messageChannel ? { messageChannel: client.messageChannel } : {}),
+    ...(client && Object.hasOwn(client, "clientCaps") ? { clientCaps: client.clientCaps } : {}),
   } as EmbeddedRunAttemptParams;
   const capabilityToolNames = new Set(tools.map(({ name }) => name));
   const prepared = await prepareEmbeddedAttemptSystemPrompt({
@@ -148,6 +151,30 @@ async function preparePermissionPrompt(
 }
 
 describe("buildAttemptSystemPrompt", () => {
+  it("forwards handshake capabilities into disclosure guidance", async () => {
+    const capable = await preparePermissionPrompt(false, undefined, undefined, undefined, {
+      messageChannel: "webchat",
+      clientCaps: ["markdown-details"],
+    });
+    const explicitWithoutFlag = await preparePermissionPrompt(
+      false,
+      undefined,
+      undefined,
+      undefined,
+      {
+        messageChannel: "webchat",
+        clientCaps: ["tool-events"],
+      },
+    );
+    const legacyNative = await preparePermissionPrompt(false, undefined, undefined, undefined, {
+      messageChannel: "webchat",
+    });
+
+    expect(capable.prepared.systemPromptText).toContain("## Collapsible Details");
+    expect(explicitWithoutFlag.prepared.systemPromptText).not.toContain("## Collapsible Details");
+    expect(legacyNative.prepared.systemPromptText).toContain("## Collapsible Details");
+  });
+
   it.each([undefined, "agent:main:execution"])(
     "keeps the system prompt identical when execution-owned processes change: %s",
     async (sessionKey) => {
