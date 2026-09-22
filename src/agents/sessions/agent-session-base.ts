@@ -16,6 +16,7 @@ import {
   takeCodeModeResponseSource,
   prepareCodeModeSourceAppend,
 } from "../transcript-code-mode-source.js";
+import { bindStagedMediaOwnershipForEvent } from "./agent-session-staged-media.js";
 import type {
   AgentSessionConfig,
   AgentSessionEvent,
@@ -388,6 +389,10 @@ export abstract class AgentSessionBase {
     // Extensions can replace the final result. Protect listeners before publishing it.
     messageChanged = prepareSessionToolResult(this.sessionManager, event) || messageChanged;
     const publishAfterPersistence = event.type === "message_end" && event.message.role === "user";
+
+    // Bind a staged reference before the message reaches a listener or the store, since the
+    // media route refuses a staged object whose owner is not yet on the record.
+    await bindStagedMediaOwnershipForEvent(event, this.sessionKey);
 
     // Notify all listeners
     if (event.type === "agent_end") {
