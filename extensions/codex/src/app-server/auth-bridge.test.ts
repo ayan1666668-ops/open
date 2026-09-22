@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   clearRuntimeAuthProfileStoreSnapshots,
+  findPersistedAuthProfileCredential,
   loadAuthProfileStoreForSecretsRuntime,
   replaceRuntimeAuthProfileStoreSnapshots,
 } from "openclaw/plugin-sdk/agent-runtime";
@@ -4229,11 +4230,21 @@ describe("bridgeCodexAppServerStartOptions", () => {
           email: "main-codex@example.test",
         },
       });
-      const staleChildProfile = expectOAuthProfile(
+      const runtimeProfile = expectOAuthProfile(
         loadAuthProfileStoreForSecretsRuntime(childAgentDir).profiles["openai:work"],
       );
-      expect(staleChildProfile?.access).toBe("child-stale-access-token");
-      expect(staleChildProfile?.refresh).toBe("child-stale-refresh-token");
+      expect(runtimeProfile.access).toBe("main-current-access-token");
+      expect(runtimeProfile.refresh).toBe("main-owner-refresh-token");
+      const staleChildProfile = {
+        ...expectOAuthProfile(
+          findPersistedAuthProfileCredential({
+            agentDir: childAgentDir,
+            profileId: "openai:work",
+          }),
+        ),
+      };
+      expect(staleChildProfile.access).toBe("child-stale-access-token");
+      expect(staleChildProfile.refresh).toBe("child-stale-refresh-token");
 
       await expect(
         refreshCodexAppServerAuthTokens({
@@ -4256,10 +4267,16 @@ describe("bridgeCodexAppServerStartOptions", () => {
       const childProfile = expectOAuthProfile(
         loadAuthProfileStoreForSecretsRuntime(childAgentDir).profiles["openai:work"],
       );
+      expect(childProfile.access).toBe("main-refreshed-access-token");
+      expect(childProfile.refresh).toBe("main-refreshed-refresh-token");
       // Refresh ownership writes the main profile; it does not silently mutate
       // the stale child clone that request-time resolution intentionally bypassed.
-      expect(childProfile?.access).toBe("child-stale-access-token");
-      expect(childProfile?.refresh).toBe("child-stale-refresh-token");
+      expect(
+        findPersistedAuthProfileCredential({
+          agentDir: childAgentDir,
+          profileId: "openai:work",
+        }),
+      ).toEqual(staleChildProfile);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
