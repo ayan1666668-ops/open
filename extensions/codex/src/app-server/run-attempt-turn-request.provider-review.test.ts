@@ -122,18 +122,18 @@ async function prepare(
   usesSupervisionConnection = true,
 ) {
   const request = vi.fn(
-    (
+    async (
       method: string,
       _payload: { threadId?: string; input?: CodexUserInput[] },
       options: { assertCurrent?: () => void },
     ) => {
       options.assertCurrent?.();
       if (method === "thread/turns/list") {
-        return Promise.resolve({ data: [native.latest] });
+        return { data: [native.latest] };
       }
       if (method === "turn/start") {
         native.latest = { id: "new-turn", status: "inProgress", items: [] };
-        return Promise.resolve({ turn: native.latest });
+        return { turn: native.latest };
       }
       throw new Error(`Unexpected fixture method: ${method}`);
     },
