@@ -49,7 +49,7 @@ import {
 } from "./chat-pane-state.ts";
 import { ChatProviderReviewController } from "./chat-provider-review-controller.ts";
 import { createChatQuestionActions } from "./chat-question-actions.ts";
-import { dismissRealtimeTalkError } from "./chat-realtime.ts";
+import { dismissRealtimeTalkError, dismissRealtimeTalkInputNotice } from "./chat-realtime.ts";
 import { activeChatRunStartupStatus } from "./chat-run-startup.ts";
 import { chatSendHoldReason } from "./chat-send-support.ts";
 import { refreshChatCommands } from "./chat-state-refresh.ts";
@@ -472,6 +472,7 @@ export class ChatPane extends ChatPaneLayoutRender {
       realtimeTalkActive: state.realtimeTalkActive,
       realtimeTalkStatus: state.realtimeTalkStatus,
       realtimeTalkDetail: state.realtimeTalkDetail,
+      realtimeTalkInputNotice: state.realtimeTalkInputNotice,
       realtimeTalkInputLevel: state.realtimeTalkInputLevel,
       realtimeTalkConversation: state.realtimeTalkConversation,
       realtimeTalkVideoStream: state.realtimeTalkVideoStream,
@@ -614,6 +615,10 @@ export class ChatPane extends ChatPaneLayoutRender {
       },
       onDismissRealtimeTalkError: () => {
         dismissRealtimeTalkError(state as never);
+        state.requestUpdate?.();
+      },
+      onDismissRealtimeTalkInputNotice: () => {
+        dismissRealtimeTalkInputNotice(state);
         state.requestUpdate?.();
       },
       onAbort: sessionActionCallbacks.onAbort,
