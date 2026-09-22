@@ -1643,68 +1643,6 @@ describe("gateway session utils", () => {
     expect(options).toHaveProperty("manifestRegistry");
   });
 
-  test("keeps stored Ultra for supported harnesses and clamps unavailable native profiles", () => {
-    providerArtifactMocks.resolveBundledProviderPolicySurface.mockReturnValue({
-      resolveThinkingProfile: () => ({
-        levels: [{ id: "off" }, { id: "high" }, { id: "xhigh" }, { id: "max" }],
-      }),
-    });
-    const cfg = {
-      agents: {
-        defaults: {
-          model: { primary: "openai/gpt-5.6-sol" },
-          models: {
-            "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
-          },
-        },
-      },
-    } as OpenClawConfig;
-    const row = (
-      entry: SessionEntry,
-      catalog?: { reasoning?: boolean; compat?: { supportedReasoningEfforts: string[] } },
-    ) =>
-      buildGatewaySessionRow({
-        cfg,
-        storePath: "",
-        store: {},
-        key: "agent:main:main",
-        entry,
-        ...(catalog
-          ? {
-              modelCatalog: [
-                {
-                  provider: "openai",
-                  id: "gpt-5.6-sol",
-                  name: "GPT-5.6 Sol (API route)",
-                  ...catalog,
-                },
-              ],
-            }
-          : {}),
-      });
-
-    const stored = { sessionId: "stored", thinkingLevel: "ultra" } as SessionEntry;
-
-    expect(row(stored).thinkingLevel).toBe("ultra");
-    expect(row(stored, {}).thinkingLevel).toBe("ultra");
-    expect(row(stored, { reasoning: true }).thinkingLevel).toBe("ultra");
-    expect(row(stored, { reasoning: false }).thinkingLevel).toBe("off");
-    expect(
-      row(stored, { reasoning: true, compat: { supportedReasoningEfforts: ["off"] } })
-        .thinkingLevel,
-    ).toBe("off");
-    expect(
-      row(stored, { reasoning: true, compat: { supportedReasoningEfforts: ["max"] } })
-        .thinkingLevel,
-    ).toBe("ultra");
-    const nativeUltra = row(stored, {
-      reasoning: true,
-      compat: { supportedReasoningEfforts: ["max", "ultra"] },
-    });
-    expect(nativeUltra.thinkingLevel).toBe("ultra");
-    expect(nativeUltra.thinkingLevels).toContainEqual({ id: "ultra", label: "ultra" });
-  });
-
   test("strips retired thinking provenance from Gateway patch results", () => {
     const entry = {
       sessionId: "private-fallback",

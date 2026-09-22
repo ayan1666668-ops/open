@@ -1,7 +1,10 @@
+import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
 import type { ModelCatalogEntry } from "../agents/model-catalog.types.js";
 import { createThinkingCatalogResolver } from "../auto-reply/thinking.js";
+import type { SessionEntry } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import { resolveProviderPolicySurface } from "../plugins/provider-public-artifacts.js";
 import {
   PREPARED_THINKING_POLICY,
   type PreparedThinkingPolicy,
@@ -9,6 +12,75 @@ import {
 } from "../plugins/provider-thinking-catalog.js";
 import type { ProviderThinkingRegistry } from "../plugins/provider-thinking.types.js";
 import { resolveGatewayModelThinkingProfile } from "./session-utils-model.js";
+import { buildSessionListRowMetadataContext } from "./session-utils-projection.js";
+import { buildGatewaySessionRow } from "./session-utils-row.js";
+
+describe("Gateway stored thinking levels", () => {
+  it("keeps stored Ultra for supported harnesses and clamps unavailable native profiles", () => {
+    const cfg: OpenClawConfig = {
+      agents: {
+        defaults: {
+          model: { primary: "openai/gpt-5.6-sol" },
+          models: {
+            "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
+          },
+        },
+      },
+    };
+    const openaiPolicy = expectDefined(
+      resolveProviderPolicySurface("openai")?.resolveThinkingProfile,
+      "OpenAI public thinking policy",
+    );
+    const row = (
+      entry: SessionEntry,
+      catalog?: { reasoning?: boolean; compat?: { supportedReasoningEfforts: string[] } },
+    ) =>
+      buildGatewaySessionRow({
+        cfg,
+        agentId: "main",
+        lightweightListRow: true,
+        rowContext: buildSessionListRowMetadataContext({ now: 1 }),
+        storePath: "",
+        store: {},
+        key: "agent:main:main",
+        entry,
+        ...(catalog
+          ? {
+              modelCatalog: [
+                {
+                  provider: "openai",
+                  id: "gpt-5.6-sol",
+                  name: "GPT-5.6 Sol",
+                  [PREPARED_THINKING_POLICY]: openaiPolicy,
+                  ...catalog,
+                },
+              ],
+            }
+          : {}),
+      });
+
+    const stored: SessionEntry = { sessionId: "stored", updatedAt: 1, thinkingLevel: "ultra" };
+
+    expect(row(stored).thinkingLevel).toBe("ultra");
+    expect(row(stored, {}).thinkingLevel).toBe("ultra");
+    expect(row(stored, { reasoning: true }).thinkingLevel).toBe("ultra");
+    expect(row(stored, { reasoning: false }).thinkingLevel).toBe("off");
+    expect(
+      row(stored, { reasoning: true, compat: { supportedReasoningEfforts: ["off"] } })
+        .thinkingLevel,
+    ).toBe("off");
+    expect(
+      row(stored, { reasoning: true, compat: { supportedReasoningEfforts: ["max"] } })
+        .thinkingLevel,
+    ).toBe("ultra");
+    const nativeUltra = row(stored, {
+      reasoning: true,
+      compat: { supportedReasoningEfforts: ["max", "ultra"] },
+    });
+    expect(nativeUltra.thinkingLevel).toBe("ultra");
+    expect(nativeUltra.thinkingLevels).toContainEqual({ id: "ultra", label: "ultra" });
+  });
+});
 
 describe("Gateway all-null thinking map", () => {
   it.each([undefined, "ultra"] as const)(
