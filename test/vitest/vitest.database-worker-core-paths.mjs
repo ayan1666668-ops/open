@@ -46,6 +46,7 @@ export const databaseWorkerCoreTestFiles = [
   "src/agents/tools/gateway.hosted-routing.test.ts",
   "src/agents/tools/gateway.runtime-identity.test.ts",
   "src/agents/cli-runner.prepare-fixture.test.ts",
+  "src/agents/command/session-store.test.ts",
   "src/agents/harness/selection.test.ts",
   "src/agents/cli-runner/prepare.test.ts",
   "src/agents/cli-runner/prepare.durable-context.test.ts",
