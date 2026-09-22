@@ -30,11 +30,12 @@ page for its host requirements.
 | `decisionModel` | Classification, rubric scoring, and predicate evaluation | Typed answers and probability estimates |
 
 Decision models have a separate **Decision** picker in the Control UI. Selection
-chooses the provider for supported consumers but does not activate them. Turn on
-**Settings → Labs → Decision-assisted features** as the shared outer eligibility
-gate. Consumers still retain their independent modes, permissions, and tool
-policy. Neither selection nor Labs activation starts background work or replaces
-the chat model.
+chooses the provider for explicit evaluation and supported consumers. The core
+`decision_evaluate` tool follows that selection plus ordinary tool policy; it is
+independent of Labs. **Settings → Labs → Decision-assisted features** is the
+shared outer eligibility gate only for automatic experimental consumers. Those
+consumers still retain their independent modes, permissions, and policy. Neither
+selection nor Labs activation starts background work or replaces the chat model.
 
 ## Choose a provider and model
 
@@ -109,12 +110,12 @@ ONNX's token budget includes the state, instructions, and rubric.
 
 ## Agent evaluation tool
 
-`decision_evaluate` is a core tool. An agent receives it only when the shared
-Decision-assisted Labs gate is on and that agent has an effective
-`decisionModel`, subject to normal tool policy, explicit denies, and the active
-harness's capabilities. An unconfigured agent or one with an empty per-agent
-override does not receive the tool. Labs does not grant the tool or select a
-provider; provider plugins still need their own normal setup.
+`decision_evaluate` is a core tool. An agent receives it when that agent has an
+effective `decisionModel`, subject to normal tool policy, explicit denies, and
+the active harness's capabilities. An unconfigured agent or one with an empty
+per-agent override does not receive the tool. The tool remains eligible whether
+Decision-assisted Labs is on or off; that gate applies only to automatic
+experimental consumers. Provider plugins still need their own normal setup.
 
 Call it with explicit shared `state` and a `questions` map:
 
@@ -165,8 +166,9 @@ request credentials in chat, or treat a failure as a negative answer.
 Missing credentials, rate limits, overload, and temporary provider errors leave
 the configured tool available and return an unavailable result. Configuration
 changes follow the existing tool/context refresh lifecycle; execution rechecks
-the effective selection and authority. Cancellation propagates to the shared
-Decision runtime and must not start fallback work.
+the effective selection and authority. Turning Decision-assisted Labs off does
+not remove or disable a retained explicit tool. Cancellation propagates to the
+shared Decision runtime and must not start fallback work.
 
 ## Call from a plugin
 

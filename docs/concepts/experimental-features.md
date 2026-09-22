@@ -39,8 +39,9 @@ config immediately without restarting the Gateway.
 Labs includes Decision-assisted features, Code Mode, Tool Search for all models,
 Custom plugin UI, Host Desktop, and Cloud Worker Desktop. Under the default reload mode, custom
 plugin views and desktop availability update in connected Control UI pages.
-Decision assistance, Code Mode, and Tool Search changes take effect for future
-agent runs.
+Decision-assisted automatic experiments, Code Mode, and Tool Search changes take
+effect for future agent runs. The explicit `decision_evaluate` tool is not
+controlled by the Decision-assisted Labs switch.
 Reload browser tabs after disabling Custom plugin UI to clear plugin JavaScript
 that already ran. The Cloud Worker Desktop lab controls access to existing
 desktop-capable workers; changing a profile's `settings.desktop` affects only
@@ -65,6 +66,11 @@ eligibility gate: it does not select or provision a Decision provider, enable a
 consumer's independent mode, grant tools, or bypass tool policy. Agents without
 an effective `decisionModel`, including agents with an explicit empty override,
 continue on the ordinary path without Decision inference.
+
+This Labs gate applies only to automatic experimental consumers. It does not
+gate the explicit `decision_evaluate` tool or the shared Decision runtime. An
+agent with an effective Decision model can receive the explicit tool under
+ordinary tool policy whether this switch is on or off.
 
 ## Local model lean mode
 

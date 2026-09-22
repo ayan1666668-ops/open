@@ -129,7 +129,7 @@ afterEach(() => {
 });
 
 describe("core decision_evaluate registered flow", () => {
-  it("requires Labs eligibility and effective selection without provider-health churn", () => {
+  it("requires effective selection without Labs or provider-health churn", () => {
     expect(assembled()).toBeDefined();
     expect(assembled("alternate")).toBeDefined();
     expect(assembled("disabled")).toBeUndefined();
@@ -143,7 +143,7 @@ describe("core decision_evaluate registered flow", () => {
           entries: { main: { experimental: { decisionAssistance: false } } },
         },
       }),
-    ).toBeUndefined();
+    ).toBeDefined();
     expect(
       assembled("main", {
         agents: {
@@ -151,7 +151,7 @@ describe("core decision_evaluate registered flow", () => {
           entries: { main: {} },
         },
       }),
-    ).toBeUndefined();
+    ).toBeDefined();
     expect(
       assembled("main", {
         agents: {
@@ -269,11 +269,9 @@ describe("core decision_evaluate registered flow", () => {
         },
       },
     });
-    expect((await retained.execute("call", batch)).details).toMatchObject({
-      status: "unavailable",
-      reason: "disabled",
-    });
-    expect(evaluate).toHaveBeenCalledOnce();
+    expect((await retained.execute("call", batch)).details).toMatchObject({ status: "ok" });
+    expect(evaluate).toHaveBeenCalledTimes(2);
+    expect(assembled()).toBeDefined();
     expect(tool.description).toBe(description);
   });
 
