@@ -5,6 +5,7 @@ import {
   normalizeOptionalLowercaseString,
   normalizeOptionalString,
 } from "@openclaw/normalization-core/string-coerce";
+import type { Model } from "../llm/types.js";
 import { resolveClaudeThinkingProfile } from "../plugins/provider-claude-thinking.js";
 import { resolveEffectiveThinkingProfile } from "../plugins/provider-thinking.js";
 import type {
@@ -340,12 +341,28 @@ export function resolveThinkingProfile(
 
 /** Lower harness-only Ultra at a provider boundary without inventing native effort support. */
 export function resolveProviderThinkingLevel(
-  params: Parameters<typeof resolveModelThinkingProfile>[0] & { level?: ThinkLevel },
+  params: Omit<Parameters<typeof resolveModelThinkingProfile>[0], "catalog"> & {
+    catalog?: (ThinkingCatalogEntry | Model)[];
+    level?: ThinkLevel;
+  },
 ): Exclude<ThinkLevel, "ultra"> | undefined {
   if (params.level !== "ultra") {
     return params.level;
   }
-  const profile = resolveModelThinkingProfile(params);
+  const catalog = params.catalog?.map(({ compat, ...entry }) => ({
+    ...entry,
+    // Transport-only compatibility (for example Anthropic cache controls) is
+    // not thinking metadata. Preserve every declared thinking capability.
+    compat:
+      compat &&
+      ("thinkingFormat" in compat ||
+        "supportsReasoningEffort" in compat ||
+        "supportedReasoningEfforts" in compat ||
+        "reasoningEffortMap" in compat)
+        ? compat
+        : undefined,
+  }));
+  const profile = resolveModelThinkingProfile({ ...params, catalog });
   return profile.levels
     .filter(
       (entry): entry is RankedThinkingLevelOption & { id: Exclude<ThinkLevel, "ultra"> } =>

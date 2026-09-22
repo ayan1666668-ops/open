@@ -5,7 +5,6 @@ import { ensureSystemPromptCacheBoundary } from "@openclaw/ai/internal/shared";
  */
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { messageToolOwnsVisibleReply } from "../../auto-reply/source-reply-delivery-mode.js";
-import { resolveProviderThinkingLevel } from "../../auto-reply/thinking.js";
 import { getRuntimeConfig } from "../../config/config.js";
 import { canonicalizeMainSessionAlias } from "../../config/sessions/main-session.js";
 import { runWithSessionTranscriptReadFence } from "../../config/sessions/session-transcript-read-fence.js";
@@ -120,8 +119,7 @@ import { selectContextEngineForTranscriptHost } from "../harness/context-engine-
 import { drainPendingContextEngineTurnsBeforeRun } from "../harness/context-engine-turn-attempt.js";
 import { createAgentQuestionAnswerAuthority } from "../harness/host-private-capabilities.js";
 import type { ResolvedProviderAuth } from "../model-auth-runtime-shared.js";
-import { findModelCatalogEntry, loadManifestModelCatalog } from "../model-catalog.js";
-import type { ModelCatalogEntry } from "../model-catalog.types.js";
+import { loadManifestModelCatalog } from "../model-catalog.js";
 import { resolveModelContextWindowProfile } from "../model-context-window.js";
 import { recordAdmittedModelRoutingDecision } from "../model-routing-decision.js";
 import { buildConfiguredModelCatalog } from "../model-selection-shared.js";
@@ -138,7 +136,6 @@ import { appendModelIdentitySystemPrompt, buildModelIdentityPromptLine } from ".
 import { expandToolGroups, normalizeToolPolicyName } from "../tool-policy.js";
 import { resolveQuestionTimeoutMs } from "../tools/ask-user-tool-normalization.js";
 import { assertNativeCronCreatorCapabilities } from "../tools/cron-tool-creator-cap.js";
-import { buildProactiveSubagentOrchestrationSection } from "../ultra-orchestration.js";
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
 import {
   DEFAULT_BOOTSTRAP_FILENAME,
@@ -167,6 +164,7 @@ import {
   finalizeCliMcpGrant,
   normalizeOptionalMcpContextValue,
 } from "./mcp-grant-context.js";
+import { resolveCliCatalogCapabilities } from "./model-capabilities.js";
 import { CLAUDE_CLI_CONTEXT_MODEL_ALIASES, detectNodeClaudePlacement } from "./prepare-claude.js";
 import {
   buildCliTurnAppendContext,
@@ -241,23 +239,6 @@ const defaultPrepareDeps = {
   loadManifestModelCatalog,
 };
 const prepareDeps = { ...defaultPrepareDeps };
-
-function findCliCatalogEntry(params: {
-  catalog: ModelCatalogEntry[];
-  providers: string[];
-  models: string[];
-  requireContextWindows?: boolean;
-}): ModelCatalogEntry | undefined {
-  for (const provider of params.providers) {
-    for (const model of params.models) {
-      const entry = findModelCatalogEntry(params.catalog, { provider, modelId: model });
-      if (entry && (!params.requireContextWindows || entry.contextWindows?.length)) {
-        return entry;
-      }
-    }
-  }
-  return undefined;
-}
 
 function resolveReusableCliSessionId(reusableCliSession: CliReusableSession): string | undefined {
   return reusableCliSession.mode === "reuse" || reusableCliSession.mode === "reuse-with-drift"
@@ -1100,26 +1081,14 @@ async function prepareCliRunContextWithinReadFence(
       ? buildConfiguredModelCatalog({ cfg: params.config, workspaceDir })
       : prepareDeps.loadManifestModelCatalog({ config: params.config, workspaceDir })
     : [];
-  const catalogQuery = {
+  const { selectableContextEntry, providerThinkingLevel } = resolveCliCatalogCapabilities({
     catalog: modelCatalog,
-    providers: uniqueStrings(
-      [params.provider, backendResolved.modelProvider].filter(
-        (provider): provider is string => typeof provider === "string" && provider.length > 0,
-      ),
-    ),
-    models: uniqueStrings([modelId, normalizedCatalogModel]),
-  };
-  const selectableContextEntry = findCliCatalogEntry({
-    ...catalogQuery,
-    requireContextWindows: true,
-  });
-  const thinkingCatalogEntry = findCliCatalogEntry(catalogQuery);
-  const providerThinkingLevel = resolveProviderThinkingLevel({
-    provider: thinkingCatalogEntry?.provider ?? params.provider,
-    model: thinkingCatalogEntry?.id ?? normalizedCatalogModel,
-    catalog: modelCatalog,
+    provider: params.provider,
+    modelProvider: backendResolved.modelProvider,
+    modelId,
+    normalizedModel: normalizedCatalogModel,
     agentRuntime: backendResolved.id,
-    level: params.thinkLevel,
+    thinkLevel: params.thinkLevel,
   });
   if (selectableContextEntry) {
     const contextWindowProfile = resolveModelContextWindowProfile({
@@ -2099,14 +2068,8 @@ async function prepareCliRunContextWithinReadFence(
           isNewSession:
             !reusableCliSessionId?.trim() || reusableCliSession.mode === "reuse-with-drift",
           systemPrompt,
-          context: [
-            hookResult?.appendContext,
-            authorizedPromptBuildResult?.appendContext,
-            buildProactiveSubagentOrchestrationSection({
-              enabled: params.thinkLevel === "ultra",
-              hasSessionsSpawn: promptTools.some((tool) => tool.name === "sessions_spawn"),
-            }).join("\n"),
-          ],
+          thinkLevel: params.thinkLevel,
+          context: [hookResult?.appendContext, authorizedPromptBuildResult?.appendContext],
         });
         const logicalPrompt = composeCliPromptContext(preparedPrompt, {
           prependContext,

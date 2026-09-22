@@ -11,36 +11,39 @@ import type { ProviderThinkingRegistry } from "../plugins/provider-thinking.type
 import { resolveGatewayModelThinkingProfile } from "./session-utils-model.js";
 
 describe("Gateway all-null thinking map", () => {
-  it("does not advertise a default without selectable levels", () => {
-    const profile = resolveGatewayModelThinkingProfile({
-      cfg: {},
-      agentId: "main",
-      provider: "metadata-fixture",
-      model: "no-effort",
-      agentRuntime: "openclaw",
-      modelCatalog: [
-        {
-          provider: "metadata-fixture",
-          id: "no-effort",
-          name: "No selectable effort",
-          api: "openai-completions",
-          reasoning: true,
-          thinkingLevelMap: {
-            off: null,
-            minimal: null,
-            low: null,
-            medium: null,
-            high: null,
-            xhigh: null,
-            max: null,
+  it.each([undefined, "ultra"] as const)(
+    "preserves the explicit default %s without native levels",
+    (thinkingDefault) => {
+      const profile = resolveGatewayModelThinkingProfile({
+        cfg: { agents: { defaults: { thinkingDefault } } },
+        agentId: "main",
+        provider: "metadata-fixture",
+        model: "no-effort",
+        agentRuntime: "openclaw",
+        modelCatalog: [
+          {
+            provider: "metadata-fixture",
+            id: "no-effort",
+            name: "No selectable effort",
+            api: "openai-completions",
+            reasoning: true,
+            thinkingLevelMap: {
+              off: null,
+              minimal: null,
+              low: null,
+              medium: null,
+              high: null,
+              xhigh: null,
+              max: null,
+            },
           },
-        },
-      ],
-    });
+        ],
+      });
 
-    expect(profile.thinkingLevels).toEqual([]);
-    expect(profile.thinkingDefault).toBeUndefined();
-  });
+      expect(profile.thinkingLevels).toEqual([{ id: "ultra", label: "ultra" }]);
+      expect(profile.thinkingDefault).toBe(thinkingDefault);
+    },
+  );
 });
 
 describe("Gateway captured thinking defaults", () => {
@@ -205,11 +208,15 @@ describe.each([false, true])("Gateway thinking catalog indexed=%s", (indexed) =>
     });
     expect(profile.thinkingLevels).toEqual(
       scenario.configuredReasoning === false
-        ? [{ id: "off", label: "off" }]
+        ? [
+            { id: "off", label: "off" },
+            { id: "ultra", label: "ultra" },
+          ]
         : [
             { id: "off", label: "off" },
             { id: "low", label: "On" },
             { id: "high", label: "high" },
+            { id: "ultra", label: "ultra" },
           ],
     );
     expect(profile.thinkingDefault).toBe(scenario.expected);
@@ -249,6 +256,7 @@ describe.each([false, true])("Gateway thinking catalog indexed=%s", (indexed) =>
       "low",
       "medium",
       "high",
+      "ultra",
     ]);
     expect(profile.thinkingDefault).toBe("medium");
     expect(otherPolicy).not.toHaveBeenCalled();

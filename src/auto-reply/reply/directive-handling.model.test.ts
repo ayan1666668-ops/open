@@ -1303,6 +1303,7 @@ describe("/model chat UX", () => {
   });
 
   registerModelRuntimeDirectiveTests({
+    setOpenAiRuntimeScopedUltraProvider,
     createSessionEntry,
     createGptAliasIndex,
     persistModelDirectiveForTest,
@@ -1360,35 +1361,6 @@ describe("/model chat UX", () => {
     expect(enqueueSystemEvent).not.toHaveBeenCalled();
     expect(queueMocks.refreshQueuedFollowupSession).not.toHaveBeenCalled();
   });
-
-  it.each(["openclaw", "codex"])(
-    "commits %s selection while keeping supported mixed thinking on its turn",
-    async (runtime) => {
-      setOpenAiRuntimeScopedUltraProvider();
-      const sessionEntry = createSessionEntry({ thinkingLevel: "high" });
-      const { persisted, result } = await persistModelDirectiveForTest({
-        command: `/model openai/gpt-5.6-luna --runtime ${runtime} /think ultra please solve`,
-        allowedModelKeys: ["openai/gpt-5.6-luna"],
-        sessionEntry,
-      });
-
-      expect(persisted.errorText).toBeUndefined();
-      expect(result).toMatchObject({
-        kind: "continue",
-        provider: "openai",
-        model: "gpt-5.6-luna",
-        directives: { thinkLevel: "ultra" },
-        directiveAck: { text: expect.stringContaining("Thinking level set to ultra.") },
-      });
-      expect(sessionEntry).toMatchObject({
-        providerOverride: "openai",
-        modelOverride: "gpt-5.6-luna",
-        modelOverrideSource: "user",
-        agentRuntimeOverride: runtime,
-        thinkingLevel: "high",
-      });
-    },
-  );
 
   it("persists alias-based numeric auth-profile overrides for mixed-content messages", async () => {
     const { sessionEntry } = await persistModelDirectiveForTest({

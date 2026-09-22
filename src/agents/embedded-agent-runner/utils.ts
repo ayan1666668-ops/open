@@ -6,6 +6,7 @@ import {
   type ThinkLevel,
   type ThinkingCatalogEntry,
 } from "../../auto-reply/thinking.js";
+import type { Model } from "../../llm/types.js";
 import type { ThinkingLevel } from "../runtime/index.js";
 
 export type ProviderThinkLevel = Exclude<ThinkLevel, "ultra">;
@@ -19,7 +20,7 @@ export function normalizeContextTokenBudget(value: unknown): number | undefined 
 /** Converts logical product modes into provider-facing effort values. */
 export function mapThinkingLevelForProvider(
   level: ThinkLevel | undefined,
-  model: ThinkingCatalogEntry,
+  model: ThinkingCatalogEntry | Model,
 ): ProviderThinkLevel | undefined {
   return resolveProviderThinkingLevel({
     provider: model.provider,

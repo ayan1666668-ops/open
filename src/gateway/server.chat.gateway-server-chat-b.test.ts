@@ -70,6 +70,7 @@ import { captureEnv, setTestEnvValue } from "../test-utils/env.js";
 import { withOpenClawTestState } from "../test-utils/openclaw-test-state.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import { assertPluginMetadataSnapshotConsistency } from "./plugin-metadata.test-helpers.js";
+import { readWarmChatStartup } from "./server-chat-startup.test-support.js";
 import {
   createChatVisionModelCatalogSnapshot,
   createDirectChatContext,
@@ -93,37 +94,10 @@ import {
   gatewayReplyMock,
   installGatewayTestHooks,
   mockGetReplyFromConfigOnce,
-  onceMessage,
   rpcReq,
   testState,
   writeSessionStore,
 } from "./test-helpers.js";
-
-async function readWarmChatStartup(ws: Parameters<typeof rpcReq>[0]) {
-  // rpcReq resets the runtime config before each request. Warm startup must reuse
-  // the exact config that prepared metadata, as an ordinary client does.
-  const config = getRuntimeConfig();
-  const id = randomUUID();
-  const response = onceMessage<{
-    type: string;
-    id: string;
-    ok: boolean;
-    payload?: {
-      metadata?: {
-        commands?: Array<{ name?: string; textAliases?: string[] }>;
-        models?: Array<{ id?: string; provider?: string }>;
-      };
-      messages?: unknown[];
-      sessionInfo?: { key?: string; sessionId?: string };
-    };
-  }>(ws, (message) => message.type === "res" && message.id === id);
-  ws.send(
-    JSON.stringify({ type: "req", id, method: "chat.startup", params: makeMainSessionParams() }),
-  );
-  const result = await response;
-  expect(getRuntimeConfig()).toBe(config);
-  return result;
-}
 
 const restartRecoveryMocks = vi.hoisted(() => ({
   retryRestartAbortedMainSessionRecovery: vi.fn<
@@ -1495,7 +1469,7 @@ describe("gateway server chat", () => {
       const preparedMetadata = await rpcReq(ws, "chat.metadata", { agentId: "main" });
       expect(preparedMetadata.ok).toBe(true);
 
-      const startup = await readWarmChatStartup(ws);
+      const startup = await readWarmChatStartup(ws, makeMainSessionParams());
       const agents = await rpcReq<{
         agents?: Array<{
           id?: string;
@@ -2003,7 +1977,7 @@ describe("gateway server chat", () => {
               expect(
                 projection.thinkingLevels?.map((level) => level.id),
                 mode,
-              ).toEqual(["off"]);
+              ).toEqual(["off", "ultra"]);
             } else {
               expect.soft(projection.thinkingLevels, `${mode} unknown levels`).toBeUndefined();
               expect.soft(projection.thinkingOptions, `${mode} unknown options`).toBeUndefined();
@@ -2387,6 +2361,7 @@ describe("gateway server chat", () => {
                 "medium",
                 "high",
                 "xhigh",
+                "ultra",
               ]);
               const serialized = JSON.stringify(responses[0]?.payload);
               expect(serialized).not.toContain("private-route-token");
@@ -2535,7 +2510,7 @@ describe("gateway server chat", () => {
       const preparedMetadata = await rpcReq(ws, "chat.metadata", { agentId: "main" });
       expect(preparedMetadata.ok).toBe(true);
 
-      const startup = await readWarmChatStartup(ws);
+      const startup = await readWarmChatStartup(ws, makeMainSessionParams());
 
       expect(startup.ok).toBe(true);
       expect(startup.payload?.metadata?.models).toEqual(
