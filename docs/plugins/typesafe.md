@@ -117,6 +117,18 @@ The policy is off by default. Its fields also appear in the plugin's Settings
 form. `policy` is trusted operator guidance, not user authorization. The review
 threshold must be below the block threshold; both must be between 0 and 1.
 
+Safety enforcement requires its own `toolSafety.enabled: true` opt-in. Selecting
+a decision model or enabling a Decision-assisted optimization does not enable
+this policy. With screening disabled, tools follow their normal execution path
+without safety approvals or Decision provider requests.
+
+With screening explicitly enabled, an absent or empty `decisionModel` does not
+disable protection. An owning agent's `decisionModel: ""` also overrides a model
+selected in `agents.defaults`. In each case, the Decision runtime makes no provider
+request, and the policy requests manual review. If the complete redacted call
+cannot fit the approval description, it blocks instead. To stop safety screening,
+disable `toolSafety.enabled`; clearing the model alone leaves enforcement active.
+
 Each screened call asks four independent Boolean questions in one request:
 credential/private-data exfiltration, broad irreversible destruction, weakening
 security controls, and whether consequential effects need more context. The
@@ -128,7 +140,8 @@ TypeSafe adapter translates these Boolean questions to Jev's Noul primitive.
 | A hazard or the missing-context judgment reaches `reviewThreshold`      | Request one-time approval.                                  |
 | Model is unset, disabled, overloaded, times out, or returns unavailable | Request one-time approval.                                  |
 | Arguments exceed 32 KiB or cannot be serialized                         | Block without sending a partial assessment; split the call. |
-| Caller cancellation, closed authority, or a decision contract error     | Stop through the host's existing failure path.              |
+| Unexpected provider exception or decision contract error                | Fail the call through the host; do not request approval.    |
+| Caller cancellation or closed authority                                 | Stop the call; do not start manual review or execute it.    |
 | All judgments are below their thresholds                                | Continue through the remaining host policies.               |
 
 Review offers **Allow once** and **Deny**. Unanswered approvals do not execute the
