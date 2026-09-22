@@ -2,7 +2,7 @@
 // with FakeWebSocket before importing this module.
 import { expect, vi } from "vitest";
 import { buildXaiRealtimeVoiceProvider } from "./realtime-voice-provider.js";
-import { FakeWebSocket } from "./realtime-voice-test-socket.js";
+import { FakeWebSocket } from "./realtime-voice-socket.test-support.js";
 
 export type FakeWebSocketInstance = InstanceType<typeof FakeWebSocket>;
 export type TestBridgeOptions = Parameters<
