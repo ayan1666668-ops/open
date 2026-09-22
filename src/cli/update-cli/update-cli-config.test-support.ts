@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { onTestFinished, vi, type Mock } from "vitest";
+import type { runPostCorePluginConvergence } from "../../commands/doctor/shared/post-core-plugin-convergence.js";
 import type { readConfigFileSnapshot as ReadConfigFileSnapshot } from "../../config/config.js";
 import { resolveConfigPath } from "../../config/paths.js";
 import type {
@@ -87,6 +88,8 @@ export const postCoreConvergenceResult = (
     errored: boolean;
   }> = {},
 ) => ({
+  configChanges: [],
+  installedPluginIdRecovery: new Map(),
   changes: [],
   warnings: [],
   errored: false,
@@ -94,6 +97,18 @@ export const postCoreConvergenceResult = (
   installRecords: {},
   ...overrides,
 });
+
+/** Return each call's config while overriding only the scenario's convergence outcome. */
+export function mockPostCoreConvergenceOnce(
+  spy: Pick<Mock<typeof runPostCorePluginConvergence>, "mockImplementationOnce">,
+  overrides: Partial<Awaited<ReturnType<typeof runPostCorePluginConvergence>>> = {},
+): void {
+  spy.mockImplementationOnce(async ({ cfg }) => ({
+    ...postCoreConvergenceResult(),
+    config: cfg,
+    ...overrides,
+  }));
+}
 
 export const stableConfig = (overrides: Omit<OpenClawConfig, "update"> = {}): OpenClawConfig => ({
   update: { channel: "stable" },
