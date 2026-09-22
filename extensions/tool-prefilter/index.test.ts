@@ -1,3 +1,4 @@
+import { createPluginRuntimeMock } from "openclaw/plugin-sdk/plugin-test-runtime";
 import { describe, expect, it, vi } from "vitest";
 import pluginEntry, { isRestrictiveToolPolicySupported } from "./index.js";
 
@@ -46,7 +47,7 @@ describe("tool-prefilter plugin", () => {
       config: {
         agents: {
           defaults: {
-            agentRuntime: { id: "openclaw" },
+            decisionModel: "vercel-ai-gateway/typesafe-ai/jev",
           },
         },
       },
@@ -67,7 +68,11 @@ describe("tool-prefilter plugin", () => {
     pluginEntry.register(mockApi as any);
 
     const event = { currentUserMessage: "Hello, how are you today?" };
-    const ctx = { agentId: "agent-1" };
+    const ctx = {
+      agentId: "agent-1",
+      modelProviderId: "anthropic",
+      modelId: "claude-3-5-sonnet",
+    };
 
     const result = await hookHandler(event, ctx);
 
@@ -172,7 +177,7 @@ describe("tool-prefilter plugin", () => {
       config: {
         agents: {
           defaults: {
-            agentRuntime: { id: "openclaw" },
+            decisionModel: "vercel-ai-gateway/typesafe-ai/jev",
           },
         },
       },
@@ -194,7 +199,11 @@ describe("tool-prefilter plugin", () => {
 
     // currentUserMessage is undefined (omitted legacy caller)
     const event = { prompt: "Just chatting with you" };
-    const ctx = { agentId: "agent-1" };
+    const ctx = {
+      agentId: "agent-1",
+      modelProviderId: "anthropic",
+      modelId: "claude-3-5-sonnet",
+    };
 
     const result = await hookHandler(event, ctx);
 
@@ -285,15 +294,54 @@ describe("tool-prefilter plugin", () => {
       expect(isRestrictiveToolPolicySupported({ agentId: "agent-1" })).toBe(false);
     });
 
+    it("returns true for schema-valid documented embedded sessions without explicit runtime fields", () => {
+      const documentedConfig = {
+        agents: {
+          defaults: {
+            decisionModel: "vercel-ai-gateway/typesafe-ai/jev",
+          },
+        },
+      };
+      expect(
+        isRestrictiveToolPolicySupported(
+          { agentId: "main", modelProviderId: "anthropic", modelId: "claude-3-5-sonnet" },
+          documentedConfig as any,
+        ),
+      ).toBe(true);
+      expect(
+        isRestrictiveToolPolicySupported(
+          { agentId: "main", modelProviderId: "google", modelId: "gemini-1.5-pro" },
+          documentedConfig as any,
+        ),
+      ).toBe(true);
+      expect(
+        isRestrictiveToolPolicySupported(
+          { agentId: "main", modelProviderId: "ollama", modelId: "llama3" },
+          documentedConfig as any,
+        ),
+      ).toBe(true);
+    });
+
+    it("returns false for implicit OpenAI sessions without explicit runtime policy", () => {
+      const documentedConfig = {
+        agents: {
+          defaults: {
+            decisionModel: "vercel-ai-gateway/typesafe-ai/jev",
+          },
+        },
+      };
+      expect(
+        isRestrictiveToolPolicySupported(
+          { agentId: "main", modelProviderId: "openai", modelId: "gpt-5.4" },
+          documentedConfig as any,
+        ),
+      ).toBe(false);
+    });
+
     it("returns true when agent config or explicit context specifies openclaw or copilot runtime", () => {
       expect(
         isRestrictiveToolPolicySupported({ agentId: "agent-1" }, {
           agents: { entries: { "agent-1": { agentRuntime: { id: "openclaw" } } } },
-        } as any),
-      ).toBe(true);
-      expect(
-        isRestrictiveToolPolicySupported({ agentId: "agent-1" }, {
-          agents: { defaults: { agentRuntime: { id: "openclaw" } } },
         } as any),
       ).toBe(true);
       expect(
@@ -728,7 +776,7 @@ describe("tool-prefilter plugin", () => {
       expect(result).toEqual({ toolsAllow: [] });
     });
 
-    it("preserves tools for native-owned Codex attempts where model identity is omitted", async () => {
+    it("preserves tools for native-owned Codex attempts where model identity is omitted even with unrelated wildcard policy", async () => {
       let hookHandler: Function = () => {};
       const mockEvaluate = vi.fn().mockResolvedValue({
         status: "ok",
@@ -743,17 +791,27 @@ describe("tool-prefilter plugin", () => {
         },
       });
 
-      const mockApi = {
-        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
-        config: {},
-        runtime: {
-          decisions: {
-            evaluate: mockEvaluate,
-          },
-          modelConfig: {
-            resolveModelRuntimePolicy: vi.fn().mockReturnValue({}),
+      // Canonical plugin runtime mock containing real resolveModelRuntimePolicy
+      const runtime = createPluginRuntimeMock();
+      runtime.decisions.evaluate = mockEvaluate as any;
+
+      // Configuration containing an unrelated provider-wildcard runtime policy
+      const hostConfig = {
+        agents: {
+          defaults: {
+            models: {
+              "anthropic/*": {
+                agentRuntime: { id: "openclaw" },
+              },
+            },
           },
         },
+      };
+
+      const mockApi = {
+        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+        config: hostConfig,
+        runtime,
         on: vi.fn((_name: string, handler: Function) => {
           hookHandler = handler;
         }),
@@ -782,6 +840,70 @@ describe("tool-prefilter plugin", () => {
       expect(result).toBeUndefined(); // MUST preserve tools when runtime cannot be identified
       expect(mockApi.logger.info).toHaveBeenCalledWith(
         expect.stringContaining("active harness does not support turn-scoped tool pruning"),
+      );
+      // Because model identity is omitted, resolveModelRuntimePolicy must not be called with missing model identity
+      expect(runtime.modelConfig.resolveModelRuntimePolicy).not.toHaveBeenCalled();
+    });
+
+    it("prunes tools from a schema-valid documented embedded setup without legacy runtime fields", async () => {
+      let hookHandler: Function = () => {};
+      const mockEvaluate = vi.fn().mockResolvedValue({
+        status: "ok",
+        result: {
+          model: "typesafe-ai/jev",
+          answers: {
+            any_tool_needed: {
+              type: "boolean",
+              probabilityTrue: 0.05,
+            },
+          },
+        },
+      });
+
+      const runtime = createPluginRuntimeMock();
+      runtime.decisions.evaluate = mockEvaluate as any;
+
+      // Schema-valid documented configuration (no legacy agentRuntime)
+      const hostConfig = {
+        agents: {
+          defaults: {
+            decisionModel: "vercel-ai-gateway/typesafe-ai/jev",
+          },
+        },
+      };
+
+      const mockApi = {
+        pluginConfig: { enabled: true, thresholdAnyTool: 0.35 },
+        config: hostConfig,
+        runtime,
+        on: vi.fn((_name: string, handler: Function) => {
+          hookHandler = handler;
+        }),
+        logger: {
+          info: vi.fn(),
+        },
+      };
+
+      pluginEntry.register(mockApi as any);
+
+      const event = { currentUserMessage: "Tell me a joke" };
+      const ctx = {
+        runId: "run-embedded-1",
+        agentId: "default",
+        sessionKey: "agent:default:main",
+        sessionId: "session-emb-1",
+        workspaceDir: "/repo/workspace",
+        modelProviderId: "anthropic",
+        modelId: "claude-3-5-sonnet",
+        trigger: "user",
+      };
+
+      const result = await hookHandler(event, ctx);
+
+      expect(mockEvaluate).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ toolsAllow: [] }); // Prunes tools for embedded session!
+      expect(mockApi.logger.info).toHaveBeenCalledWith(
+        expect.stringContaining("Pure conversation detected"),
       );
     });
 

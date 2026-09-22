@@ -75,13 +75,17 @@ export function isRestrictiveToolPolicySupported(
   }
 
   // 2. Provider / model indicators on hook context
-  const provider = ctx?.modelProviderId?.trim().toLowerCase();
-  if (provider === "codex" || provider === "acpx") {
+  const rawModelId = typeof ctx?.modelId === "string" ? ctx.modelId.trim() : "";
+  const modelId = rawModelId.toLowerCase();
+  if (modelId && (modelId.includes("codex") || modelId.startsWith("codex/"))) {
     return false;
   }
 
-  const modelId = ctx?.modelId?.trim().toLowerCase();
-  if (modelId && (modelId.includes("codex") || modelId.startsWith("codex/"))) {
+  let provider = ctx?.modelProviderId?.trim().toLowerCase();
+  if (!provider && rawModelId.includes("/")) {
+    provider = rawModelId.slice(0, rawModelId.indexOf("/")).trim().toLowerCase();
+  }
+  if (provider === "codex" || provider === "acpx") {
     return false;
   }
 
@@ -98,36 +102,41 @@ export function isRestrictiveToolPolicySupported(
   }
 
   // 4. Authoritative host runtime policy resolution (via api.runtime.modelConfig)
-  const runtimeModelConfig = (
-    api as unknown as { runtime?: { modelConfig?: { resolveModelRuntimePolicy?: Function } } }
-  )?.runtime?.modelConfig;
-  if (typeof runtimeModelConfig?.resolveModelRuntimePolicy === "function") {
-    try {
-      const resolved = runtimeModelConfig.resolveModelRuntimePolicy({
-        config,
-        provider: ctx?.modelProviderId,
-        modelId: ctx?.modelId,
-        agentId: ctx?.agentId,
-        sessionKey: ctx?.sessionKey,
-      });
-      if (resolved?.policy?.id) {
-        const policyId = String(resolved.policy.id).trim().toLowerCase();
-        if (
-          policyId === "openclaw" ||
-          policyId === "embedded" ||
-          policyId === "pi" ||
-          policyId === "copilot"
-        ) {
-          return true;
+  // Model runtime policies apply to a specific model. If model identity is omitted
+  // (such as in native-owned Codex attempts), we must NOT resolve wildcard policies,
+  // because the canonical resolver can match unrelated single-provider wildcards (e.g. anthropic/*).
+  if (rawModelId) {
+    const runtimeModelConfig = (
+      api as unknown as { runtime?: { modelConfig?: { resolveModelRuntimePolicy?: Function } } }
+    )?.runtime?.modelConfig;
+    if (typeof runtimeModelConfig?.resolveModelRuntimePolicy === "function") {
+      try {
+        const resolved = runtimeModelConfig.resolveModelRuntimePolicy({
+          config,
+          provider: ctx?.modelProviderId ?? provider,
+          modelId: rawModelId,
+          agentId: ctx?.agentId,
+          sessionKey: ctx?.sessionKey,
+        });
+        if (resolved?.policy?.id) {
+          const policyId = String(resolved.policy.id).trim().toLowerCase();
+          if (
+            policyId === "openclaw" ||
+            policyId === "embedded" ||
+            policyId === "pi" ||
+            policyId === "copilot"
+          ) {
+            return true;
+          }
+          return false;
         }
-        return false;
+      } catch {
+        // Fall through to agent configuration check
       }
-    } catch {
-      // Fall through to agent configuration check
     }
   }
 
-  // 5. Agent-level runtime configuration fallback
+  // 6. Agent-level runtime configuration fallback
   if (config) {
     if (ctx?.agentId) {
       try {
@@ -199,26 +208,23 @@ export function isRestrictiveToolPolicySupported(
         }
       }
     }
-
-    const defaultRuntimeId = config.agents?.defaults?.agentRuntime?.id;
-    if (typeof defaultRuntimeId === "string") {
-      const normalized = defaultRuntimeId.trim().toLowerCase();
-      if (
-        normalized === "openclaw" ||
-        normalized === "embedded" ||
-        normalized === "pi" ||
-        normalized === "copilot"
-      ) {
-        return true;
-      }
-      return false;
-    }
   }
 
-  // 6. Unknown runtime fallback:
-  // When the active harness cannot be positively identified as supporting turn-scoped tool policy
-  // (such as native-owned Codex attempts where model identity is omitted), PRESERVE TOOLS (fail-open)
-  // instead of assuming supported pruning.
+  // 7. Default harness resolution for embedded sessions (schema-valid documented setup):
+  // When no explicit runtime policy is authored in openclaw.json:
+  // - OpenAI models route implicitly to the Codex app-server by default, which cannot enforce
+  //   turn-scoped toolsAllow; so OpenAI without an explicit supported policy must return false.
+  // - All other providers (Anthropic, Google, Ollama, etc.) run on OpenClaw's canonical
+  //   embedded agent runner ("openclaw"), which fully supports before_prompt_build toolsAllow.
+  if (provider === "openai" || provider === "openai-codex") {
+    return false;
+  }
+
+  if (provider && rawModelId) {
+    return true;
+  }
+
+  // Unknown runtime fallback: preserve tools (fail-open)
   return false;
 }
 
