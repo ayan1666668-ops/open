@@ -492,6 +492,7 @@ describe("ClickClack inbound mention gating", () => {
       }),
       config: {} satisfies CoreConfig,
       message: createMessage({ body: "@blackbird please help" }),
+      wakeBotUserIds: ["usr_blackbird"],
     });
 
     const dispatchTurn = vi.mocked(runtime.channel.inbound.dispatch);
@@ -501,6 +502,7 @@ describe("ClickClack inbound mention gating", () => {
       MessageSid: "msg_1",
       message_id: "msg_1",
       messageSid: "msg_1",
+      wake_bot_user_ids: ["usr_blackbird"],
     });
   });
 

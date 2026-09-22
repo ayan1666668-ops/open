@@ -118,6 +118,11 @@ async function processEvent(params: {
   if (params.abortSignal.aborted) {
     return;
   }
+  const wakeBotUserIds = Array.isArray(params.event.payload?.wake_bot_user_ids)
+    ? params.event.payload.wake_bot_user_ids.filter(
+        (value): value is string => typeof value === "string" && value.trim().length > 0,
+      )
+    : undefined;
   if (!access.shouldDispatch) {
     params.log?.info(
       `[${params.account.accountId}] skipped ClickClack message before agent dispatch: ` +
@@ -135,6 +140,7 @@ async function processEvent(params: {
     message,
     access,
     buildContext: params.buildContext,
+    ...(wakeBotUserIds ? { wakeBotUserIds } : {}),
     ...(correlationId ? { correlationId } : {}),
   });
 }

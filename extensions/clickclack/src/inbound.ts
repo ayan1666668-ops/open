@@ -113,6 +113,7 @@ export async function handleClickClackInbound(params: {
   message: ClickClackMessage;
   access?: ClickClackInboundAccess;
   correlationId?: string;
+  wakeBotUserIds?: readonly string[];
   buildContext?: typeof buildChannelInboundEventContext;
 }) {
   const runtime = getClickClackRuntime();
@@ -272,7 +273,11 @@ export async function handleClickClackInbound(params: {
   // adapters only forward the lower-case/native aliases. ClickClack's
   // TaskZilla mention gate uses this id to hydrate wake_bot_user_ids from
   // the realtime event after the hook's fixed allowlist drops that field.
-  Object.assign(ctxPayload, { message_id: message.id, messageSid: message.id });
+  Object.assign(ctxPayload, {
+    message_id: message.id,
+    messageSid: message.id,
+    ...(params.wakeBotUserIds ? { wake_bot_user_ids: [...params.wakeBotUserIds] } : {}),
+  });
   const runId = resolveClickClackAgentRunId(message.id);
   const activityReplyOptions = {
     ...(activity

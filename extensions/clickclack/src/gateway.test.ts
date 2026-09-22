@@ -414,13 +414,14 @@ describe("ClickClack gateway", () => {
       "[default] skipped malformed ClickClack websocket event",
     );
 
-    emitMessageEvent(socket, 1);
+    emitMessageEvent(socket, 1, { wake_bot_user_ids: ["bot-user"] });
 
     await waitForGatewayState(() => expect(mocks.handleClickClackInbound).toHaveBeenCalledTimes(1));
     expect(mocks.handleClickClackInbound.mock.calls[0]?.[0].access).toEqual({
       shouldDispatch: true,
       commandAuthorized: true,
     });
+    expect(mocks.handleClickClackInbound.mock.calls[0]?.[0].wakeBotUserIds).toEqual(["bot-user"]);
     expect(mocks.createClickClackClient).toHaveBeenCalledTimes(1);
     expect(mocks.handleClickClackInbound.mock.calls[0]?.[0]).not.toHaveProperty("correlationId");
     abort.abort();
