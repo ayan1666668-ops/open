@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createDeferred } from "../../../test/helpers/promise.js";
 import { upsertSessionEntryCore } from "../../config/sessions/session-accessor.js";
 import { emitAgentEvent, resetAgentEventsForTest } from "../../infra/agent-events.js";
@@ -53,6 +53,11 @@ vi.mock("../managed-image-attachments.js", async (importOriginal) => ({
   resolveManagedOutgoingMediaArtifactDownload: boundaries.managed,
   resolveManagedOutgoingMediaUrlDownload: boundaries.managedUrl,
 }));
+
+beforeEach(() => {
+  // Shared workers clear agent listeners independently of the retained task registry.
+  resetTaskRegistryForTests({ persist: false });
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -319,7 +324,7 @@ async function exercise(
       };
       expect(readsBeforeRelease).toEqual(
         secondPreparation
-          ? { session: 1, sharing: 1, transcript: 1 }
+          ? { session: 2, sharing: 2, transcript: 1 }
           : { session: 0, sharing: 0, transcript: 0 },
       );
       changeAuthority();

@@ -21,6 +21,7 @@ import {
   insertGitHubPublicationRequest,
   claimGitHubPublicationExecution,
   createGitHubPublicationExecutionStore,
+  isGitHubPublicationExecutionOwner,
   projectGitHubPublicationResult,
 } from "./github-publication-store.js";
 import { REMOTE_GITHUB_PUBLICATION_SNAPSHOT_JS } from "./github-repository-publication-snapshot.js";
@@ -399,6 +400,7 @@ it.each([
         ...execution,
         identity: { prepare: async () => identity, isCurrent: () => true },
         validateAuthority: () => true,
+        validateCustody: () => isGitHubPublicationExecutionOwner(requestId, "local-instance"),
         projectResult: projectGitHubPublicationResult,
       });
       const localHead = git(worktree.path, "rev-parse", "HEAD");
@@ -483,14 +485,21 @@ it("can hold publisher exclusion during an existing reclaim claim without taking
       const wait = vi.spyOn(backoff, "sleepWithAbort");
       await expect(
         placements.withWorkspaceExclusion(REQUEST.sessionId, async () => {}),
-      ).rejects.toThrow("another operation holds the lease");
+      ).rejects.toMatchObject({
+        code: "OPENCLAW_STATE_LEASE_HELD",
+        outcome: { kind: "held", holder: { owner: expect.any(String), epoch: expect.any(Number) } },
+      });
       expect(wait).not.toHaveBeenCalled();
       assertOwned();
       expect(placements.validateWorkspaceResultClaim(claim)).toBe(true);
     });
     expect(entered).toBe(true);
     expect(placements.validateWorkspaceResultClaim(claim)).toBe(true);
-    for (const code of ["OPENCLAW_STATE_LEASE_TIMEOUT", "STATE_LEASE_BUSY"] as const) {
+    for (const code of [
+      "OPENCLAW_STATE_LEASE_HELD",
+      "OPENCLAW_STATE_LEASE_STORAGE_FAILED",
+      "OPENCLAW_STATE_LEASE_ABORTED",
+    ] as const) {
       const operationFailure = new OpenClawStateLeaseError("Nested operation refused admission", {
         code,
       });
