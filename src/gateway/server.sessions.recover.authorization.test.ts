@@ -19,6 +19,22 @@ import {
 
 const { createSessionStoreDir } = setupGatewaySessionsHandlerTestHarness();
 
+const operatorRunCaptures = vi.hoisted(() => new Map<string, unknown>());
+
+vi.mock("./operator-run-cancellation.js", async () => {
+  const actual = await vi.importActual<typeof import("./operator-run-cancellation.js")>(
+    "./operator-run-cancellation.js",
+  );
+  return {
+    ...actual,
+    retainGatewayOperatorRun: (params: Parameters<typeof actual.retainGatewayOperatorRun>[0]) => {
+      const retained = actual.retainGatewayOperatorRun(params);
+      operatorRunCaptures.set(params.runId, retained);
+      return retained;
+    },
+  };
+});
+
 type RecoverPayload = {
   key?: string;
   sessionId?: string;
@@ -36,7 +52,21 @@ function isRecoverPayload(value: unknown): value is RecoverPayload {
   );
 }
 
+function isRetainedOperatorRun(
+  value: unknown,
+): value is { armCancellation: () => void; release: () => void } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "armCancellation" in value &&
+    typeof value.armCancellation === "function" &&
+    "release" in value &&
+    typeof value.release === "function"
+  );
+}
+
 afterEach(() => {
+  operatorRunCaptures.clear();
   closeOpenClawStateDatabaseForTest();
 });
 
@@ -200,6 +230,7 @@ test("sessions.recover denies a narrow continuation into a linked foreign succes
   await expect(
     loadTranscriptEvents({ ...successorScope, sessionId: successorSessionId }),
   ).resolves.toEqual(transcriptBefore);
+  expect(operatorRunCaptures.size).toBe(0);
 
   addSessionMember(successorScope, {
     identityId: sourceOwner.authenticatedUserProfile!.profileId,
@@ -207,9 +238,10 @@ test("sessions.recover denies a narrow continuation into a linked foreign succes
     expectedSessionId: successorSessionId,
   });
   sourceOwner.connect.scopes = ["operator.write"];
+  const allowedContext = createDirectChatContext({ getRuntimeConfig: () => cfg });
   const granted = await registeredSessionRecover({
     client: sourceOwner,
-    context: createDirectChatContext({ getRuntimeConfig: () => cfg }),
+    context: allowedContext,
     id: "linked-recovery-explicit-member",
     key: sourceKey,
   });
@@ -221,6 +253,9 @@ test("sessions.recover denies a narrow continuation into a linked foreign succes
       continuation: { status: "started" },
     },
   });
+  const memberRunId = granted.payload?.continuation?.runId;
+  expect(typeof memberRunId === "string" && operatorRunCaptures.has(memberRunId)).toBe(true);
+  expect(allowedContext.addChatRun).toHaveBeenCalledOnce();
 });
 
 test("sessions.recover retains source revocation for its accepted own successor", async () => {
@@ -241,15 +276,6 @@ test("sessions.recover retains source revocation for its accepted own successor"
     { deviceId: "narrow-recovery-device", role: "operator" },
     () => true,
   );
-  let retainedAfterDisconnect = false;
-  let revokedAfterAcceptance = false;
-  context.addChatRun = vi.fn(() => {
-    requestAuthority.release();
-    retainedAfterDisconnect = requestAuthority.isCurrent();
-    invalidateGatewayDeviceRevocation(context, "narrow-recovery-device", "operator");
-    revokedAfterAcceptance = !requestAuthority.isCurrent();
-  });
-
   const recovered = await registeredSessionRecover({
     client: owner,
     context,
@@ -262,12 +288,48 @@ test("sessions.recover retains source revocation for its accepted own successor"
     ok: true,
     payload: { key: expect.any(String), continuation: { status: "started" } },
   });
-  expect(retainedAfterDisconnect).toBe(true);
-  expect(revokedAfterAcceptance).toBe(true);
+  const runId = recovered.payload?.continuation?.runId;
+  if (typeof runId !== "string") {
+    throw new Error("recovery did not return its admitted run");
+  }
+  const acceptedRun = context.chatAbortControllers.get(runId);
+  if (!acceptedRun) {
+    throw new Error("recovery did not register its active run");
+  }
+  const retainedRun = operatorRunCaptures.get(runId);
+  if (!isRetainedOperatorRun(retainedRun)) {
+    throw new Error("recovery did not retain its operator run authority");
+  }
+  const cancellationWork: Promise<unknown>[] = [];
+  context.trackExecution = async (run) => {
+    const operation = Promise.resolve().then(run);
+    cancellationWork.push(operation);
+    return await operation;
+  };
+  let providerCancellationObserved = false;
+  acceptedRun.controller.signal.addEventListener(
+    "abort",
+    () => {
+      providerCancellationObserved = true;
+    },
+    { once: true },
+  );
+  retainedRun.armCancellation();
+  requestAuthority.release();
+  expect(requestAuthority.isCurrent()).toBe(true);
+  expect(acceptedRun.controller.signal.aborted).toBe(false);
+  invalidateGatewayDeviceRevocation(context, "narrow-recovery-device", "operator");
+  await Promise.allSettled(cancellationWork);
+  expect(requestAuthority.isCurrent()).toBe(false);
+  expect(acceptedRun.controller.signal.aborted).toBe(true);
+  expect(providerCancellationObserved).toBe(true);
+  expect(context.removeChatRun).toHaveBeenCalled();
+  retainedRun.release();
+  const recoveredKey = recovered.payload?.key ?? "";
   expect(
     loadSessionEntry({
       agentId: "main",
-      sessionKey: recovered.payload?.key ?? "",
+      sessionKey: recoveredKey,
       storePath,
     })?.createdActor,
   ).toEqual({ type: "human", source: "profile", id: owner.authenticatedUserProfile!.profileId });
