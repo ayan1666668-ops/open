@@ -14,6 +14,9 @@ import { XaiRealtimeVoiceProtocol } from "./realtime-voice-protocol.js";
 
 export class XaiRealtimeMalformedAudioError extends Error {}
 
+// Quiet period before committing input that was recognized after its response settled.
+const XAI_REALTIME_INPUT_SETTLE_MS = 1_500;
+
 export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
   private assistantTranscriptBuffer = "";
   private assistantTranscriptFinalized = false;
@@ -25,6 +28,7 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
   private outputResponse: { id?: string; ended: boolean } | undefined;
   private finalizedToolCallItems = new Set<string>();
   private inputTranscriptReplacements = new Map<string, string>();
+  private inputSettleTimer: ReturnType<typeof setTimeout> | undefined;
 
   protected abstract acceptsEvent(connection: RealtimeVoiceSessionConnection): boolean;
   protected abstract onSessionUpdated(connection: RealtimeVoiceSessionConnection): void;
@@ -204,16 +208,22 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
         // Preview immediately; commit once the response settles, so later corrections
         // cannot either duplicate the user message or truncate it permanently.
         this.config.onTranscript?.("user", transcript, false, { textMode: "snapshot" });
-        if (this.inputResponseFinished && this.acceptsEvent(connection)) {
-          this.flushPendingInputTranscript();
+        if (this.inputResponseFinished) {
+          // Recognition landed after the response settled; xAI may still revise
+          // this item, so commit it after a quiet period rather than at once.
+          this.armInputSettleTimer();
         }
         return;
       }
-      case "conversation.item.input_audio_transcription.failed":
-        this.pendingInputTranscript = undefined;
-        this.inputTranscriptReplacements.delete(this.inputTranscriptKey(event));
+      case "conversation.item.input_audio_transcription.failed": {
+        const key = this.inputTranscriptKey(event);
+        if (this.pendingInputTranscript?.key === key) {
+          this.pendingInputTranscript = undefined;
+        }
+        this.inputTranscriptReplacements.delete(key);
         this.config.onError?.(new Error(readXaiRealtimeErrorDetail(event.error)));
         return;
+      }
       case "response.done": {
         // A trailing terminal from an interrupted response must not settle new speech.
         if (this.isCurrentInputResponse(event)) {
@@ -365,7 +375,18 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
     );
   }
 
+  private armInputSettleTimer(): void {
+    clearTimeout(this.inputSettleTimer);
+    this.inputSettleTimer = setTimeout(() => {
+      this.inputSettleTimer = undefined;
+      this.flushPendingInputTranscript();
+    }, XAI_REALTIME_INPUT_SETTLE_MS);
+    this.inputSettleTimer.unref?.();
+  }
+
   private flushPendingInputTranscript(): void {
+    clearTimeout(this.inputSettleTimer);
+    this.inputSettleTimer = undefined;
     const pending = this.pendingInputTranscript;
     this.pendingInputTranscript = undefined;
     if (!pending) {

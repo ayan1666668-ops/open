@@ -424,16 +424,17 @@ export function createTalkRealtimeRelaySession(
         relay.voiceTranscriptSeq > previousTranscriptSeq
           ? { transcriptId: `voice:${relay.id}:${relay.voiceTranscriptSeq}` }
           : {};
+      const transcriptEvent = {
+        relaySessionId,
+        type: "transcript" as const,
+        role,
+        text,
+        final,
+        ...metadata,
+        ...transcriptIdentity,
+      };
       if (relay.closing) {
-        emit({
-          relaySessionId,
-          type: "transcript",
-          role,
-          text,
-          final,
-          ...metadata,
-          ...transcriptIdentity,
-        });
+        emit(transcriptEvent);
         return;
       }
       const outputTurnId = role === "assistant" ? outputOwnership.resolve(true) : undefined;
@@ -450,23 +451,7 @@ export function createTalkRealtimeRelaySession(
             ? "transcript.done"
             : "transcript.delta";
       const payload = role === "assistant" ? { text } : { role, text };
-      emit(
-        {
-          relaySessionId,
-          type: "transcript",
-          role,
-          text,
-          final,
-          ...metadata,
-          ...transcriptIdentity,
-        },
-        {
-          type: eventType,
-          turnId,
-          payload,
-          final,
-        },
-      );
+      emit(transcriptEvent, { type: eventType, turnId, payload, final });
       if (params.controlSource === "transcript" && role === "user" && final && text.trim()) {
         const question = text.trim();
         if (relay.harness.isLikelyAssistantEchoTranscript(question)) {

@@ -68,6 +68,7 @@ import {
   stopTalkRealtimeRelaySession as stopTalkRealtimeRelaySessionRaw,
   submitTalkRealtimeRelayToolResult,
 } from "./index.js";
+import { createIdleRelayProvider, makeRelayTransport } from "./index.test-support.js";
 import { resolveTalkRealtimeRelayPresentation } from "./issues.js";
 import { closeRelaySession } from "./operations.js";
 import { drainingRelaySessions, relaySessions } from "./state.js";
@@ -89,22 +90,6 @@ const providerErrorCases = [
   ["unavailable", { status: 503, message: "raw-unavailable-marker" }, RELAY_UNAVAILABLE_ERROR],
   ["generic", { message: "raw-generic-marker" }, RELAY_GENERIC_ERROR],
 ] as const;
-
-function makeRelayTransport<Overrides extends Partial<RealtimeVoiceBridge> = Record<never, never>>(
-  overrides: Overrides = {} as Overrides,
-) {
-  return {
-    connect: vi.fn(async () => undefined),
-    sendAudio: vi.fn(),
-    setMediaTimestamp: vi.fn(),
-    handleBargeIn: vi.fn(),
-    submitToolResult: vi.fn(),
-    acknowledgeMark: vi.fn(),
-    close: vi.fn(),
-    isConnected: vi.fn(() => true),
-    ...overrides,
-  };
-}
 
 function createTalkRealtimeRelaySession(
   params: Omit<
@@ -169,15 +154,6 @@ function ensureActiveRelayTurnId(relaySessionId: string): string {
     relay.harness.talk.startTurn({ turnId: "turn-1" });
   }
   return relay.harness.talk.activeTurnId ?? "turn-1";
-}
-
-function createIdleRelayProvider(): RealtimeVoiceProviderPlugin {
-  return {
-    id: "relay-test",
-    label: "Relay Test",
-    isConfigured: () => true,
-    createBridge: () => makeRelayTransport(),
-  };
 }
 
 describe("talk realtime relay provider error projection", () => {

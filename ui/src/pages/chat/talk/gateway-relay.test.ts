@@ -288,15 +288,14 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     await expect(transport.start()).resolves.toBe("ready");
     onStatus.mockClear();
     emitTalkEvent({ relaySessionId: "relay-1", type: "ready" });
-    emitTalkEvent({
-      relaySessionId: "relay-1",
-      type: "transcript",
+    const committedTranscript = {
       role: "assistant",
       text: "not committed yet",
       transcriptId: "voice:relay-1:1",
       textMode: "snapshot",
       final: true,
-    });
+    } as const;
+    emitTalkEvent({ relaySessionId: "relay-1", type: "transcript", ...committedTranscript });
     emitTalkEvent({
       relaySessionId: "relay-1",
       type: "toolCall",
@@ -312,13 +311,7 @@ describe("GatewayRelayRealtimeTalkTransport", () => {
     transport.activate();
 
     expect(onStatus).toHaveBeenCalledWith("listening");
-    expect(onTranscript).toHaveBeenCalledWith({
-      role: "assistant",
-      text: "not committed yet",
-      transcriptId: "voice:relay-1:1",
-      textMode: "snapshot",
-      final: true,
-    });
+    expect(onTranscript).toHaveBeenCalledWith(committedTranscript);
     await waitForFast(() =>
       expect(requestCallsFor(client, "talk.session.submitToolResult")).toHaveLength(1),
     );

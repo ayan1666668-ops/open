@@ -9,8 +9,6 @@ import {
   testing as embeddedRunsTesting,
 } from "../../agents/embedded-agent-runner/runs.test-support.js";
 import { withGatewayToolCallerIdentity } from "../../agents/tools/gateway-caller-context.js";
-import type { OpenClawConfig } from "../../config/types.openclaw.js";
-import type { PluginRuntime } from "../../plugins/runtime/types.js";
 import {
   authorizeClientVoiceConfirmation,
   checkClientVoiceToolConfirmationPolicy,
@@ -21,29 +19,9 @@ import {
   resetClientVoiceConfirmationStateForTest,
 } from "../../talk/client-voice-confirmation.test-support.js";
 
-type ConsultParams = Parameters<
-  typeof import("../../talk/agent-consult-runtime.js").consultRealtimeVoiceAgent
->[0];
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
-const mocks = vi.hoisted(() => ({
-  close: vi.fn(),
-  consultRealtimeVoiceAgent: vi.fn(),
-  createOperationalRunInstanceRef: vi.fn((runId: string) => ({
-    instanceId: `instance:${runId}`,
-    runId,
-  })),
-  prepareAgentRunAdmission: vi.fn(),
-  runEmbeddedAgentCore: vi.fn(),
-  controlRealtimeVoiceAgentRun: vi.fn(),
-}));
+const { config, coreParams, deferred, mocks } = await vi.hoisted(
+  () => import("./client-gateway-control.agent-consult.test-support.js"),
+);
 
 vi.mock("../../agents/admitted-run-context.js", () => ({
   createOperationalRunInstanceRef: mocks.createOperationalRunInstanceRef,
@@ -63,26 +41,11 @@ vi.mock("../../talk/agent-run-control.js", async (importOriginal) => ({
 
 import { sharingPolicyClient } from "../session-sharing.test-utils.js";
 import { createTalkClientAgentConsultRunner } from "./client-agent-consult.js";
+import type { ConsultParams } from "./client-gateway-control.agent-consult.test-support.js";
 import {
   resolveTalkAgentConsultAuthority,
   type TalkAgentConsultAuthority,
 } from "./client-gateway-control.js";
-
-const config = {} as OpenClawConfig;
-const coreParams = {
-  config,
-  prompt: "check",
-  runId: "run-talk",
-  sessionId: "session-talk",
-  sessionTarget: {
-    agentId: "researcher",
-    sessionId: "session-talk",
-    sessionKey: "agent:researcher:talk",
-    storePath: "/tmp/sessions",
-  },
-  timeoutMs: 1,
-  workspaceDir: "/tmp/workspace",
-} as Parameters<PluginRuntime["agent"]["runEmbeddedAgent"]>[0];
 
 function createRunner(
   registerRun = vi.fn(),
