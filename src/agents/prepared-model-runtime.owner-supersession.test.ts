@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 import { describe, expect, it } from "vitest";
 import { createDeferred } from "../../test/helpers/promise.js";
 import {
+  getPreparedModelRuntimeSnapshot,
   markPreparedModelRuntimeSnapshotsStale,
   refreshPreparedModelRuntimeSnapshots,
 } from "./prepared-model-runtime.js";
@@ -82,6 +83,69 @@ describe("prepared model runtime owner selection", () => {
     } finally {
       release.resolve();
       await Promise.allSettled([first, skipped, latest]);
+    }
+  });
+
+  it("joins a scoped successor only after both configured agents are current", async () => {
+    mocks.configuredAgentIds = ["agent-a", "agent-b"];
+    const config = { agents: { defaults: { model: "openai/gpt-5.5" } } };
+    await refreshPreparedModelRuntimeSnapshots(config);
+    const read = (agentId: string) =>
+      getPreparedModelRuntimeSnapshot({
+        ...fixture.agentInput(agentId, config),
+        workspaceDir: `/tmp/workspace-${agentId}`,
+      });
+    for (const agentId of mocks.configuredAgentIds) {
+      expect(read(agentId)?.isCurrent()).toBe(true);
+    }
+    const started = createDeferred();
+    const release = createDeferred();
+    const successorStarted = createDeferred();
+    const releaseSuccessor = createDeferred();
+    mocks.ensureOpenClawModelsJson
+      .mockImplementationOnce(async (_config, agentDir) => {
+        started.resolve();
+        await release.promise;
+        return { agentDir: String(agentDir), wrote: false };
+      })
+      .mockImplementationOnce(async (_config, agentDir) => {
+        successorStarted.resolve();
+        await releaseSuccessor.promise;
+        return { agentDir: String(agentDir), wrote: false };
+      });
+    const first = refreshPreparedModelRuntimeSnapshots(config, {
+      agentIds: new Set(["agent-a"]),
+      joinSupersedingPublication: true,
+    });
+    let settled = false;
+    void first.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    let successor: Promise<void> | undefined;
+    try {
+      await started.promise;
+      successor = refreshPreparedModelRuntimeSnapshots(config, {
+        agentIds: new Set(["agent-b"]),
+      });
+      release.resolve();
+      await successorStarted.promise;
+      expect(settled).toBe(false);
+      expect(read("agent-a")).toBeUndefined();
+      releaseSuccessor.resolve();
+      await first;
+      for (const agentId of mocks.configuredAgentIds) {
+        expect(read(agentId)?.isCurrent()).toBe(true);
+      }
+      await successor;
+    } finally {
+      release.resolve();
+      releaseSuccessor.resolve();
+      await Promise.allSettled([first, successor]);
     }
   });
 
