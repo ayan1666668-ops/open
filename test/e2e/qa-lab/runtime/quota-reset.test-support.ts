@@ -687,6 +687,7 @@ export async function createQuotaResetFixture(
         enabled: true,
         allow: ["codex", "openai", ...(enableIsolatedTool ? ["llm-task"] : [])],
         entries: {
+          openai: { enabled: true },
           ...(enableIsolatedTool
             ? { "llm-task": { enabled: true, llm: { allowAuthProfileOverride: true } } }
             : {}),
@@ -711,8 +712,10 @@ export async function createQuotaResetFixture(
         },
       },
       agents: {
+        entries: { main: {} },
         defaults: {
           model: { primary: MODEL, fallbacks: includeBackup ? [BACKUP_MODEL] : [] },
+          modelPolicy: { allow: [MODEL, ...(includeBackup ? [BACKUP_MODEL] : [])] },
           models: {
             [MODEL]: { agentRuntime: { id: runtime } },
             ...(includeBackup ? { [BACKUP_MODEL]: { agentRuntime: { id: "openclaw" } } } : {}),
