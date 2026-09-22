@@ -706,7 +706,24 @@ describe("spawnAcpDirect", () => {
     hoisted.areHeartbeatsEnabledMock.mockReset().mockReturnValue(true);
     hoisted.cleanupFailedAcpSpawnMock.mockReset().mockResolvedValue(undefined);
     hoisted.closeRuntimeOnFailureMock.mockReset().mockResolvedValue(undefined);
-    hoisted.registerSubagentRunMock.mockReset();
+    // Our fork's spawn-pipeline requires a structured SubagentRegistrationOwnership
+    // and reads registrationResult.status unconditionally; upstream's pipeline
+    // instead treats the return as an optional promise (`if (completion) await
+    // completion`), which a bare vi.fn() satisfies. Derive the identity from the
+    // registration actually passed so `attempted` stays consistent with it, since
+    // rollback consumes that identity. See karmaterminal/openclaw#1361 for this
+    // divergence class.
+    hoisted.registerSubagentRunMock
+      .mockReset()
+      .mockImplementation((registration: { runId: string; childSessionKey: string }) => ({
+        status: "new-row-committed",
+        attempted: {
+          runId: registration.runId,
+          childSessionKey: registration.childSessionKey,
+          generation: 1,
+          createdAt: Date.now(),
+        },
+      }));
     hoisted.countActiveRunsForSessionMock.mockReset().mockReturnValue(0);
     hoisted.getSubagentRunByChildSessionKeyMock.mockReset().mockReturnValue(null);
     hoisted.listTasksForOwnerKeyMock.mockReset().mockReturnValue([]);
