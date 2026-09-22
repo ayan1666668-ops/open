@@ -10,8 +10,9 @@ import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
 } from "../../state/openclaw-agent-db.js";
+import { cleanupSessionStateForTest } from "../../test-utils/session-state-cleanup.js";
 import { sweepTombstonedCronRunRemnantsForStore } from "./cleanup-tombstones.js";
-import { replaceSessionEntry } from "./session-accessor.js";
+import { patchSessionEntryCore, replaceSessionEntry } from "./session-accessor.js";
 import { materializeSessionStateDeletePlans } from "./session-accessor.sqlite-archive.js";
 import { deleteSessionEntryRows } from "./session-accessor.sqlite-entry-store.js";
 import { planSessionStateDeleteIfUnreferenced } from "./session-accessor.sqlite-lifecycle-state.js";
@@ -265,10 +266,20 @@ describe("sweepTombstonedCronRunRemnants", () => {
     process.env.OPENCLAW_STATE_DIR = tempDir;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     materializedHook.run = undefined;
     materializedHook.beforeRun = undefined;
     delete process.env.OPENCLAW_STATE_DIR;
+    // `closeOpenClawAgentDatabasesForTest` only *starts* asynchronous resource
+    // retirement, so the temp-dir hook registered above could remove the
+    // databases while reclamation workers still held their durable leases,
+    // which surfaced as an ENOENT teardown failure after every assertion had
+    // passed. `cleanupSessionStateForTest` is the existing awaited lifecycle
+    // owner: it drains the store writer queues and closes the agent and shared
+    // state handles before this hook returns. Vitest runs `afterEach` hooks in
+    // reverse registration order, so this one settles before the tracker's
+    // removal runs.
+    await cleanupSessionStateForTest({ stateDir: tempDir });
     closeOpenClawAgentDatabasesForTest();
   });
 
@@ -282,14 +293,46 @@ describe("sweepTombstonedCronRunRemnants", () => {
     return openOpenClawAgentDatabase({ agentId: "main", path: databasePath });
   }
 
+  /**
+   * Writes one entry the way `replaceSessionEntry` does, optionally without the
+   * background maintenance kick an ordinary entry write schedules.
+   *
+   * Every entry write ends in `kickSessionEntryMaintenanceAfterWrite`, which
+   * queues a coalesced `setImmediate` maintenance pass. That pass reclaims
+   * through a Worker (`forceInProcess: false`), so it opens the store on its
+   * own connection and commits. Landing that commit inside a measured sweep is
+   * indistinguishable, from the sweeping connection, from an external writer
+   * creating a reference, so the reference batch is correctly dropped and every
+   * remaining candidate falls back to an unbatched read. That is the right
+   * product behavior and stays under test in the late-owner cases; it just
+   * cannot be allowed to arrive from the fixture's own seeding while the thing
+   * being measured is how much work one sweep performs.
+   */
+  async function writeSessionEntry(
+    key: string,
+    entry: { sessionId: string; updatedAt: number },
+    options: { skipMaintenance?: boolean } = {},
+  ): Promise<void> {
+    await patchSessionEntryCore({ sessionKey: key, storePath }, () => entry, {
+      fallbackEntry: entry,
+      replaceEntry: true,
+      ...(options.skipMaintenance ? { skipMaintenance: true } : {}),
+    });
+  }
+
   async function seedCanonicalPlaceholder(params: {
     ageMs?: number;
     key?: string;
     sessionId?: string;
+    skipMaintenance?: boolean;
   }): Promise<string> {
     const key = params.key ?? CRON_RUN_KEY;
     const sessionId = params.sessionId ?? "cron-session";
-    await replaceSessionEntry({ sessionKey: key, storePath }, { sessionId, updatedAt: NOW_MS });
+    await writeSessionEntry(
+      key,
+      { sessionId, updatedAt: NOW_MS },
+      { skipMaintenance: params.skipMaintenance ?? false },
+    );
     replaceTranscriptEventsSync({ sessionKey: key, sessionId, storePath }, [
       { type: "session", id: sessionId, content: "cron run transcript" },
     ]);
@@ -734,6 +777,9 @@ describe("sweepTombstonedCronRunRemnants", () => {
       await seedCanonicalPlaceholder({
         key: `agent:main:cron:job-${index}:run:run-${index}`,
         sessionId: `cron-session-${index}`,
+        // Scaling fixtures only: keep the seeding's own background maintenance
+        // out of the window whose database work is being measured.
+        skipMaintenance: true,
       });
     }
   }
@@ -772,9 +818,10 @@ describe("sweepTombstonedCronRunRemnants", () => {
   async function seedMixedBacklog(placeholders: number, label: string): Promise<void> {
     await seedBacklog(placeholders, label);
     for (let index = 0; index < placeholders; index += 1) {
-      await replaceSessionEntry(
-        { sessionKey: `agent:main:live-${index}`, storePath },
+      await writeSessionEntry(
+        `agent:main:live-${index}`,
         { sessionId: `live-session-${index}`, updatedAt: NOW_MS },
+        { skipMaintenance: true },
       );
     }
   }
