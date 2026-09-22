@@ -83,7 +83,7 @@ export function activeRunContext(params: {
     },
     controller: registration.controller,
     terminalStarted: terminalStarted.promise,
-    unsubscribe() {
+    unsubscribe(this: void) {
       entry.controller.signal.removeEventListener("abort", onAbort);
       unsubscribe();
     },
