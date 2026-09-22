@@ -1897,26 +1897,21 @@ describe("resolveTsdownBuildInvocation", () => {
           "dist/extensions/demo/src/index.js",
           "dist/extensions/demo/node_modules/staged/index.js",
           "dist/extensions/node_modules/openclaw/plugin-sdk/core.js",
-          "packages/agent-core/dist/stale.js",
-          "packages/net-policy/dist/stale.js",
-          "packages/media-understanding-common/dist/index.mjs",
-          "packages/media-understanding-common/dist/chunks/old.js",
-        ];
-        // The postbuild owner stages this overlay, and declaration preparation
-        // runs no postbuild phase that could stage it again.
-        const runtimeOverlayFiles = [
           "dist-runtime/stale.js",
           "dist-runtime/stale.js.map",
           "dist-runtime/control-ui/index.html",
           "dist-runtime/extensions/demo/index.js",
           "dist-runtime/extensions/demo/node_modules/staged/index.js",
+          "packages/agent-core/dist/stale.js",
+          "packages/net-policy/dist/stale.js",
+          "packages/media-understanding-common/dist/index.mjs",
+          "packages/media-understanding-common/dist/chunks/old.js",
         ];
         for (const relativePath of [
           ...retainedFiles,
           ...declarationFiles,
           metadataFile,
           ...staleFiles,
-          ...runtimeOverlayFiles,
         ]) {
           const filePath = path.join(rootDir, relativePath);
           await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
@@ -1953,19 +1948,11 @@ describe("resolveTsdownBuildInvocation", () => {
         for (const relativePath of [
           "dist/extensions/demo/node_modules",
           "dist/extensions/node_modules",
+          "dist-runtime/extensions/demo/node_modules",
           "packages/agent-core/dist",
           "packages/net-policy/dist",
         ]) {
           await expectPathMissing(path.join(rootDir, relativePath));
-        }
-        for (const relativePath of runtimeOverlayFiles) {
-          if (skipDts === "1") {
-            await expect(
-              fsPromises.readFile(path.join(rootDir, relativePath), "utf8"),
-            ).resolves.toBe(`sentinel:${relativePath}\n`);
-          } else {
-            await expectPathMissing(path.join(rootDir, relativePath));
-          }
         }
         for (const [files, preserve] of [
           [declarationFiles, skipDts === "1"],
@@ -1986,81 +1973,6 @@ describe("resolveTsdownBuildInvocation", () => {
         }
       }),
   );
-
-  it("keeps postbuild-owned runtime assets during declaration preparation", () =>
-    fixture.run(async () => {
-      const rootDir = createTempDir("openclaw-tsdown-postbuild-assets-");
-      // Pinned to the producers rather than guessed: scripts/write-build-info.ts
-      // writes dist/build-info.json, scripts/copy-bundled-plugin-metadata.mts
-      // writes the bundled plugin metadata under dist/extensions, and
-      // scripts/stage-bundled-plugin-runtime.mts stages the dist-runtime overlay.
-      const postbuildOwned = [
-        "dist/build-info.json",
-        "dist/extensions/demo/openclaw.plugin.json",
-        "dist/extensions/demo/package.json",
-        "dist/extensions/demo/assets/icon.png",
-        "dist/extensions/demo/bundled-skills/demo/SKILL.md",
-        "dist-runtime/extensions/demo/index.js",
-        "dist-runtime/extensions/demo/openclaw.plugin.json",
-      ];
-      const retainedDeclarations = [
-        "dist/plugin-sdk/core.d.ts",
-        "dist/plugin-sdk/nested/types.d.cts",
-      ];
-      const staleOutputs = [
-        "dist/entry.js",
-        "dist/stale-AbCd1234.js",
-        "dist/stale-AbCd1234.js.map",
-        "dist/extensions/demo/src/index.js",
-        "dist/extensions/demo/node_modules/staged/index.js",
-        "packages/media-understanding-common/dist/chunk-old.js",
-      ];
-      for (const relativePath of [...postbuildOwned, ...retainedDeclarations, ...staleOutputs]) {
-        const filePath = path.join(rootDir, relativePath);
-        await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
-        await fsPromises.writeFile(filePath, `sentinel:${relativePath}\n`);
-      }
-
-      cleanTsdownOutputRoots({
-        cwd: rootDir,
-        env: { OPENCLAW_RUN_NODE_SKIP_DTS_BUILD: "1" },
-      });
-
-      for (const relativePath of [...postbuildOwned, ...retainedDeclarations]) {
-        await expect(fsPromises.readFile(path.join(rootDir, relativePath), "utf8")).resolves.toBe(
-          `sentinel:${relativePath}\n`,
-        );
-      }
-      for (const relativePath of staleOutputs) {
-        await expectPathMissing(path.join(rootDir, relativePath));
-      }
-      await expectPathMissing(path.join(rootDir, "packages", "media-understanding-common", "dist"));
-    }));
-
-  it("still cleans those runtime assets when a full build owns their restoration", () =>
-    fixture.run(async () => {
-      const rootDir = createTempDir("openclaw-tsdown-postbuild-control-");
-      const cleanedByFullBuild = [
-        "dist/build-info.json",
-        "dist/extensions/demo/openclaw.plugin.json",
-        "dist/extensions/demo/package.json",
-        "dist-runtime/extensions/demo/index.js",
-      ];
-      for (const relativePath of cleanedByFullBuild) {
-        const filePath = path.join(rootDir, relativePath);
-        await fsPromises.mkdir(path.dirname(filePath), { recursive: true });
-        await fsPromises.writeFile(filePath, `sentinel:${relativePath}\n`);
-      }
-
-      // A full build runs runtime-postbuild afterwards, so the ordinary clean
-      // keeps removing them and only declaration preparation preserves them.
-      cleanTsdownOutputRoots({ cwd: rootDir, env: {} });
-
-      await expectPathMissing(path.join(rootDir, "dist-runtime"));
-      for (const relativePath of cleanedByFullBuild) {
-        await expectPathMissing(path.join(rootDir, relativePath));
-      }
-    }));
 
   it("cleans only selected tsdown output roots", () =>
     fixture.run(async () => {

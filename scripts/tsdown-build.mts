@@ -13,11 +13,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isPathInside } from "@openclaw/fs-safe/path";
-import {
-  PLUGIN_ACTIVITY_ICON_PATH,
-  PLUGIN_TOOL_ACTIVITY_ICON_DIR,
-  PORTABLE_PLUGIN_ICON_PATH,
-} from "../src/plugins/portable-icon-paths.ts";
 import { BUNDLED_PLUGIN_BUILD_ENV_NAMES } from "./lib/bundled-plugin-build-entries.mjs";
 import { BUNDLED_PLUGIN_PATH_PREFIX } from "./lib/bundled-plugin-paths.mjs";
 import { isDirectRunUrl } from "./lib/direct-run.mjs";
@@ -70,24 +65,6 @@ const POST_FORCE_KILL_WAIT_MS = 250;
 const ROOT_TSDOWN_OUTPUT_ROOTS = ["dist", "dist-runtime"];
 const PRESERVED_TSDOWN_OUTPUT_FILES = ["dist/cli-startup-metadata.json"];
 const PRESERVE_CLI_STARTUP_METADATA_ENV = "OPENCLAW_PRESERVE_CLI_STARTUP_METADATA";
-// The postbuild owner produces the runtime assets below and tsdown never
-// regenerates them: scripts/copy-bundled-plugin-metadata.mts writes the bundled
-// plugin metadata under dist/extensions, scripts/stage-bundled-plugin-runtime.mts
-// stages the dist-runtime overlay, and scripts/write-build-info.ts writes build
-// provenance. A clean that removes them on a path with no following postbuild
-// phase leaves the existing build incomplete.
-const POSTBUILD_OWNED_OUTPUT_ROOTS = ["dist-runtime"];
-const POSTBUILD_OWNED_OUTPUT_FILES = ["dist/build-info.json"];
-const POSTBUILD_PLUGIN_METADATA_ROOT = "dist/extensions";
-const POSTBUILD_PLUGIN_OUTPUT_ENTRIES = [
-  "openclaw.plugin.json",
-  "package.json",
-  PORTABLE_PLUGIN_ICON_PATH,
-  PLUGIN_ACTIVITY_ICON_PATH,
-  PLUGIN_TOOL_ACTIVITY_ICON_DIR,
-  // The generated bundled skills directory the metadata phase copies beside them.
-  "bundled-skills",
-];
 const GENERATED_SOURCE_DECLARATION_PATHSPEC = ":(glob)extensions/**/*.d.ts";
 export const TSDOWN_DECLARATION_EXTENSIONS = [".d.ts", ".d.mts", ".d.cts"];
 const SOURCE_DECLARATION_SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs"];
@@ -262,25 +239,15 @@ export function cleanTsdownOutputRoots(params: OutputRootParams = {}) {
   // Validate the complete mutation set before traversing protected children or
   // cleaning any earlier root; otherwise a later symlink can leave a partial build.
   const rootPaths = assertTsdownCleanOutputRoots({ cwd, fs: fsImpl, pathImpl, roots });
-  // Declaration preparation runs no postbuild phase afterwards, so the assets
-  // that owner produces have to survive this clean or the existing build is
-  // left incomplete.
-  const preparesDeclarations = env[RUN_NODE_SKIP_DTS_BUILD_ENV] === "1";
-  const preservedRootPaths = preparesDeclarations
-    ? listPostbuildOwnedOutputRootPaths(cwd, pathImpl, roots)
-    : new Set<string>();
-  const protectedDeclarationPaths = preparesDeclarations
-    ? listExistingGeneratedDeclarationOutputPaths(cwd, fsImpl, roots)
-    : new Set<string>();
+  const protectedDeclarationPaths =
+    env[RUN_NODE_SKIP_DTS_BUILD_ENV] === "1"
+      ? listExistingGeneratedDeclarationOutputPaths(cwd, fsImpl, roots)
+      : new Set<string>();
   const protectedPaths = new Set([
     ...protectedDeclarationPaths,
-    ...(preparesDeclarations ? listExistingPostbuildOwnedOutputPaths(cwd, fsImpl) : []),
     ...listExistingPreservedOutputPaths(cwd, env, fsImpl),
   ]);
   for (const rootPath of rootPaths) {
-    if (preservedRootPaths.has(rootPath)) {
-      continue;
-    }
     try {
       if (hasProtectedChild(rootPath, protectedPaths)) {
         cleanOutputRootExcept(rootPath, protectedPaths, fsImpl);
@@ -379,55 +346,6 @@ function listExistingPreservedOutputPaths(cwd: string, env: NodeJS.ProcessEnv, f
     }
   }
   return protectedPaths;
-}
-
-/** Output roots staged by the postbuild owner rather than written by tsdown. */
-function listPostbuildOwnedOutputRootPaths(
-  cwd: string,
-  pathImpl: Pick<typeof path, "resolve">,
-  roots: string[],
-) {
-  const candidatePaths = new Set(roots.map((root) => pathImpl.resolve(cwd, root)));
-  const preservedRootPaths = new Set<string>();
-  for (const relativePath of POSTBUILD_OWNED_OUTPUT_ROOTS) {
-    const rootPath = pathImpl.resolve(cwd, relativePath);
-    if (candidatePaths.has(rootPath)) {
-      preservedRootPaths.add(rootPath);
-    }
-  }
-  return preservedRootPaths;
-}
-
-/** Existing postbuild-owned outputs inside the roots this clean may remove. */
-function listExistingPostbuildOwnedOutputPaths(cwd: string, fsImpl: typeof fs) {
-  const protectedPaths = new Set<string>();
-  for (const relativePath of POSTBUILD_OWNED_OUTPUT_FILES) {
-    addExistingOutputPath(path.resolve(cwd, relativePath), protectedPaths, fsImpl);
-  }
-  const metadataRoot = path.resolve(cwd, POSTBUILD_PLUGIN_METADATA_ROOT);
-  try {
-    for (const dirent of fsImpl.readdirSync(metadataRoot, { withFileTypes: true })) {
-      if (!dirent.isDirectory()) {
-        continue;
-      }
-      for (const entry of POSTBUILD_PLUGIN_OUTPUT_ENTRIES) {
-        addExistingOutputPath(path.join(metadataRoot, dirent.name, entry), protectedPaths, fsImpl);
-      }
-    }
-  } catch {
-    // A checkout without bundled plugin metadata has nothing to protect.
-  }
-  return protectedPaths;
-}
-
-function addExistingOutputPath(targetPath: string, protectedPaths: Set<string>, fsImpl: typeof fs) {
-  try {
-    if (fsImpl.existsSync(targetPath)) {
-      protectedPaths.add(path.resolve(targetPath));
-    }
-  } catch {
-    // Missing postbuild outputs are normal before the first build.
-  }
 }
 
 /** Publish generated declarations without claiming runtime assets or protected subtrees. */

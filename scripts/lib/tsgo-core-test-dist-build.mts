@@ -12,14 +12,69 @@
 // roots instead, with declarations unprotected, is what removed the SDK and
 // extension declarations of an existing full build and broke later consumers
 // such as scripts/check-plugin-sdk-exports.mts.
+//
+// That clean also removes runtime artifacts the unified graph does not rebuild:
+// isolated plugin dists, copied plugin assets and the runtime postbuild outputs.
+// A full build restores them in the steps that follow its compile, so this
+// preparation runs those owners afterwards rather than duplicating their output
+// lists or allowlisting paths inside them.
 import path from "node:path";
+import { BUILD_ALL_STEPS, resolveBuildAllStep, type BuildAllStep } from "../build-all.mts";
 import { distArtifactEntryArgs } from "./dist-artifact-ownership.mts";
 import { runManagedCommand } from "./managed-child-process.mts";
 import { TSDOWN_UNIFIED_CONFIG_GROUP } from "./tsdown-config-groups.mts";
 
 /**
- * Build the unified runtime entries and publish the base declaration partition
- * that owns the typed runtime entries, without touching unrelated partitions.
+ * Owners of the runtime artifacts the unified build's clean removes and the
+ * unified graph does not regenerate, named by their canonical build-all labels
+ * so the preparation restores them through the same steps the full build runs.
+ */
+const RESTORED_RUNTIME_STEP_LABELS = [
+  "external-plugins:local-dist",
+  "plugins:assets:copy",
+  "runtime-postbuild",
+] as const;
+
+/** Canonical build-all steps this preparation runs after its compile. */
+export function listRestoredRuntimeSteps(): BuildAllStep[] {
+  return RESTORED_RUNTIME_STEP_LABELS.map((label) => {
+    const step = BUILD_ALL_STEPS.find((candidate) => candidate.label === label);
+    if (!step) {
+      throw new Error(`build-all no longer defines the ${label} step`);
+    }
+    return step;
+  });
+}
+
+/** Resolve one owner step to the node invocation that inherits checkout ownership. */
+function resolveRestoredRuntimeInvocation(
+  step: BuildAllStep,
+  env: NodeJS.ProcessEnv,
+  repoRoot: string,
+) {
+  // pnpm steps take their node fallback so the owner inherits the shard
+  // runner's checkout ownership instead of starting a package-manager child.
+  const resolved = resolveBuildAllStep(step, {
+    env: { ...env, OPENCLAW_BUILD_ALL_NO_PNPM: "1" },
+  });
+  const scriptIndex = resolved.args.findIndex((arg) => /\.(?:c|m)?(?:j|t)s$/u.test(arg));
+  const script = scriptIndex < 0 ? undefined : resolved.args[scriptIndex];
+  if (script === undefined) {
+    throw new Error(`build-all step ${step.label} does not resolve to a script`);
+  }
+  return {
+    args: distArtifactEntryArgs(
+      path.resolve(repoRoot, script),
+      resolved.args.slice(scriptIndex + 1),
+    ),
+    env: { ...env, ...resolved.options.env },
+  };
+}
+
+/**
+ * Build the unified runtime entries, restore the runtime artifacts that build's
+ * clean removes through their canonical owners, and publish the base
+ * declaration partition that owns the typed runtime entries.
  */
 export async function buildTsgoCoreTestTypedRuntimeDist(
   env: NodeJS.ProcessEnv,
@@ -46,6 +101,19 @@ export async function buildTsgoCoreTestTypedRuntimeDist(
   });
   if (runtime !== 0) {
     return runtime;
+  }
+  for (const step of listRestoredRuntimeSteps()) {
+    const owner = resolveRestoredRuntimeInvocation(step, env, repoRoot);
+    const status = await runManagedCommand({
+      bin: process.execPath,
+      args: owner.args,
+      cwd: repoRoot,
+      env: owner.env,
+      requireProcessTreeExit: process.platform !== "win32",
+    });
+    if (status !== 0) {
+      return status;
+    }
   }
   return runManagedCommand({
     bin: process.execPath,
