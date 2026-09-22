@@ -6,8 +6,8 @@ status: experimental
 
 # Evidence-bound convergence
 
-Liquid search is intentionally permissive about *which hypotheses are explored*.
-Convergence is intentionally strict about *what exact candidate is being checked*.
+Liquid search is intentionally permissive about _which hypotheses are explored_.
+Convergence is intentionally strict about _what exact candidate is being checked_.
 
 A candidate manifest binds:
 
