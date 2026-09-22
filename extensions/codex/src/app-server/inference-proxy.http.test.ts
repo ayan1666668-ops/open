@@ -11,11 +11,8 @@ import { createServer } from "node:https";
 import { Socket } from "node:net";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
+import { PROXY_FIXTURE_CERTIFICATE, PROXY_FIXTURE_KEY } from "openclaw/plugin-sdk/test-env";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  PROXY_FIXTURE_CERTIFICATE,
-  PROXY_FIXTURE_KEY,
-} from "../../../../src/test-helpers/proxy-tls-fixture.js";
 import { CODEX_INFERENCE_GENERATION_KEY } from "./inference-context.js";
 import { createCodexInferenceProxy, type CodexInferenceProxy } from "./inference-proxy.js";
 import { isJsonObject } from "./protocol.js";
