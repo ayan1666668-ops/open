@@ -416,7 +416,8 @@ describe("native heartbeat busy poll settlement", () => {
           const task = "job" in added ? added.job : added;
           const releaseMain = await holdLane(CommandLane.Main);
           const parents = [cron.run(monitor.id, "force"), cron.run(task.id, "force")];
-          await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+          // Keep the coalescing clock still while native SQLite work admits both requests.
+          await vi.waitFor(() => expect(request).toHaveBeenCalledTimes(2), { interval: 0 });
           await vi.advanceTimersByTimeAsync(250);
           expect(runOnce).toHaveBeenCalledOnce();
           expect(runOnce.mock.calls[0]?.[0]).toMatchObject({
