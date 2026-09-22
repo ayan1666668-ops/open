@@ -19,6 +19,7 @@ export async function launchSessionRecoveryContinuation(params: {
   client: GatewayRequestHandlerOptions["client"];
   commitGuard?: () => void;
   context: GatewayRequestHandlerOptions["context"];
+  hasCurrentClientAuthority?: GatewayRequestHandlerOptions["hasCurrentClientAuthority"];
   idempotencyKey: string;
   req: GatewayRequestHandlerOptions["req"];
   sessionScope?: SessionOperatorScope;
@@ -87,6 +88,9 @@ export async function launchSessionRecoveryContinuation(params: {
         },
         context: params.context,
         client: params.client,
+        ...(params.hasCurrentClientAuthority
+          ? { hasCurrentClientAuthority: params.hasCurrentClientAuthority }
+          : {}),
         isWebchatConnect: () => false,
         sessionMutationAuthorization: destinationAuthorization,
       },

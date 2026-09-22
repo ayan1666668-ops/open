@@ -14,7 +14,15 @@ import { assertValidParams } from "./validation.js";
 
 export const sessionRecoverHandlers: GatewayRequestHandlers = {
   "sessions.recover": async (options) => {
-    const { req, params, respond, client, context, sessionMutationAuthorization } = options;
+    const {
+      req,
+      params,
+      respond,
+      client,
+      context,
+      hasCurrentClientAuthority,
+      sessionMutationAuthorization,
+    } = options;
     if (!assertValidParams(params, validateSessionsRecoverParams, "sessions.recover", respond)) {
       return;
     }
@@ -47,6 +55,7 @@ export const sessionRecoverHandlers: GatewayRequestHandlers = {
           client,
           ...(commitGuard ? { commitGuard } : {}),
           context,
+          ...(hasCurrentClientAuthority ? { hasCurrentClientAuthority } : {}),
           req,
           sessionScope: readGatewayRequestMutationAuthority(options).sessionScope,
         }),

@@ -3,6 +3,10 @@ import { getRuntimeConfig } from "../config/io.js";
 import { loadSessionEntry, loadTranscriptEvents } from "../config/sessions/session-accessor.js";
 import { addSessionMember } from "../config/sessions/session-sharing-store.js";
 import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import {
+  captureGatewayDeviceRevocation,
+  invalidateGatewayDeviceRevocation,
+} from "./device-revocation.js";
 import { createDirectChatContext } from "./server-chat.agent-events.test-helpers.js";
 import { handleGatewayRequest } from "./server-methods.js";
 import { roleClient, rolePolicyConfig } from "./session-sharing.test-utils.js";
@@ -14,6 +18,23 @@ import {
 } from "./test/server-sessions.test-helpers.js";
 
 const { createSessionStoreDir } = setupGatewaySessionsHandlerTestHarness();
+
+type RecoverPayload = {
+  key?: string;
+  sessionId?: string;
+  continuation?: Record<string, unknown>;
+};
+
+function isRecoverPayload(value: unknown): value is RecoverPayload {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (!("key" in value) || typeof value.key === "string") &&
+    (!("sessionId" in value) || typeof value.sessionId === "string") &&
+    (!("continuation" in value) ||
+      (typeof value.continuation === "object" && value.continuation !== null))
+  );
+}
 
 afterEach(() => {
   closeOpenClawStateDatabaseForTest();
@@ -58,11 +79,12 @@ async function registeredSessionRecover(params: {
   context: Parameters<typeof handleGatewayRequest>[0]["context"];
   id: string;
   key: string;
+  hasCurrentClientAuthority?: () => boolean;
 }) {
   let response:
     | {
         ok: boolean;
-        payload?: { key?: string; sessionId?: string; continuation?: Record<string, unknown> };
+        payload?: RecoverPayload;
         error?: { code?: string; message?: string };
       }
     | undefined;
@@ -76,9 +98,15 @@ async function registeredSessionRecover(params: {
     client: params.client,
     context: params.context,
     respond: (ok, payload, error) => {
-      response = { ok, payload: payload as typeof response.payload, error };
+      if (payload !== undefined && !isRecoverPayload(payload)) {
+        throw new Error("sessions.recover returned an invalid payload");
+      }
+      response = { ok, payload, error };
     },
     isWebchatConnect: () => false,
+    ...(params.hasCurrentClientAuthority
+      ? { hasCurrentClientAuthority: params.hasCurrentClientAuthority }
+      : {}),
   });
   if (!response) {
     throw new Error("registered sessions.recover did not respond");
@@ -105,7 +133,11 @@ test("sessions.recover denies a narrow continuation into a linked foreign succes
   broadWriter.connect.scopes = ["operator.write"];
   const cfg = recoveryConfig(storePath);
   const revokedRole = rolePolicyConfig().gateway!.roles!;
-  revokedRole.definitions.write.sessions = { others: "view" };
+  const writeRole = revokedRole.definitions.write;
+  if (!writeRole) {
+    throw new Error("role policy fixture has no write role");
+  }
+  writeRole.sessions = { others: "view" };
   const revokedCfg = { ...cfg, gateway: { ...cfg.gateway, roles: revokedRole } };
   await seedRecoverableSession({
     sourceKey,
@@ -191,7 +223,7 @@ test("sessions.recover denies a narrow continuation into a linked foreign succes
   });
 });
 
-test("sessions.recover starts a registered narrow continuation in its own successor", async () => {
+test("sessions.recover retains source revocation for its accepted own successor", async () => {
   const { storePath } = await createSessionStoreDir();
   const sourceKey = "agent:main:dashboard:narrow-own-recovery";
   const sourceSessionId = "narrow-own-recovery-source";
@@ -203,18 +235,35 @@ test("sessions.recover starts a registered narrow continuation in its own succes
     storePath,
     ownerProfileId: owner.authenticatedUserProfile!.profileId,
   });
+  const context = createDirectChatContext({ getRuntimeConfig: () => recoveryConfig(storePath) });
+  const requestAuthority = captureGatewayDeviceRevocation(
+    context,
+    { deviceId: "narrow-recovery-device", role: "operator" },
+    () => true,
+  );
+  let retainedAfterDisconnect = false;
+  let revokedAfterAcceptance = false;
+  context.addChatRun = vi.fn(() => {
+    requestAuthority.release();
+    retainedAfterDisconnect = requestAuthority.isCurrent();
+    invalidateGatewayDeviceRevocation(context, "narrow-recovery-device", "operator");
+    revokedAfterAcceptance = !requestAuthority.isCurrent();
+  });
 
   const recovered = await registeredSessionRecover({
     client: owner,
-    context: createDirectChatContext({ getRuntimeConfig: () => recoveryConfig(storePath) }),
+    context,
     id: "narrow-own-recovery",
     key: sourceKey,
+    hasCurrentClientAuthority: requestAuthority.isCurrent,
   });
 
   expect(recovered).toMatchObject({
     ok: true,
     payload: { key: expect.any(String), continuation: { status: "started" } },
   });
+  expect(retainedAfterDisconnect).toBe(true);
+  expect(revokedAfterAcceptance).toBe(true);
   expect(
     loadSessionEntry({
       agentId: "main",
