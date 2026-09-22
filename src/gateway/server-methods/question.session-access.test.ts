@@ -139,6 +139,16 @@ async function fixture(state: OpenClawTestState, options?: { foreign?: boolean }
   return { owner, viewer, producer, cfg, entry, write, call, request, sourceController };
 }
 
+async function expectRejectedCreatorRestamp(f: Awaited<ReturnType<typeof fixture>>) {
+  const updated = await f.write({
+    createdActor: { ...f.entry.createdActor, id: f.viewer.authenticatedUserProfile!.profileId },
+  });
+  expect(updated?.createdActor).toEqual(f.entry.createdActor);
+  expect(
+    loadSessionEntry({ agentId: "main", sessionKey: requestParams.sessionKey })?.createdActor,
+  ).toEqual(f.entry.createdActor);
+}
+
 it("binds a narrow producer to its trusted session and lets its browser answer after label changes", async () => {
   await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
     const f = await fixture(state);
@@ -539,12 +549,13 @@ it.each(["pending", "answered", "cancelled", "expired"] as const)(
   },
 );
 
-it.each(["generation", "session", "creator", "profile", "source", "reused id"] as const)(
-  "does not publish a held answer after %s changes",
+it.each(["generation", "session", "creator restamp", "profile", "source", "reused id"] as const)(
+  "rechecks held answer delivery after %s",
   async (change) => {
     await withOpenClawTestState({ scenario: "minimal" }, async (state) => {
       const f = await fixture(state);
-      expect((await f.request())[0]).toBe(true);
+      const id = "ordinary-question";
+      expect((await f.request(id))[0]).toBe(true);
       const entered = createDeferredCore();
       const wait = manager.waitAnswer.bind(manager);
       const spy = vi.spyOn(manager, "waitAnswer").mockImplementation((...args) => {
@@ -554,13 +565,9 @@ it.each(["generation", "session", "creator", "profile", "source", "reused id"] a
       });
       let current = true;
       const observer = { ...f.owner };
-      const waiting = f.call(
-        "question.waitAnswer",
-        { id: "ordinary-question" },
-        observer,
-        () => current,
-      );
+      const waiting = f.call("question.waitAnswer", { id }, observer, () => current);
       const settled = Promise.allSettled([waiting]);
+      const answers = { answers: { destination: ["Committed answer"] } };
       try {
         await Promise.race([entered.promise, waiting]);
         expect(spy).toHaveBeenCalledOnce();
@@ -570,17 +577,8 @@ it.each(["generation", "session", "creator", "profile", "source", "reused id"] a
         if (change === "session") {
           await f.write({ sessionId: "replacement" });
         }
-        if (change === "creator") {
-          await upsertSessionEntryCore(
-            { agentId: "main", sessionKey: requestParams.sessionKey },
-            {
-              ...f.entry,
-              createdActor: {
-                ...f.entry.createdActor,
-                id: f.viewer.authenticatedUserProfile!.profileId,
-              },
-            },
-          );
+        if (change === "creator restamp") {
+          await expectRejectedCreatorRestamp(f);
         }
         if (change === "profile") {
           observer.authenticatedUserProfile = f.viewer.authenticatedUserProfile;
@@ -590,9 +588,9 @@ it.each(["generation", "session", "creator", "profile", "source", "reused id"] a
         }
         if (change === "reused id") {
           manager.reset();
-          manager.request({ ...requestParams, id: "ordinary-question" });
+          manager.request({ ...requestParams, id });
         } else {
-          manager.resolve("ordinary-question", { answers: { destination: ["Committed answer"] } });
+          manager.resolve(id, answers);
         }
         const outcome = (await settled)[0];
         if (change === "source") {
@@ -600,15 +598,18 @@ it.each(["generation", "session", "creator", "profile", "source", "reused id"] a
             status: "rejected",
             reason: { message: "Gateway requester authority changed" },
           });
+        } else if (change === "creator restamp") {
+          expect(outcome).toEqual({
+            status: "fulfilled",
+            value: [true, { status: "answered", answers }, undefined],
+          });
         } else {
           expect(outcome).toMatchObject({
             status: "fulfilled",
             value: [false, undefined, { details: { reason: "QUESTION_NOT_FOUND" } }],
           });
         }
-        expect(manager.get("ordinary-question")?.status).toBe(
-          change === "reused id" ? "pending" : "answered",
-        );
+        expect(manager.get(id)?.status).toBe(change === "reused id" ? "pending" : "answered");
       } finally {
         manager.close();
         await settled;
@@ -678,7 +679,7 @@ it.each([
   "close",
   "reused id",
   "generation",
-  "creator",
+  "creator restamp",
   "metadata",
   "unrelated",
   "publication delay",
@@ -748,13 +749,8 @@ it.each([
         if (change === "generation") {
           await f.write({ lifecycleRevision: "replacement" });
         }
-        if (change === "creator") {
-          await f.write({
-            createdActor: {
-              ...f.entry.createdActor,
-              id: f.viewer.authenticatedUserProfile!.profileId,
-            },
-          });
+        if (change === "creator restamp") {
+          await expectRejectedCreatorRestamp(f);
         }
         if (change === "database close") {
           await closeOpenClawAgentDatabaseByPathAsync(
@@ -784,14 +780,18 @@ it.each([
         release.resolve();
         await manager.drain();
         expect(owner.send).toHaveBeenCalledTimes(
-          change === "metadata" || change === "unrelated" || change === "publication delay" ? 1 : 0,
+          ["creator restamp", "metadata", "unrelated", "publication delay"].includes(change)
+            ? 1
+            : 0,
         );
-        if (change === "publication delay") {
+        if (change === "creator restamp" || change === "publication delay") {
           expect(JSON.parse(String(owner.send.mock.calls[0]?.[0]))).toMatchObject({
             type: "event",
             event: "question.resolved",
             payload: { id: "ordinary-question", status: "answered", answers: answer },
           });
+        }
+        if (change === "publication delay") {
           await vi.advanceTimersByTimeAsync(14_999);
           expect(observation.isCurrent()).toBe(true);
           expect(releaseAccess).not.toHaveBeenCalled();
@@ -802,7 +802,7 @@ it.each([
         if (change === "unrelated") {
           expect(spy).toHaveBeenCalledOnce();
         }
-        if (change === "generation" || change === "creator" || change === "metadata") {
+        if (change === "generation" || change === "creator restamp" || change === "metadata") {
           expect(manager.get("ordinary-question")).toMatchObject({
             status: "answered",
             answers: answer,
