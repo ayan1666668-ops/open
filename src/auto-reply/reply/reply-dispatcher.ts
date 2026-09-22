@@ -606,7 +606,9 @@ export function createReplyDispatcher(
           deliveryOutcomeTracker.resolve(deliveryOutcome);
         }
         try {
-          options.onDeliverySettled?.(dispatchInfo);
+          void Promise.resolve(options.onDeliverySettled?.(dispatchInfo)).catch((err: unknown) =>
+            reportObserverError(err, dispatchInfo),
+          );
         } catch (err: unknown) {
           reportObserverError(err, dispatchInfo);
         }

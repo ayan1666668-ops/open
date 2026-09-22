@@ -53,6 +53,47 @@ describe("reply settlement observer isolation", () => {
     },
   );
 
+  it("settles every reply when the settlement observer rejects asynchronously", async () => {
+    const initialPending = getTotalPendingReplies();
+    const observerFailure = new Error("settlement observer rejected");
+    const onError = vi.fn();
+    const onIdle = vi.fn();
+    // The observer deliberately returns a rejected promise even though the
+    // option is typed as `=> void`; the dispatcher must contain that floating
+    // rejection. This simulates a plugin that ignores the void contract.
+    const onDeliverySettled = vi.fn(() => Promise.reject(observerFailure));
+    const deliver = vi.fn<Parameters<typeof createReplyDispatcher>[0]["deliver"]>(async () => ({
+      visibleReplySent: true,
+    }));
+    // oxlint-disable-next-line typescript/no-misused-promises -- intentional contract violation under test
+    const dispatcher = createReplyDispatcher({ deliver, onError, onIdle, onDeliverySettled });
+    const first = { text: "First reply" };
+    const last = { text: "Final reply" };
+    const firstOutcome = captureReplyDispatchDeliveryOutcome(first);
+    const lastOutcome = captureReplyDispatchDeliveryOutcome(last);
+    dispatcher.sendBlockReply(first);
+    dispatcher.sendFinalReply(last);
+    dispatcher.markComplete();
+
+    await expect(dispatcher.waitForIdle()).resolves.toMatchObject({
+      anyVisibleDelivered: true,
+      counts: { block: { delivered: 1 }, final: { delivered: 1 } },
+    });
+    await expect(firstOutcome.promise).resolves.toBe("delivered");
+    await expect(lastOutcome.promise).resolves.toBe("delivered");
+    expect(onDeliverySettled).toHaveBeenCalledTimes(2);
+    // The asynchronous rejection is routed to the error reporter instead of
+    // becoming a floating promise that crashes the process.
+    expect(onError).toHaveBeenNthCalledWith(1, observerFailure, { kind: "block" });
+    expect(onError).toHaveBeenNthCalledWith(2, observerFailure, { kind: "final" });
+    expect(onIdle).toHaveBeenCalledOnce();
+    // Give any floating rejection a chance to surface; none should appear.
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
+    expect(getTotalPendingReplies()).toBe(initialPending);
+  });
+
   it("retains cancellation when its observer and error reporter throw", async () => {
     const initialPending = getTotalPendingReplies();
     const observerFailure = new Error("cancellation observer failed");
