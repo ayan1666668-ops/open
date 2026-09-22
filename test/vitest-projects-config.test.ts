@@ -97,6 +97,7 @@ const scopedGatewayMethodsIsolatedTestFiles = [
   "server-methods/system-agent-setup-control-ui.test.ts",
   "server-methods/transcripts.test.ts",
   "server-methods/users-preferences.test.ts",
+  "server-methods/users-role.worker.test.ts",
   "server-methods/usage.test.ts",
   "server-methods/usage.sessions-usage.test.ts",
 ];
@@ -559,7 +560,7 @@ describe("projects vitest config", () => {
       defaultPool,
     );
     expect(requireTestConfig(createAgentsEmbeddedRunVitestConfig()).pool).toBe(defaultPool);
-    expect(requireTestConfig(createAgentsSupportVitestConfig()).pool).toBe(defaultPool);
+    expect(requireTestConfig(createAgentsSupportVitestConfig()).pool).toBe("forks");
     expect(requireTestConfig(createAgentsToolsVitestConfig()).pool).toBe(defaultPool);
     expect(requireTestConfig(createCommandsLightVitestConfig()).pool).toBe(defaultPool);
     expect(requireTestConfig(createCommandsVitestConfig()).pool).toBe("forks");

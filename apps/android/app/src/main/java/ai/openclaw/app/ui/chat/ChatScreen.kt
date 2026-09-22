@@ -255,7 +255,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.util.Locale
-import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.roundToInt
@@ -1134,33 +1133,29 @@ internal fun ChatScreen(
         scope.launch {
           val ownerSnapshot = composerOwner
           val mediaAuthorizationId = composerState.beginMediaAcquisition(ownerSnapshot) ?: return@launch
-          val recordingId = UUID.randomUUID().toString()
           if (!viewModel.isCurrentChatComposerOwner(ownerSnapshot)) {
             composerState.cancelMediaAcquisition(mediaAuthorizationId)
             return@launch
           }
           dictationController.cancel()
-          if (voiceNoteRecorder.start(recordingId)) {
+          val started =
+            voiceNoteRecorder.start(mediaAuthorizationId) {
+              voiceNoteCommitCheckpoint.consume(mediaAuthorizationId)
+              composerState.cancelMediaAcquisition(mediaAuthorizationId)
+            }
+          if (started) {
             if (
               viewModel.isCurrentChatComposerOwner(ownerSnapshot) &&
               composerState.isMediaAcquisitionActive(mediaAuthorizationId)
             ) {
-              voiceNoteCommitCheckpoint.begin(ownerSnapshot, mediaAuthorizationId, recordingId)
+              voiceNoteCommitCheckpoint.begin(ownerSnapshot, mediaAuthorizationId, mediaAuthorizationId)
             } else {
               voiceNoteRecorder.cancel()
-              composerState.cancelMediaAcquisition(mediaAuthorizationId)
             }
-          } else {
-            composerState.cancelMediaAcquisition(mediaAuthorizationId)
           }
         }
       },
-      onCancelVoiceNote = {
-        voiceNoteCommitCheckpoint.clear()?.let { lease ->
-          composerState.cancelMediaAcquisition(lease.authorizationId)
-        }
-        voiceNoteRecorder.cancel()
-      },
+      onCancelVoiceNote = voiceNoteRecorder::cancel,
       onFinishVoiceNote = voiceNoteRecorder::finish,
       dictationState = dictationState,
       dictationPartialTranscript = dictationPartialTranscript,
@@ -4829,7 +4824,14 @@ private fun AttachmentStrip(
     val chipMaxWidth = maxWidth
     Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
       attachments.forEach { attachment ->
-        AttachmentChip(attachment = attachment, maxWidth = chipMaxWidth, onRemove = { onRemoveAttachment(attachment.id) })
+        if (attachment.mimeType.startsWith("image/")) {
+          Column(modifier = Modifier.width(minOf(160.dp, chipMaxWidth)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            ChatBase64Image(base64 = attachment.base64, mimeType = attachment.mimeType, source = Base64ImageSource.Composer)
+            AttachmentChip(attachment = attachment, maxWidth = minOf(160.dp, chipMaxWidth), onRemove = { onRemoveAttachment(attachment.id) })
+          }
+        } else {
+          AttachmentChip(attachment = attachment, maxWidth = chipMaxWidth, onRemove = { onRemoveAttachment(attachment.id) })
+        }
       }
     }
   }

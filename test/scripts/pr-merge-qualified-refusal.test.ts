@@ -2,16 +2,36 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createMergeOutcomeFixtureHarness } from "./pr-merge-outcome.test-support.js";
+import {
+  policyTimeoutCapture,
+  policyTimeoutQualification,
+} from "./pr-merge-policy-timeout.test-support.js";
 
 const { fixture, outcomeRef, describePosix } = createMergeOutcomeFixtureHarness();
 
-function qualifiedAutoRefusal(f: ReturnType<typeof fixture>, diagnostic = false) {
-  const diagnosticCapture =
-    "octopool: merge_diagnostics attempt_utc=2026-09-21T12:00:00Z elapsed_ms=1 child_started=false outcome=preparation_failed headers=unavailable\nerror: string rewrite protection blocked unsafe input\n";
+const historicalRefusals = {
+  "0.6.10": {
+    kind: "octopool-0.6.10-auto-refusal",
+    version: "0.6.10",
+    sourceRevision: "00c442d8084ad26eb5a5003f7372170e75a20c8a",
+    parserSha256: "f6ff8cd7e59503f71f94fefd561b671193df11b3aac9ba0986a0dc3ba91ca32b",
+  },
+  "0.7.1": {
+    kind: "octopool-0.7.1-missing-subject-refusal",
+    version: "0.7.1",
+    sourceRevision: "7ab9b348c99a7be4fdc82c75cb06ebce44e0007e",
+    parserSha256: "b32cb960537f5ffa1336a7689674afba9b4a2485b05e449acd2684a251ff8970",
+  },
+} as const;
+
+function qualifiedAutoRefusal(
+  f: ReturnType<typeof fixture>,
+  version: keyof typeof historicalRefusals | "policy-timeout" = "0.6.10",
+) {
   f.save({
     ...f.state(),
     mode: "octopool-refusal",
-    refusalCapture: diagnostic ? diagnosticCapture : f.state().refusalCapture,
+    refusalCapture: version === "policy-timeout" ? policyTimeoutCapture : f.state().refusalCapture,
     pr: { ...f.state().pr, mergeStateStatus: "BEHIND" },
   });
   const refused = f.run(true);
@@ -26,13 +46,10 @@ function qualifiedAutoRefusal(f: ReturnType<typeof fixture>, diagnostic = false)
     outcome,
     capture: f.git(["hash-object", "--stdin"], contents),
     inspected: true,
-    ...(diagnostic
-      ? { kind: "octopool-merge-diagnostics", producer: "octopool", diagnosticsEnabled: true }
+    ...(version === "policy-timeout"
+      ? policyTimeoutQualification
       : {
-          kind: "octopool-0.6.10-auto-refusal",
-          version: "0.6.10",
-          sourceRevision: "00c442d8084ad26eb5a5003f7372170e75a20c8a",
-          parserSha256: "f6ff8cd7e59503f71f94fefd561b671193df11b3aac9ba0986a0dc3ba91ca32b",
+          ...historicalRefusals[version],
           args: [
             "pr",
             "merge",
@@ -55,64 +72,70 @@ function qualifiedAutoRefusal(f: ReturnType<typeof fixture>, diagnostic = false)
 }
 
 describePosix("qualified pre-dispatch merge recovery", () => {
-  it("recovers a qualified pre-dispatch refusal with retained evidence", () => {
-    const f = fixture();
-    const proof = qualifiedAutoRefusal(f);
-    const replacement = f.replacePreparedHead();
-    writeFileSync(
-      join(f.worktree, ".local/gates.env"),
-      `PR_NUMBER=123\nGATES_MODE=github_pending\nHOSTED_GATES_TARGET_HEAD_SHA=${replacement}\n`,
-    );
-    f.save({ ...f.state(), requiredCheckName: "openclaw/ci-gate" });
-    const run = f.run(
-      false,
-      f.repo,
-      "squash",
-      proof.outcome,
-      replacement,
-      "",
-      "",
-      "",
-      false,
-      proof.directory,
-    );
-    expect(run.status, run.output).toBe(0);
-    expect(f.state().mutations).toBe(1);
-    expect(f.record()).toMatchObject({
-      phase: "complete",
-      head: replacement,
-      route: "immediate",
-      recovery: {
-        outcome: proof.outcome,
-        replacementHead: replacement,
-        preDispatchRefusal: { kind: proof.qualification.kind, capture: proof.capture },
-      },
-    });
-    f.git(["merge-base", "--is-ancestor", proof.outcome, outcomeRef]);
-    expect(f.git(["rev-parse", `${outcomeRef}:pre-dispatch-refusal/${proof.capture}`])).toBe(
-      proof.qualification.capture,
-    );
-    expect(f.run().status).toBe(0);
-    expect(f.state().mutations).toBe(1);
-    const replay = f.run(
-      false,
-      f.repo,
-      "squash",
-      proof.outcome,
-      replacement,
-      "",
-      "",
-      "",
-      false,
-      proof.directory,
-    );
-    expect(replay.status, replay.output).toBe(1);
-    expect(f.state().mutations).toBe(1);
-  });
+  it.each(["0.6.10", "0.7.1", "policy-timeout"] as const)(
+    "recovers a qualified %s pre-dispatch refusal with retained evidence",
+    (version) => {
+      const f = fixture();
+      const proof = qualifiedAutoRefusal(f, version);
+      const replacement = f.replacePreparedHead();
+      writeFileSync(
+        join(f.worktree, ".local/gates.env"),
+        `PR_NUMBER=123\nGATES_MODE=github_pending\nHOSTED_GATES_TARGET_HEAD_SHA=${replacement}\n`,
+      );
+      f.save({ ...f.state(), requiredCheckName: "openclaw/ci-gate" });
+      const run = f.run(
+        false,
+        f.repo,
+        "squash",
+        proof.outcome,
+        replacement,
+        "",
+        "",
+        "",
+        false,
+        proof.directory,
+      );
+      expect(run.status, run.output).toBe(0);
+      expect(f.state().mutations).toBe(1);
+      expect(f.record()).toMatchObject({
+        phase: "complete",
+        head: replacement,
+        route: "immediate",
+        recovery: {
+          outcome: proof.outcome,
+          replacementHead: replacement,
+          preDispatchRefusal: { kind: proof.qualification.kind, capture: proof.capture },
+        },
+      });
+      f.git(["merge-base", "--is-ancestor", proof.outcome, outcomeRef]);
+      expect(f.git(["rev-parse", `${outcomeRef}:pre-dispatch-refusal/${proof.capture}`])).toBe(
+        proof.qualification.capture,
+      );
+      expect(f.git(["rev-parse", `${outcomeRef}:pre-dispatch-refusal/qualification.json`])).toBe(
+        f.git(["hash-object", "--stdin"], JSON.stringify(proof.qualification)),
+      );
+      expect(f.run().status).toBe(0);
+      expect(f.state().mutations).toBe(1);
+      const replay = f.run(
+        false,
+        f.repo,
+        "squash",
+        proof.outcome,
+        replacement,
+        "",
+        "",
+        "",
+        false,
+        proof.directory,
+      );
+      expect(replay.status, replay.output).toBe(1);
+      expect(f.state().mutations).toBe(1);
+    },
+  );
 
   it("preserves a pre-dispatch outcome across incomplete checks and ineligible admission", () => {
     const f = fixture();
-    const proof = qualifiedAutoRefusal(f);
+    const proof = qualifiedAutoRefusal(f, "policy-timeout");
     const replacement = f.replacePreparedHead();
     writeFileSync(
       join(f.worktree, ".local/gates.env"),

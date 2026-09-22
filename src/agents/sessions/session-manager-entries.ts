@@ -1,4 +1,3 @@
-import { isRecord } from "@openclaw/normalization-core/record-coerce";
 import { buildSessionContext as buildCoreSessionContext } from "../../../packages/agent-core/src/harness/session/session.js";
 import {
   readActiveTranscriptEntryAnchor,
@@ -10,6 +9,7 @@ import {
 import { prepareTranscriptMessageAppend } from "../../config/sessions/session-accessor.sqlite-transcript-message-append.js";
 import { resolveSessionTranscriptReadFence } from "../../config/sessions/session-transcript-read-fence.js";
 import { applyAssistantDeliveryDirectives } from "../../config/sessions/transcript-assistant-delivery.js";
+import { sameSessionTranscriptTargetBinding } from "../../config/sessions/transcript-target-binding.js";
 import { isSessionTranscriptSideAppendEntry } from "../../config/sessions/transcript-tree.js";
 import {
   captureSessionMetadataPublication,
@@ -28,8 +28,11 @@ import {
   copyCodeModeSourceAppendOptions,
 } from "../transcript-code-mode-source.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
-import { isIndexedSessionEntry, isSessionContextMetadataEntry } from "./session-manager-codec.js";
-import type { PreparedSessionTranscriptReload } from "./session-manager-core.js";
+import {
+  isIndexedSessionEntry,
+  isSessionContextMetadataEntry,
+  isTalkRealtimeVoiceEntry,
+} from "./session-manager-codec.js";
 import { generateSessionEntryId } from "./session-manager-id.js";
 import { SessionMetadataCommittedError } from "./session-manager-metadata-error.js";
 import {
@@ -52,26 +55,12 @@ import type {
   SessionMessageEntry,
   SessionLeafControl,
 } from "./session-manager-types.js";
+import type { PreparedSessionTranscriptReload } from "./session-manager-view-types.js";
 import { withSessionManagerWrite } from "./session-manager-write-admission.js";
 
 function canonicalizeSessionEntry<T extends SessionEntry>(entry: T): T {
   // oxlint-disable-next-line unicorn/prefer-structured-clone -- Match the persisted JSON/toJSON shape exactly.
   return JSON.parse(JSON.stringify(entry)) as T;
-}
-
-function isTalkRealtimeVoiceEntry(entry: SessionEntry): boolean {
-  if (
-    entry.type !== "message" ||
-    (entry.message.role !== "user" && entry.message.role !== "assistant")
-  ) {
-    return false;
-  }
-  const provenance: unknown = Reflect.get(entry.message, "provenance");
-  return (
-    isRecord(provenance) &&
-    provenance.kind === "realtime_voice" &&
-    provenance.sourceChannel === "talk"
-  );
 }
 
 export class SessionManagerEntries extends SessionManagerSuffixPersistence {
@@ -149,6 +138,15 @@ export class SessionManagerEntries extends SessionManagerSuffixPersistence {
               message: canonicalEntry.message,
               config: options?.config,
             }),
+            {
+              scope: this.persistenceTarget,
+              envelope: {
+                type: "message",
+                id: canonicalEntry.id,
+                parentId: canonicalEntry.parentId,
+                timestamp: canonicalEntry.timestamp,
+              },
+            },
           )
         : undefined;
     let persistenceResult;
@@ -465,11 +463,8 @@ export class SessionManagerEntries extends SessionManagerSuffixPersistence {
         const currentTarget = this.getSessionTarget();
         if (
           !committedTarget ||
-          !currentTarget ||
           this.getSessionId() !== publication.sessionId ||
-          (["agentId", "sessionId", "sessionKey", "storePath"] as const).some(
-            (key) => currentTarget[key] !== committedTarget[key],
-          )
+          !sameSessionTranscriptTargetBinding(committedTarget, currentTarget)
         ) {
           const rebound = new SessionTranscriptWriterClaimReboundError();
           throw viewFailure

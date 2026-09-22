@@ -19,6 +19,7 @@ import type { PluginIconTheme } from "./portable-icon-paths.js";
 import type { PluginDependencySpecMap } from "./status-dependencies.types.js";
 
 export type PluginManifestContractListKey =
+  | "codeModeExecutors"
   | "decisionProviders"
   | "speechProviders"
   | "externalAuthProviders"
