@@ -15,6 +15,7 @@ import { afterAll, afterEach, describe, expect } from "vitest";
 import { resolveVitestNodeArgs } from "../../scripts/lib/vitest-process-env.mts";
 import { requireNodeTool } from "../helpers/node-toolchain.js";
 import { useAutoCleanupTempDirTracker } from "../helpers/temp-dir.js";
+import { createFixtureGit } from "./pr-merge-fixture-git.test-support.js";
 import { landingSnapshotQuery } from "./pr-merge-snapshot.test-support.js";
 import { validReview, writeReviewArtifacts } from "./pr-review-artifact-fixture.js";
 
@@ -44,52 +45,12 @@ export function createMergeOutcomeFixtureHarness() {
   const supportsNoLazyFetch =
     spawnSync("git", ["--no-lazy-fetch", "--version"], { env: gitEnv }).status === 0;
 
-  function createFixtureGit(repo: string) {
-    const git = (args: string[], input?: string, cwd = repo, env?: NodeJS.ProcessEnv) =>
-      execFileSync(
-        "git",
-        ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args],
-        {
-          cwd,
-          env: { ...gitEnv, ...env },
-          input,
-          encoding: "utf8",
-          stdio: ["pipe", "pipe", "pipe"],
-        },
-      ).trim();
-    const tree = (owner: string, sibling = "stable\n") => {
-      const a = git(["hash-object", "-w", "--stdin"], owner);
-      const b = git(["hash-object", "-w", "--stdin"], sibling);
-      return git(["mktree"], `100644 blob ${a}\towner.txt\n100644 blob ${b}\tsibling.txt\n`);
-    };
-    const commit = (
-      contents: string,
-      parents: string[],
-      message = "Fixture commit\n",
-      author?: { name: string; email: string },
-    ) =>
-      git(
-        ["commit-tree", contents, ...parents.flatMap((parent) => ["-p", parent])],
-        message,
-        repo,
-        author
-          ? {
-              GIT_AUTHOR_NAME: author.name,
-              GIT_AUTHOR_EMAIL: author.email,
-              GIT_COMMITTER_NAME: author.name,
-              GIT_COMMITTER_EMAIL: author.email,
-            }
-          : undefined,
-      );
-    return { git, tree, commit };
-  }
-
   function createFixtureTemplate(directory: string) {
     const root = realpathSync(directory);
     const repo = join(root, "repo");
     const remote = join(root, "remote.git");
     mkdirSync(repo);
-    const { git, tree, commit } = createFixtureGit(repo);
+    const { git, tree, commit } = createFixtureGit(repo, gitEnv);
     git(["init", "-q", "-b", "main"]);
     git(["config", "user.name", "Merge Fixture"]);
     git(["config", "user.email", "fixture@example.invalid"]);
@@ -117,7 +78,7 @@ export function createMergeOutcomeFixtureHarness() {
     cpSync(template.repo, repo, copyOptions);
     cpSync(template.remote, remote, copyOptions);
     const { base } = template;
-    const { git, tree, commit } = createFixtureGit(repo);
+    const { git, tree, commit } = createFixtureGit(repo, gitEnv);
     git(["remote", "add", "origin", remote]);
     const sourceCommits: string[] = [];
     let head = base;
