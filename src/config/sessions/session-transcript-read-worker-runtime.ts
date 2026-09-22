@@ -9,6 +9,7 @@ import { unwrapSessionTranscriptWorkerReply } from "./session-history-worker-err
 import { resolveSessionTranscriptReadFence } from "./session-transcript-read-fence.js";
 import type {
   SessionBranchSummaryWorkerInput,
+  SessionContextMessagesWorkerInput,
   SessionEntryWorkerInput,
   SessionModelContextWorkerInput,
   SessionTranscriptWorkerReply,
@@ -16,8 +17,8 @@ import type {
 
 const workerUrl = resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.sessionTranscript);
 const modelContextReads = new WorkerTaskPool<
-  SessionModelContextWorkerInput,
-  SessionTranscriptWorkerReply<"model-context">
+  SessionModelContextWorkerInput | SessionContextMessagesWorkerInput,
+  SessionTranscriptWorkerReply<"model-context" | "context-messages">
 >({
   workerUrl,
   workerOptions: { resourceLimits: { maxOldGenerationSizeMb: 512 } },
@@ -56,10 +57,25 @@ export async function readSessionTranscriptModelContextAsync(
 ): Promise<ReturnType<typeof readSessionTranscriptModelContext>> {
   signal?.throwIfAborted();
   return unwrapSessionTranscriptWorkerReply<"model-context">(
-    await modelContextReads.run(
+    (await modelContextReads.run(
       { kind: "model-context", target, admission, through, limits },
       { timeoutMs: 60_000, signal },
-    ),
+    )) as SessionTranscriptWorkerReply<"model-context">, // SAFETY: The request discriminant selects this reply value.
+  );
+}
+
+export async function readSessionTranscriptContextMessagesAsync(
+  target: SessionTranscriptRuntimeTarget,
+  limits: SessionContextMessagesWorkerInput["limits"],
+  admission?: SessionContextMessagesWorkerInput["admission"],
+  signal?: AbortSignal,
+) {
+  signal?.throwIfAborted();
+  return unwrapSessionTranscriptWorkerReply<"context-messages">(
+    (await modelContextReads.run(
+      { kind: "context-messages", target, admission, limits },
+      { timeoutMs: 60_000, signal },
+    )) as SessionTranscriptWorkerReply<"context-messages">, // SAFETY: The request discriminant selects this reply value.
   );
 }
 
