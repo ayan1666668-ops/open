@@ -61,6 +61,7 @@ export type Slot = {
   runtimeGeneration?: RuntimeWorkerGeneration;
   borrowedGenerationSlot?: true;
   worker: Worker;
+  sourceLoaderPreloaded: boolean;
   receiveReply(reply: SqliteWorkerReply, pumping?: boolean): void;
   actors: Set<Actor>;
   queue: Job[];
