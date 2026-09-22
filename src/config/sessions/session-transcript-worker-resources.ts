@@ -280,14 +280,19 @@ export async function withSessionHistoryWorkerReadCandidates<T>(
   operation: (scope: {
     assertCurrent: () => void;
     readStoreTarget: (
-      request: SessionStoreTargetReadRequest,
+      request: Omit<SessionStoreTargetReadRequest, "candidates">,
     ) => Promise<SessionStoreTargetReadResult>;
     readTargetInventory: (
-      request: SessionStoreTargetInventoryRequest,
+      request: Omit<SessionStoreTargetInventoryRequest, "candidates">,
     ) => Promise<SessionStoreTargetInventoryResult>;
   }) => Promise<T>,
 ): Promise<T> {
-  const selected = candidates.map(({ physicalPath, scope }) => ({
+  const capturedCandidates = candidates.map(({ path, physicalPath, scope }) => ({
+    path,
+    physicalPath,
+    scope,
+  }));
+  const selected = capturedCandidates.map(({ physicalPath, scope }) => ({
     path: physicalPath,
     ...(scope ? { scope } : {}),
   }));
@@ -330,7 +335,7 @@ export async function withSessionHistoryWorkerReadCandidates<T>(
     };
     const retained = new Set<string>();
     try {
-      for (const candidate of candidates) {
+      for (const candidate of capturedCandidates) {
         for (const pathname of [candidate.path, candidate.physicalPath]) {
           const key = JSON.stringify([pathname, candidate.scope]);
           if (retained.has(key)) {
@@ -353,14 +358,15 @@ export async function withSessionHistoryWorkerReadCandidates<T>(
       const value = await operation({
         assertCurrent,
         readStoreTarget: async (request) => {
+          const preparedRequest = { ...request, candidates: capturedCandidates };
           const reply = await historyPages.run(
             () => {
               assertCurrent();
               dispatched = true;
               historyLane.nativeSequence++;
-              return { kind: "session-store-target", request };
+              return { kind: "session-store-target", request: preparedRequest };
             },
-            { inputBytes: JSON.stringify(request).length * 2, timeoutMs: 60_000 },
+            { inputBytes: JSON.stringify(preparedRequest).length * 2, timeoutMs: 60_000 },
           );
           const result =
             unwrapSessionTranscriptWorkerReply<SessionHistoryWorkerInput["kind"]>(reply);
@@ -378,15 +384,16 @@ export async function withSessionHistoryWorkerReadCandidates<T>(
           return result;
         },
         readTargetInventory: async (request) => {
+          const preparedRequest = { ...request, candidates: capturedCandidates };
           const reply = await historyPages.run(
             () => {
               assertCurrent();
               dispatched = true;
               historyLane.nativeSequence++;
-              return { kind: "session-target-inventory", request };
+              return { kind: "session-target-inventory", request: preparedRequest };
             },
             {
-              inputBytes: measureSessionStoreTargetInventoryInputBytes(request),
+              inputBytes: measureSessionStoreTargetInventoryInputBytes(preparedRequest),
               timeoutMs: 60_000,
             },
           );

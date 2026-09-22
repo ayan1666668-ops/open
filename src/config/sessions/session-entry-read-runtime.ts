@@ -128,7 +128,7 @@ async function withSessionStoreReaderInWorker<T>(
     }
     const registryRead = prepareOpenClawAgentDatabaseRegistrySnapshotRead({ env });
     return await withSessionHistoryWorkerReadCandidates(candidates, async (discovery) => {
-      const request = { agentId, storePath, env: { ...env }, candidates };
+      const request = { agentId, storePath, env: { ...env } };
       let resolved = await discovery.readStoreTarget({
         ...request,
         registeredDatabases: { status: "deferred" },

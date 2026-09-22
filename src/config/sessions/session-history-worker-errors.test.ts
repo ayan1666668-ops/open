@@ -23,6 +23,9 @@ const observed = vi.hoisted(() => ({
   close: vi.fn<() => void>(),
   run: vi.fn<() => Promise<unknown>>(),
   closeResources: vi.fn<(key?: string) => Promise<void>>(),
+  deferredRun: undefined as
+    | ((prepare: () => unknown, options: { inputBytes?: number }) => Promise<unknown>)
+    | undefined,
   rotate: vi.fn<() => Promise<void>>(),
   unregister: vi.fn<() => void>(),
   resources: [] as Resource[],
@@ -51,7 +54,10 @@ vi.mock("../../infra/worker-task-pool.js", async (importOriginal) => {
   return {
     ...actual,
     createOwnedWorkerTaskPool: () => ({
-      run(prepare: () => unknown) {
+      run(prepare: () => unknown, options: { inputBytes?: number }) {
+        if (observed.deferredRun) {
+          return observed.deferredRun(prepare, options);
+        }
         prepare();
         return observed.run();
       },
@@ -133,6 +139,7 @@ function invoke(request: ReturnType<typeof input>) {
 }
 
 beforeEach(() => {
+  observed.deferredRun = undefined;
   observed.post.mockReset();
   observed.read.mockReset();
   observed.close.mockReset();
@@ -341,7 +348,6 @@ it.runIf(!process.versions.bun)(
       await scope.readStoreTarget({
         agentId: "main",
         storePath: request.database.path,
-        candidates,
         env: {},
         registeredDatabases: [],
       });
@@ -395,7 +401,6 @@ it.runIf(!process.versions.bun).each([false, true])(
       await scope.readStoreTarget({
         agentId: "main",
         storePath: request.database.path,
-        candidates,
         env: {},
         registeredDatabases: [],
       });
@@ -438,7 +443,6 @@ it("keeps native worker retirement for Bun candidate cleanup", async () => {
       await scope.readStoreTarget({
         agentId: "main",
         storePath: request.database.path,
-        candidates,
         env: {},
         registeredDatabases: [],
       });
@@ -469,7 +473,6 @@ it("retires inventory workers when best-effort discovery reports a failed read",
       agentIds: ["main"],
       env: {},
       paths: new Map(),
-      candidates,
       registeredDatabases: [],
     });
   });
@@ -506,7 +509,6 @@ it.runIf(!process.versions.bun).each([false, true])(
       await scope.readStoreTarget({
         agentId: "main",
         storePath: request.database.path,
-        candidates,
         env: {},
         registeredDatabases: [],
       });
@@ -538,6 +540,96 @@ it.runIf(!process.versions.bun).each([false, true])(
       cleanup.resolve();
       retirement.resolve();
       await Promise.allSettled([discovery, closing]);
+    }
+  },
+);
+
+it.each(["store", "inventory"] as const)(
+  "binds queued %s discovery and byte accounting to its admitted candidates",
+  async (kind) => {
+    const admitted = {
+      path: "/synthetic/admitted.sqlite",
+      physicalPath: "/synthetic/physical.sqlite",
+      scope: "sibling-family" as const,
+    };
+    const original = { ...admitted };
+    const foreign = {
+      path: "/synthetic/foreign.sqlite",
+      physicalPath: "/synthetic/foreign.sqlite",
+    };
+    const entered = createDeferredCore();
+    const response = createDeferredCore<unknown>();
+    let prepare: (() => unknown) | undefined;
+    let inputBytes: number | undefined;
+    observed.deferredRun = (inputFactory, options) => {
+      prepare = inputFactory;
+      inputBytes = options.inputBytes;
+      entered.resolve();
+      return response.promise;
+    };
+    const storeRequest = {
+      agentId: "main",
+      storePath: foreign.path,
+      env: {},
+      registeredDatabases: [],
+      candidates: [foreign],
+    };
+    const paths = new Map([
+      [
+        "main",
+        { configured: "/synthetic/configured.sqlite", default: "/synthetic/default.sqlite" },
+      ],
+    ]);
+    const inventoryRequest = {
+      config: {},
+      agentIds: ["main"],
+      env: {},
+      paths,
+      registeredDatabases: [],
+      candidates: [foreign],
+    };
+    const discovery = withSessionHistoryWorkerReadCandidates<unknown>([admitted], (scope) =>
+      kind === "store"
+        ? scope.readStoreTarget(storeRequest)
+        : scope.readTargetInventory(inventoryRequest),
+    );
+    await entered.promise;
+    admitted.path = "/synthetic/changed-alias.sqlite";
+    admitted.physicalPath = "/synthetic/changed-physical.sqlite";
+    foreign.path = "/synthetic/widened.sqlite";
+    foreign.physicalPath = foreign.path;
+    try {
+      assert(prepare);
+      expect(prepare()).toMatchObject({ request: { candidates: [original] } });
+      const dispatched = {
+        ...(kind === "store" ? storeRequest : inventoryRequest),
+        candidates: [original],
+      };
+      let expectedBytes = JSON.stringify(dispatched).length * 2;
+      if (kind === "inventory") {
+        for (const [agentId, target] of paths) {
+          expectedBytes += 2 * (agentId.length + target.configured.length + target.default.length);
+        }
+      }
+      expect(inputBytes).toBe(expectedBytes);
+    } finally {
+      response.resolve({
+        ok: true,
+        value:
+          kind === "store"
+            ? {
+                kind: "session-store-target",
+                sourcePath: original.physicalPath,
+                database: { agentId: "main", path: original.physicalPath },
+              }
+            : { kind: "session-target-inventory", agents: [] },
+      });
+      await discovery;
+    }
+    if (!process.versions.bun) {
+      expect(observed.closeResources).toHaveBeenCalledWith(
+        JSON.stringify([{ path: original.physicalPath, scope: original.scope }]),
+      );
     }
   },
 );
