@@ -1872,7 +1872,7 @@ class GatewaySession(
         }
 
       val minProtocol =
-        if (options.role == "node" && client.mode == "node") {
+        if (target.options.role == "node" && client.mode == "node") {
           GATEWAY_MIN_NODE_PROTOCOL_VERSION
         } else {
           GATEWAY_MIN_PROTOCOL_VERSION
