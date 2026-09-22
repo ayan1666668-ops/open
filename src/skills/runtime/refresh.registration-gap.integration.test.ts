@@ -36,7 +36,6 @@ it.runIf(
 
   const releaseScan = createDeferredCore();
   let scanBlocked = false;
-  let renameBeforeRegistration = false;
   const registeredPaths = new Set<string>();
   const errors: unknown[] = [];
   const watches: Array<{ ready: boolean; watcher: ReturnType<typeof chokidar.watch> }> = [];
@@ -112,7 +111,7 @@ it.runIf(
     expect(registeredPaths.has(skillDir)).toBe(false);
 
     nativeFs.renameSync(skillFile, renamedSkillFile);
-    renameBeforeRegistration = !registeredPaths.has(skillDir);
+    const renameBeforeRegistration = !registeredPaths.has(skillDir);
     expect(read()).toEqual(["registration-proof"]);
     releaseScan.resolve();
 
