@@ -21,7 +21,6 @@ import {
   pluginSourceStatIdentity,
   verifyPluginSourceInputs,
   pluginSourceContentHash,
-  readPluginSourceBytes,
   createPluginPackageMetadataCapture,
   createPluginSourceCapture,
   type PluginDependencyResolution,
@@ -34,6 +33,10 @@ import {
   capturedPluginModuleUrl,
   visitPluginSourceReferences,
 } from "./plugin-source-references.js";
+import {
+  capturePluginSourceDigest,
+  capturePluginSourceFile,
+} from "./plugin-source-stream-capture.js";
 
 /** Capture selective entries and whole dependencies without replacing earlier file bytes. */
 export function capturePluginGenerationArtifact(
@@ -155,13 +158,14 @@ export function capturePluginGenerationArtifact(
       }
       const stat = fs.statSync(real, { bigint: true });
       const captured = capturedPaths.get(real);
-      const recordContent = (content: Buffer | string[]) => {
+      const recordContent = (content: string | string[]) => {
         if (!captured) {
           // Filesystem ticks can hide edits. Retain the bytes or member names actually copied,
           // not just stat fields; cached aliases must keep their first capture's facts.
+          // Directory listings are still hashed here; files pass an already-streamed hash.
           inputs.set(real, {
             identity: pluginSourceStatIdentity(stat),
-            contentHash: pluginSourceContentHash(content),
+            contentHash: Array.isArray(content) ? pluginSourceContentHash(content) : content,
             directory: stat.isDirectory(),
             boundary,
           });
@@ -202,18 +206,22 @@ export function capturePluginGenerationArtifact(
         if (stat.nlink > 1n) {
           hardlinkedSources.add(target);
         }
-        let bytes: Buffer;
         fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
         if (captured) {
           // A second filename for a prefetched entry retains its first bytes and source identity.
-          bytes = fs.readFileSync(captured);
           fs.copyFileSync(captured, target);
         } else {
-          bytes = readPluginSourceBytes(real, boundary);
-          fs.writeFileSync(target, bytes, { mode: 0o600 | Number(stat.mode & 0o100n) });
+          // Streams `real` -> `target` in bounded chunks instead of a whole-file Buffer (#155728).
+          const { contentHash } = capturePluginSourceFile({
+            source: real,
+            boundary,
+            target: { path: target, mode: 0o600 | Number(stat.mode & 0o100n) },
+          });
+          recordContent(contentHash);
         }
-        recordContent(bytes);
-        digest.update(String(bytes.length)).update("\0").update(bytes);
+        // One shared bounded re-read feeds `digest`, whether this entry was just captured above
+        // or is a re-aliased copy of an earlier one; never a second full-buffer read either way.
+        capturePluginSourceDigest(target, digest, fs.statSync(target).size);
         additions.add(target);
         if (path.basename(target) === "package.json") {
           metadataCapture.record(target, (manifest) => {
