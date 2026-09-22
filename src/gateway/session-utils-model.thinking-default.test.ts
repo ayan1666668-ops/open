@@ -17,12 +17,13 @@ import { buildGatewaySessionRow } from "./session-utils-row.js";
 
 describe("Gateway stored thinking levels", () => {
   it("keeps stored Ultra for supported harnesses and clamps unavailable native profiles", () => {
+    // A synthetic model lets observed native efforts define the capability set.
     const cfg: OpenClawConfig = {
       agents: {
         defaults: {
-          model: { primary: "openai/gpt-5.6-sol" },
+          model: { primary: "openai/native-effort-fixture" },
           models: {
-            "openai/gpt-5.6-sol": { agentRuntime: { id: "codex" } },
+            "openai/native-effort-fixture": { agentRuntime: { id: "codex" } },
           },
         },
       },
@@ -34,8 +35,19 @@ describe("Gateway stored thinking levels", () => {
     const row = (
       entry: SessionEntry,
       catalog?: { reasoning?: boolean; compat?: { supportedReasoningEfforts: string[] } },
-    ) =>
-      buildGatewaySessionRow({
+    ) => {
+      const modelCatalog: (ModelCatalogEntry & ThinkingCatalogPolicyCarrier)[] | undefined = catalog
+        ? [
+            {
+              provider: "openai",
+              id: "native-effort-fixture",
+              name: "Native effort fixture",
+              [PREPARED_THINKING_POLICY]: openaiPolicy,
+              ...catalog,
+            },
+          ]
+        : undefined;
+      return buildGatewaySessionRow({
         cfg,
         agentId: "main",
         lightweightListRow: true,
@@ -44,20 +56,9 @@ describe("Gateway stored thinking levels", () => {
         store: {},
         key: "agent:main:main",
         entry,
-        ...(catalog
-          ? {
-              modelCatalog: [
-                {
-                  provider: "openai",
-                  id: "gpt-5.6-sol",
-                  name: "GPT-5.6 Sol",
-                  [PREPARED_THINKING_POLICY]: openaiPolicy,
-                  ...catalog,
-                },
-              ],
-            }
-          : {}),
+        modelCatalog,
       });
+    };
 
     const stored: SessionEntry = { sessionId: "stored", updatedAt: 1, thinkingLevel: "ultra" };
 
