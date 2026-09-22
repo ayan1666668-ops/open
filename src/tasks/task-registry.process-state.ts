@@ -19,6 +19,7 @@ import type {
   TaskExecutionRestoreStore,
   TaskRegistryMutationScope,
   TaskRegistryObserverEvent,
+  TaskRegistryObservers,
 } from "./task-registry.store.types.js";
 import type { TaskDeliveryState, TaskRecord, TaskRuntime } from "./task-registry.types.js";
 
@@ -130,6 +131,7 @@ type TaskRegistryProcessState = {
   taskIdsByOwnerKey: Map<string, Set<string>>;
   taskIdsByParentFlowId: Map<string, Set<string>>;
   taskIdsByRelatedSessionKey: Map<string, Set<string>>;
+  taskIdsByChildSessionKey: Map<string, Set<string>>;
   tasksWithPendingDelivery: Set<string>;
   /** Ephemeral live activity is intentionally discarded on gateway restart. */
   taskActivityByTaskId: Map<string, TaskActivityOverlayState>;
@@ -143,6 +145,8 @@ type TaskRegistryProcessState = {
     events: TaskRegistryEventMutations;
   };
   changeListeners: Set<(event?: TaskRegistryObserverEvent) => void>;
+  // SDK and Gateway module instances must publish to the same lifecycle observer.
+  observers: TaskRegistryObservers | null;
   projection: {
     epoch: number;
     dirty: boolean;
@@ -167,11 +171,13 @@ export function getTaskRegistryProcessState(): TaskRegistryProcessState {
     taskIdsByOwnerKey: new Map<string, Set<string>>(),
     taskIdsByParentFlowId: new Map<string, Set<string>>(),
     taskIdsByRelatedSessionKey: new Map<string, Set<string>>(),
+    taskIdsByChildSessionKey: new Map<string, Set<string>>(),
     tasksWithPendingDelivery: new Set<string>(),
     taskActivityByTaskId: new Map<string, TaskActivityOverlayState>(),
     taskProgressBatches: new Map<string, TaskProgressBatch>(),
     runOwners: new Map<string, TaskRunOwner>(),
     changeListeners: new Set(),
+    observers: null,
     projection: {
       epoch: 0,
       dirty: false,
@@ -286,12 +292,20 @@ export function deleteParentFlowIdIndex(taskId: string, task: Pick<TaskRecord, "
 }
 
 export function addRelatedSessionKeyIndex(taskId: string, task: TaskSessionKeys) {
+  const child = normalizeOptionalString(task.childSessionKey);
+  if (child) {
+    addIndexedKey(indexState.taskIdsByChildSessionKey, child, taskId);
+  }
   for (const sessionKey of getTaskRelatedSessionIndexKeys(task)) {
     addIndexedKey(indexState.taskIdsByRelatedSessionKey, sessionKey, taskId);
   }
 }
 
 export function deleteRelatedSessionKeyIndex(taskId: string, task: TaskSessionKeys) {
+  const child = normalizeOptionalString(task.childSessionKey);
+  if (child) {
+    deleteIndexedKey(indexState.taskIdsByChildSessionKey, child, taskId);
+  }
   for (const sessionKey of getTaskRelatedSessionIndexKeys(task)) {
     deleteIndexedKey(indexState.taskIdsByRelatedSessionKey, sessionKey, taskId);
   }
@@ -327,6 +341,14 @@ export function updateRunIdIndex(
   indexState.taskIdsByRunId.set(nextRunId, ids);
 }
 
+export function clearTaskRegistryIndexes(): void {
+  indexState.taskIdsByRunId.clear();
+  indexState.taskIdsByOwnerKey.clear();
+  indexState.taskIdsByParentFlowId.clear();
+  indexState.taskIdsByRelatedSessionKey.clear();
+  indexState.taskIdsByChildSessionKey.clear();
+}
+
 export function removeTaskIndexes(task: TaskRecord): void {
   deleteRunIdIndex(task.taskId, task.runId);
   deleteOwnerKeyIndex(task.taskId, task);
@@ -339,6 +361,28 @@ export function addTaskIndexes(task: TaskRecord): void {
   addOwnerKeyIndex(task.taskId, task);
   addParentFlowIdIndex(task.taskId, task);
   addRelatedSessionKeyIndex(task.taskId, task);
+}
+
+/** Update a published row without disturbing unchanged index insertion order. */
+export function updateTaskIndexes(current: TaskRecord, next: TaskRecord): void {
+  const taskId = next.taskId;
+  updateRunIdIndex(current, next);
+  if (current.ownerKey !== next.ownerKey) {
+    deleteOwnerKeyIndex(taskId, current);
+    addOwnerKeyIndex(taskId, next);
+  }
+  if (current.parentFlowId !== next.parentFlowId) {
+    deleteParentFlowIdIndex(taskId, current);
+    addParentFlowIdIndex(taskId, next);
+  }
+  if (
+    current.ownerKey !== next.ownerKey ||
+    current.requesterSessionKey !== next.requesterSessionKey ||
+    current.childSessionKey !== next.childSessionKey
+  ) {
+    deleteRelatedSessionKeyIndex(taskId, current);
+    addRelatedSessionKeyIndex(taskId, next);
+  }
 }
 
 export function taskIdsInScope(scope?: TaskRegistryMutationScope): Iterable<string> {
