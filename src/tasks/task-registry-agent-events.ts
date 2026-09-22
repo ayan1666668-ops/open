@@ -26,6 +26,10 @@ import {
 import { getTaskFlowRegistryStore } from "./task-flow-registry.store.js";
 import { clearTaskActivity, flushTaskActivity } from "./task-registry-activity.js";
 import { recoverTaskAgentEventPublication } from "./task-registry-agent-event-commit.js";
+import {
+  publishTaskAgentEventDelivery,
+  type TaskAgentEventDelivery,
+} from "./task-registry-agent-event-delivery.js";
 import type { TaskAgentEventTarget } from "./task-registry-agent-event-target.js";
 import {
   captureTaskAgentEventChange,
@@ -38,10 +42,6 @@ import {
   type TaskAgentEventPublication,
   type TaskAgentEventReceipt,
 } from "./task-registry-agent-event.operation.js";
-import {
-  maybeDeliverTaskStateChangeUpdate,
-  maybeDeliverTaskTerminalUpdate,
-} from "./task-registry-delivery.js";
 import { updateTaskWithPublication } from "./task-registry-mutation.js";
 import {
   captureTaskPersistenceReceipt,
@@ -56,7 +56,7 @@ import {
   tasks,
 } from "./task-registry-state.js";
 import { getTaskRegistryStore, type TaskRegistryStore } from "./task-registry.store.js";
-import { isTerminalTaskStatus, type TaskRecord } from "./task-registry.types.js";
+import type { TaskRecord } from "./task-registry.types.js";
 import { getTaskRunOwner } from "./task-run-owner.js";
 
 type EventSource = {
@@ -80,7 +80,7 @@ type PendingEvent = {
   claimed: Error;
   receipt?: TaskAgentEventReceipt | null;
   publication?: TaskAgentEventPublication;
-  delivery?: { receipt: TaskAgentEventPublication; isCurrent: () => boolean };
+  delivery?: TaskAgentEventDelivery;
   commitFacts?: unknown;
   committedTarget?: TaskAgentEventInput["expectedTask"];
   lineageResident?: TaskRecord;
@@ -207,35 +207,6 @@ function retainCommittedEventAfterResultFailure(pending: PendingEvent): void {
   if (!pending.receipt && facts !== undefined) {
     pending.commitFacts = facts;
     advanceCommittedLineage(pending, facts);
-  }
-}
-
-function publishDelivery(pending: PendingEvent): void {
-  const delivery = pending.delivery;
-  if (!delivery) {
-    return;
-  }
-  const { receipt } = delivery;
-  try {
-    assertCurrent(pending, {
-      ...pending.input,
-      expectedTask: captureTaskPersistenceReceipt(receipt.task),
-    });
-  } catch {
-    return;
-  }
-  const current = tasks.get(pending.input.taskId);
-  if (!current || !delivery.isCurrent() || !isEquivalentTaskRecord(current, receipt.task)) {
-    return;
-  }
-  if (receipt.task.deliveryStatus === "not_applicable" || receipt.task.notifyPolicy === "silent") {
-    return;
-  }
-  if (receipt.nextEvent) {
-    void maybeDeliverTaskStateChangeUpdate(receipt.task, receipt.nextEvent);
-  }
-  if (isTerminalTaskStatus(receipt.task.status)) {
-    void maybeDeliverTaskTerminalUpdate(receipt.task.taskId);
   }
 }
 
@@ -585,8 +556,14 @@ function startDrain(): void {
           active = undefined;
           // A committed notification starts after its own accepted event settles;
           // cleanup failure still rejects external readers without suppressing delivery.
-          if (entry.delivery) {
-            publishDelivery(entry);
+          const delivery = entry.delivery;
+          if (delivery) {
+            publishTaskAgentEventDelivery(delivery, () =>
+              assertCurrent(entry, {
+                ...entry.input,
+                expectedTask: captureTaskPersistenceReceipt(delivery.receipt.task),
+              }),
+            );
           }
         }
       }

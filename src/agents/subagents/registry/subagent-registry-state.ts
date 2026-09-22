@@ -576,6 +576,7 @@ export function getSubagentRunsSnapshotForController(
     return new Map();
   }
   return getSubagentRunsSnapshot(inMemoryRuns, persistedSubagentRunsReadCache, {
+    selectCached: (lookup) => lookup.selectControllers(new Set([key])),
     load: () => loadSubagentRunsForControllerFromSqlite(key),
     matches: (entry) => (entry.controllerSessionKey?.trim() || entry.requesterSessionKey) === key,
   });
@@ -590,6 +591,7 @@ export function getSubagentRunsSnapshotForChildSession(
     return new Map();
   }
   return getSubagentRunsSnapshot(inMemoryRuns, persistedSubagentRunsReadCache, {
+    selectCached: (lookup) => lookup.selectChildren(new Set([key])),
     load: () => loadSubagentRunsForChildSessionFromSqlite(key),
     matches: (entry) => entry.childSessionKey === key,
   });
