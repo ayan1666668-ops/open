@@ -214,7 +214,9 @@ describe("persistent chat session snapshots", () => {
     });
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
       request.addEventListener("success", () => resolve(request.result));
-      request.addEventListener("error", () => reject(request.error));
+      request.addEventListener("error", () =>
+        reject(request.error ?? new Error("database open failed")),
+      );
     });
     database.close();
     for (const sessionKey of [privateKey, ordinaryKey]) {
