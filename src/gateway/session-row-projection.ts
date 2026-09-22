@@ -334,7 +334,7 @@ export async function createSessionRowProjection(params: {
       const found = new Set([...exact, ...matching(query, "id")]);
       const registryFactsReady = inOwnerContext(getSubagentSessionListReadSnapshotIdentity);
       for (const previous of found) {
-        if (previous.entry) {
+        if (previous.entry && change.scope !== "session-entry") {
           placementFacts.invalidate(previous.entry.sessionId);
         }
         markRelated(previous);
