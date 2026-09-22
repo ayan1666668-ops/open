@@ -183,10 +183,23 @@ function downgradeRichTextOnlyForRecovery(payload: ReplyPayload): ReplyPayload |
   if (payload.presentationTextMode === "fallback") {
     return plainPayload;
   }
-  const completeFallback = renderMessagePresentationFallbackText({
-    presentation,
-    text: payload.text.trim(),
-  });
+  const currentText = payload.text.trim();
+  // Render presentation alone, then apply the same equality/suffix dedup
+  // Telegram delivery uses in `canonicalizeTelegramPresentationPayload`:
+  // an already-materialized fallback must not be appended again.
+  const presentationFallback = renderMessagePresentationFallbackText({ presentation });
+  const fallbackText = presentationFallback.trim();
+  const completeFallback = !fallbackText
+    ? currentText
+    : currentText === fallbackText || currentText.endsWith(`\n\n${fallbackText}`)
+      ? currentText
+      : [currentText, fallbackText].join("\n\n");
+  // A presentation text line shaped like a MEDIA: directive would become a
+  // delivery instruction on replay. Recovery cannot preserve it literally,
+  // so such payloads stay transport-only.
+  if (/^\s*MEDIA:/im.test(presentationFallback)) {
+    return undefined;
+  }
   if (!completeFallback.trim()) {
     return plainPayload;
   }

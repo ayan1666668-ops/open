@@ -301,6 +301,42 @@ describe("normalizePendingFinalRecoveryPayloads", () => {
     ).toBe("Summary\n\nReport\n\nActual answer\n\nContext note");
   });
 
+  it("does not duplicate presentation content already present in text", () => {
+    // Regression for ClawSweeper P2: mirrors the equality/suffix dedup
+    // Telegram delivery applies in `canonicalizeTelegramPresentationPayload`.
+    expect(
+      buildRecoverablePendingFinalDeliveryText([
+        {
+          text: "Answer",
+          presentation: { blocks: [{ type: "text", text: "Answer" }] },
+        },
+      ]),
+    ).toBe("Answer");
+    expect(
+      buildRecoverablePendingFinalDeliveryText([
+        {
+          text: "Intro\n\nAnswer",
+          presentation: { blocks: [{ type: "text", text: "Answer" }] },
+        },
+      ]),
+    ).toBe("Intro\n\nAnswer");
+  });
+
+  it("keeps presentation MEDIA directive lines transport-only", () => {
+    // Regression for ClawSweeper P2: a literal `MEDIA:...` display line in
+    // presentation would be reinterpreted as a delivery instruction.
+    expect(
+      buildRecoverablePendingFinalDeliveryText([
+        {
+          text: "Example",
+          presentation: {
+            blocks: [{ type: "text", text: "MEDIA:/tmp/example.png" }],
+          },
+        },
+      ]),
+    ).toBeUndefined();
+  });
+
   it("trusts text as complete with an authored fallback presentation", () => {
     expect(
       buildRecoverablePendingFinalDeliveryText([
