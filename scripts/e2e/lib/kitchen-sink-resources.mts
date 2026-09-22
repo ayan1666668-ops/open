@@ -5,7 +5,7 @@ import {
 
 const MEMORY_FIELDS = ["rss", "heapTotal", "heapUsed", "external", "arrayBuffers"] as const;
 
-export function memoryDifference(before: NodeJS.MemoryUsage, after: NodeJS.MemoryUsage) {
+function memoryDifference(before: NodeJS.MemoryUsage, after: NodeJS.MemoryUsage) {
   return Object.fromEntries(MEMORY_FIELDS.map((field) => [field, after[field] - before[field]]));
 }
 
