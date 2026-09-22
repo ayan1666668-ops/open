@@ -162,7 +162,7 @@ export function buildPopulationSnapshot(params: {
     groupId: params.groupId,
     replicas: params.replicas.map((replica) => ({ ...replica })),
     observations,
-    measurements: (params.measurements ?? []).map((measurement) => ({ ...measurement })),
+    measurements: (params.measurements ?? []).map((measurement) => Object.assign({}, measurement)),
     phaseMixture: phaseMixture(assessments),
     meanCorrelation: correlation,
     meanCorrelationSource: correlationSource,
