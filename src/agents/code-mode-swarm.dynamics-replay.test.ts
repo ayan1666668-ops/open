@@ -34,6 +34,12 @@ const requestId = "bridge:1";
 const groupId = `swarm:${sessionKey}:${parentRunId}`;
 const replayKey = `${codeModeRunId}:${requestId}`;
 
+type DispatchGatewayMethodInProcess = NonNullable<
+  NonNullable<
+    Parameters<typeof subagentSpawnTesting.setDepsForTest>[0]
+  >["dispatchGatewayMethodInProcess"]
+>;
+
 let stateDir = "";
 
 function candidate(policyDigest = "sha256:policy-a") {
@@ -49,11 +55,11 @@ function candidate(policyDigest = "sha256:policy-a") {
 function dynamics(policyDigest = "sha256:policy-a") {
   return {
     boundary: "artifact-only",
-      requirements: {
-        sandbox: "require",
-        candidateDigest: "required",
-        artifactRefs: "required",
-      },
+    requirements: {
+      sandbox: "require",
+      candidateDigest: "required",
+      artifactRefs: "required",
+    },
     handoff: {
       candidateDigest: "sha256:candidate",
       artifactRefs: ["artifact://candidate"],
@@ -136,16 +142,15 @@ describe("Code Mode dynamics native replay", () => {
     "replays the exact candidate without redispatch and rejects changed governing identity",
     async () => {
       const config = await writeConfig();
-      const dispatchGatewayMethodInProcess = vi.fn(
-        async <T>(
-        _method: string,
-        _params: Record<string, unknown>,
-        _options?: unknown,
+      const requests: Array<{ method: string; params: Record<string, unknown> }> = [];
+      const dispatchGatewayMethodInProcess: DispatchGatewayMethodInProcess = async <T>(
+        method: string,
+        params: Record<string, unknown>,
       ) => {
-          // SAFETY: this fixture supplies the accepted Gateway response shape for the generic T.
-          return { runId: "native-replay-run", status: "accepted" } as T;
-        },
-      );
+        requests.push({ method, params });
+        // SAFETY: this fixture supplies the accepted Gateway response shape for the generic T.
+        return { runId: "native-replay-run", status: "accepted" } as T;
+      };
       subagentSpawnTesting.setDepsForTest({
         hasInProcessGatewayContext: () => true,
         dispatchGatewayMethodInProcess,
@@ -165,8 +170,8 @@ describe("Code Mode dynamics native replay", () => {
         },
       );
       expect(seeded).toMatchObject({ status: "accepted" });
-      expect(dispatchGatewayMethodInProcess).toHaveBeenCalledTimes(1);
-      expect(dispatchGatewayMethodInProcess.mock.calls[0]?.[1]?.message).toEqual(
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.params.message).toEqual(
         expect.stringContaining('"policyDigest":"sha256:policy-a"'),
       );
 
@@ -206,7 +211,7 @@ describe("Code Mode dynamics native replay", () => {
         }),
       ).resolves.toMatchObject({ status: "accepted", runId: seeded.runId });
       expect(callExactId).not.toHaveBeenCalled();
-      expect(dispatchGatewayMethodInProcess).toHaveBeenCalledTimes(1);
+      expect(requests).toHaveLength(1);
 
       await expect(
         codeModeSwarmHandlers.agentSpawn({
@@ -221,7 +226,7 @@ describe("Code Mode dynamics native replay", () => {
         }),
       ).rejects.toThrow("replay request does not match the persisted collector");
       expect(callExactId).not.toHaveBeenCalled();
-      expect(dispatchGatewayMethodInProcess).toHaveBeenCalledTimes(1);
+      expect(requests).toHaveLength(1);
     },
   );
 });
