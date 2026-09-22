@@ -11,6 +11,7 @@ export function executeAgentDatabaseCleanupCommand(
   >,
   database: OpenClawStateDatabase,
   env: NodeJS.ProcessEnv,
+  onInvalidation?: () => void,
 ): void {
   runOpenClawStateWriteTransaction(
     (current) => {
@@ -20,7 +21,7 @@ export function executeAgentDatabaseCleanupCommand(
       ) {
         throw new Error("Retired agent cleanup cannot adopt a replacement shared database");
       }
-      releaseExitedOpenClawAgentDatabaseLeaseInDatabase(current.db, command.input);
+      releaseExitedOpenClawAgentDatabaseLeaseInDatabase(current.db, command.input, onInvalidation);
     },
     { database, path: database.path, env },
   );

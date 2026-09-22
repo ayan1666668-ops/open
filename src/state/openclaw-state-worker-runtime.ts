@@ -180,6 +180,11 @@ export function executeSharedStateCommand(
       command,
       open(),
       getSqliteWorkerStateContext().environment,
+      () =>
+        requestSqliteWorkerOperationAdmission({
+          stage: "prepare",
+          facts: "agent-integrity-invalidated",
+        }),
     );
   }
   if (isWorkerEnvironmentCommand(command)) {

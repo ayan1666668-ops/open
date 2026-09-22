@@ -15,6 +15,7 @@ import {
   closeOpenClawAgentDatabaseByPath,
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
+  resolveOpenClawAgentSqlitePath,
 } from "./openclaw-agent-db.js";
 import { executeAgentDatabaseCleanupCommand } from "./openclaw-agent-execution-cleanup.worker.js";
 import { readOpenClawAgentIntegrityVerification } from "./openclaw-quarantine-store.js";
@@ -194,4 +195,19 @@ it("does not certify a last read-only release without a writer checkpoint", () =
     releaseOpenClawAgentDatabaseLease(lease, { env: owner.env }, "read-only");
   }
   expect(owner.record()?.clean_close).toBe(0);
+});
+
+it("records a full check while another lease belongs to the same process", () => {
+  const env = { OPENCLAW_STATE_DIR: tempDirs.make("openclaw-integrity-peer-") };
+  const options = { agentId: "integrity-lease", env };
+  const pathname = resolveOpenClawAgentSqlitePath(options);
+  const lease = claimOpenClawAgentDatabaseLease({ ...options, path: pathname });
+  try {
+    const database = openOpenClawAgentDatabase(options);
+    expect(readOpenClawAgentIntegrityVerification(database.path, env)?.clean_close).toBe(0);
+    closeOpenClawAgentDatabaseByPath(database.path);
+    expect(readOpenClawAgentIntegrityVerification(database.path, env)?.clean_close).toBe(0);
+  } finally {
+    releaseOpenClawAgentDatabaseLease(lease, { env }, "read-only");
+  }
 });

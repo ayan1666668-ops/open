@@ -22,7 +22,11 @@ import { SQLITE_IDLE_HANDLE_TTL_MS } from "../../infra/sqlite-handle-lifecycle.j
 import { createSqliteWorkerOperationAdmission } from "../../infra/sqlite-worker-operation-admission.js";
 import { createDeferredCore } from "../../shared/deferred.js";
 import type { OpenClawAgentDatabaseClaim } from "../../state/openclaw-agent-db-identity.js";
-import type { OpenClawAgentDatabaseWorkerLeaseReceipt } from "../../state/openclaw-agent-db-lease.js";
+import {
+  claimOpenClawAgentDatabaseLease,
+  releaseOpenClawAgentDatabaseLease,
+  type OpenClawAgentDatabaseWorkerLeaseReceipt,
+} from "../../state/openclaw-agent-db-lease.js";
 import {
   getOpenClawAgentDatabaseValidation,
   getOpenClawAgentDatabaseValidationForTransfer,
@@ -39,10 +43,14 @@ import {
   getOpenClawAgentDatabaseIfOpen,
   openOpenClawAgentDatabase,
 } from "../../state/openclaw-agent-db.js";
+import { removeAgentIntegrityMetadataForTest } from "../../state/openclaw-agent-db.test-support.js";
 import type { AgentDatabaseRequestExecutionSource } from "../../state/openclaw-agent-execution-contract.js";
 import { createAgentDatabaseNativeGeneration } from "../../state/openclaw-agent-execution-native.js";
 import { runOpenClawAgentWriteAdmission } from "../../state/openclaw-agent-write-admission.js";
-import { clearOpenClawAgentIntegrityVerification } from "../../state/openclaw-quarantine-store.js";
+import {
+  clearOpenClawAgentIntegrityVerification,
+  readOpenClawAgentIntegrityVerification,
+} from "../../state/openclaw-quarantine-store.js";
 import {
   closeOpenClawStateDatabaseAsync,
   closeOpenClawStateDatabaseForTest,
@@ -155,68 +163,83 @@ function leasesFor(fixture: ReturnType<typeof createFixture>) {
     .all(fixture.database.path);
 }
 
-test.each(["current", "revoked-after-open", "revoked-during-open"] as const)(
-  "reclamation borrows native-only verification unless revoked (%s)",
-  async (proof) => {
-    const { database, options, plans, scopes } = createFixture(["victim"]);
-    closeOpenClawAgentDatabasesForTest(options.env.OPENCLAW_STATE_DIR);
-    const context = captureOpenClawStateWorkerContext(options);
-    const assertCurrent = () => context.admission.assertCurrent();
-    let revokedDuringOpen = false;
-    const source: AgentDatabaseRequestExecutionSource = {
-      assertCurrent,
-      createAdmission(binding) {
-        return () => ({
-          nativeLocations: binding.nativeLocations,
-          admission: createSqliteWorkerOperationAdmission((request, grant) => {
-            if (
-              proof === "revoked-during-open" &&
-              !revokedDuringOpen &&
-              request.stage === "prepare" &&
-              isRecord(request.facts) &&
-              isRecord(request.facts.identity) &&
-              request.facts.identity.kind === "file"
-            ) {
-              invalidateOpenClawAgentDatabaseValidation(database.path);
-              revokedDuringOpen = true;
-            }
-            binding.authorize(request);
-            assertCurrent();
-            if (!grant()) {
-              throw new Error("Native reclamation fixture lost admission");
-            }
-          }),
-        });
-      },
-    };
-    const generation = createAgentDatabaseNativeGeneration(
-      database.agentId,
-      database.path,
-      context,
-      assertCurrent,
-      assertCurrent,
-      undefined,
-      () => {},
-    );
-    try {
-      await generation.runExisting(source, async () => "opened");
-      expect(getOpenClawAgentDatabaseIfOpen(options)).toBeUndefined();
-      const transferred = getOpenClawAgentDatabaseValidationForTransfer(database);
-      expect(Boolean(transferred)).toBe(proof !== "revoked-during-open");
-      if (proof === "revoked-after-open") {
-        invalidateOpenClawAgentDatabaseValidation(database.path);
+test.each([
+  "current",
+  "two-leases",
+  "two-leases-missing",
+  "revoked-after-open",
+  "revoked-during-open",
+] as const)("reclamation borrows native-only verification unless revoked (%s)", async (proof) => {
+  const { database, options, plans, scopes } = createFixture(["victim"]);
+  closeOpenClawAgentDatabasesForTest(options.env.OPENCLAW_STATE_DIR);
+  const context = captureOpenClawStateWorkerContext(options);
+  const assertCurrent = () => context.admission.assertCurrent();
+  let revokedDuringOpen = false;
+  const source: AgentDatabaseRequestExecutionSource = {
+    assertCurrent,
+    createAdmission(binding) {
+      return () => ({
+        nativeLocations: binding.nativeLocations,
+        admission: createSqliteWorkerOperationAdmission((request, grant) => {
+          if (
+            proof === "revoked-during-open" &&
+            !revokedDuringOpen &&
+            request.stage === "prepare" &&
+            isRecord(request.facts) &&
+            isRecord(request.facts.identity) &&
+            request.facts.identity.kind === "file"
+          ) {
+            invalidateOpenClawAgentDatabaseValidation(database.path);
+            revokedDuringOpen = true;
+          }
+          binding.authorize(request);
+          assertCurrent();
+          if (!grant()) {
+            throw new Error("Native reclamation fixture lost admission");
+          }
+        }),
+      });
+    },
+  };
+  const generation = createAgentDatabaseNativeGeneration(
+    database.agentId,
+    database.path,
+    context,
+    assertCurrent,
+    assertCurrent,
+    undefined,
+    () => {},
+  );
+  let peerLease: string | undefined;
+  try {
+    await generation.runExisting(source, async () => "opened");
+    if (proof.startsWith("two-leases")) {
+      const before = readOpenClawAgentIntegrityVerification(database.path, options.env);
+      peerLease = claimOpenClawAgentDatabaseLease({ ...options, path: database.path });
+      expect(readOpenClawAgentIntegrityVerification(database.path, options.env)).toEqual(before);
+      if (proof === "two-leases-missing") {
+        removeAgentIntegrityMetadataForTest(options.env);
       }
-      await expect(
-        runSqliteSessionReclamation({ forceInProcess: false, plan: plans[0]! }),
-      ).resolves.toMatchObject({ kind: "lifecycle-artifacts", value: { removedEntries: 1 } });
-      expect(fullChecks()).toBe(proof === "current" ? 0 : 1);
-      expect(revokedDuringOpen).toBe(proof === "revoked-during-open");
-      expect(loadSessionEntryReadOnly(scopes[0]!)).toBeUndefined();
-    } finally {
-      await generation.close();
     }
-  },
-);
+    expect(getOpenClawAgentDatabaseIfOpen(options)).toBeUndefined();
+    const transferred = getOpenClawAgentDatabaseValidationForTransfer(database);
+    expect(Boolean(transferred)).toBe(proof !== "revoked-during-open");
+    if (proof === "revoked-after-open") {
+      invalidateOpenClawAgentDatabaseValidation(database.path);
+    }
+    await expect(
+      runSqliteSessionReclamation({ forceInProcess: false, plan: plans[0]! }),
+    ).resolves.toMatchObject({ kind: "lifecycle-artifacts", value: { removedEntries: 1 } });
+    expect(fullChecks()).toBe(proof.startsWith("revoked") ? 1 : 0);
+    expect(revokedDuringOpen).toBe(proof === "revoked-during-open");
+    expect(loadSessionEntryReadOnly(scopes[0]!)).toBeUndefined();
+  } finally {
+    await generation.close();
+    if (peerLease) {
+      releaseOpenClawAgentDatabaseLease(peerLease, options, "read-only");
+    }
+  }
+});
 
 test.each(["directory discovery", "Gateway send", "durable completion"] as const)(
   "admits %s behind a native reclamation commit request",
@@ -833,6 +856,7 @@ test("joins a crashed reused Worker, releases its exact lease, and preserves the
   expect(terminated).toBe(true);
   expect(child.threadId).toBe(-1);
   expect(leasesFor(fixture)).toHaveLength(1);
+  expect(getOpenClawAgentDatabaseValidationForTransfer(fixture.database)).toBeUndefined();
   expect(loadSessionEntryReadOnly(fixture.scopes[1]!)).toMatchObject({ sessionId: "second" });
   await runSqliteSessionReclamation({ forceInProcess: false, plan: fixture.plans[2]! });
   expect(spawned).toHaveLength(2);
