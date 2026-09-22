@@ -1628,7 +1628,9 @@ export function createAuthProfileStoreRuntime(
       options.inheritedAuthDir,
       getScopedAuthProfileEnv(),
     );
-    return mergeLocalAuthProfileStoreWithInheritedStore(store, mainStore);
+    return stripRuntimeExternalProfileMetadata(
+      mergeLocalAuthProfileStoreWithInheritedStore(store, mainStore),
+    );
   }
 
   /** Ensure an auth store is available, including runtime/external profile overlays. */
@@ -1750,9 +1752,7 @@ export function createAuthProfileStoreRuntime(
       getScopedAuthProfileEnv(),
     );
     return stripRuntimeExternalProfileMetadata(
-      mainStore
-        ? mergeAuthProfileStores(mainStore, store, { preserveBaseRuntimeExternalProfiles: true })
-        : store,
+      mergeLocalAuthProfileStoreWithInheritedStore(store, mainStore),
     );
   }
 
@@ -1780,9 +1780,7 @@ export function createAuthProfileStoreRuntime(
       undefined,
       getScopedAuthProfileEnv(),
     );
-    return mainStore
-      ? mergeAuthProfileStores(mainStore, store, { preserveBaseRuntimeExternalProfiles: true })
-      : store;
+    return mergeLocalAuthProfileStoreWithInheritedStore(store, mainStore);
   }
 
   function saveAuthProfileStoreInTransaction(
