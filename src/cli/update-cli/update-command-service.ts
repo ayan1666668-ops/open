@@ -51,7 +51,6 @@ import {
   resolveUpdatedGatewayRestartPort,
 } from "./update-command-service-plan.js";
 import { recoverLaunchAgentAndRecheckGatewayHealth } from "./update-command-service-recovery.js";
-import { hasLoadedLaunchdKeepAliveSupervisor } from "./update-command-supervisor.js";
 import {
   recordFailedUpdateGatewayState,
   recordUpdateGatewayHealth,
@@ -420,13 +419,10 @@ export async function maybeRestartService(params: {
           ) {
             recordPhase("verifying");
             const service = resolveGatewayService();
-            const supervisorKeepsAlive = await hasLoadedLaunchdKeepAliveSupervisor({
-              service,
-              env: activation.serviceEnv,
-            });
             assertCurrent();
             const health = await waitForGatewayHealthyRestart({
               service,
+              assertCurrent,
               port: activation.gatewayPort,
               timeoutMs: activation.timeoutMs,
               expectedVersion: expectedGatewayVersion,
@@ -435,7 +431,6 @@ export async function maybeRestartService(params: {
               env: activation.serviceEnv,
               requireRunningService: true,
               settle: { probes: 12 },
-              supervisorKeepsAlive,
             });
             assertCurrent();
             refreshedGatewayHealth =

@@ -18,6 +18,7 @@ import {
   resolveGatewayRestartProbeContext,
   type GatewayRestartProbeContext,
 } from "./restart-health-probe.js";
+import { resolveGatewayRestartSupervision } from "./restart-health-supervision.js";
 import {
   DEFAULT_RESTART_HEALTH_ATTEMPTS,
   DEFAULT_RESTART_HEALTH_DELAY_MS,
@@ -103,13 +104,19 @@ type GatewayRestartWaitOptions = {
   probeHosts?: readonly string[];
   probeContext?: GatewayRestartProbeContext;
   onProgress?: (phase: string) => void;
+  /** Revalidate caller-owned authority after the native supervision probe. */
+  assertCurrent?: () => void;
   signal?: AbortSignal;
 };
 
 export async function waitForGatewayHealthyRestart(
   params: GatewayRestartWaitOptions &
     (
-      | { service: Pick<GatewayService, "readCommand" | "readRuntime">; child?: never }
+      | {
+          service: Pick<GatewayService, "readCommand" | "readRuntime"> &
+            Partial<Pick<GatewayService, "isLoaded">>;
+          child?: never;
+        }
       | { child: Pick<ChildProcess, "pid" | "exitCode" | "signalCode">; service?: never }
     ),
 ): Promise<GatewayRestartSnapshot> {
@@ -142,9 +149,8 @@ export async function waitForGatewayHealthyRestart(
     : remainingDeadlineMs === undefined
       ? params.timeoutMs
       : Math.min(params.timeoutMs ?? remainingDeadlineMs, remainingDeadlineMs);
-  if (remainingDeadlineMs === 0) {
-    await read("setup", async () => undefined);
-    return withWaitContext(
+  const exhaustedBudgetSnapshot = () =>
+    withWaitContext(
       {
         runtime: { status: "unknown" },
         portUsage: { port: params.port, status: "unknown", listeners: [], hints: [] },
@@ -153,8 +159,11 @@ export async function waitForGatewayHealthyRestart(
         probeError: "Gateway readiness budget exhausted.",
       },
       "timeout",
-      0,
+      Math.max(0, performance.now() - startedAtMs),
     );
+  if (remainingDeadlineMs === 0) {
+    await read("setup", async () => undefined);
+    return exhaustedBudgetSnapshot();
   }
   const attempts = params.attempts ?? DEFAULT_RESTART_HEALTH_ATTEMPTS;
   const delayMs = params.delayMs ?? DEFAULT_RESTART_HEALTH_DELAY_MS;
@@ -200,6 +209,24 @@ export async function waitForGatewayHealthyRestart(
       );
       return resolveGatewayServiceProbeHosts({ env: params.env, command });
     }));
+  const supervisorKeepsAlive = await read("supervision", () =>
+    resolveGatewayRestartSupervision({
+      service: params.service,
+      env: params.env,
+      supervisorKeepsAlive: params.supervisorKeepsAlive,
+      timeoutMs: standardDeadlineMs - (performance.now() - startedAtMs),
+      signal,
+    }),
+  );
+  signal?.throwIfAborted();
+  params.assertCurrent?.();
+  // Without an explicit time budget, zero retries still performs the initial inspection.
+  if (
+    (timeoutMs !== undefined || progressWindowMs > 0) &&
+    performance.now() - startedAtMs >= standardDeadlineMs
+  ) {
+    return exhaustedBudgetSnapshot();
+  }
   let snapshot = await inspectGatewayRestart({
     service,
     port: params.port,
@@ -355,7 +382,7 @@ export async function waitForGatewayHealthyRestart(
     // startup grace for it and for published 2026.9.3 processes without owner rows.
     if (
       (!owner || owner.state === "dead") &&
-      !params.supervisorKeepsAlive &&
+      !supervisorKeepsAlive &&
       shouldEarlyExitStoppedFree(snapshot, attempt, minAttemptForEarlyExit)
     ) {
       consecutiveStoppedFreeCount += 1;

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { upsertSessionEntryCore } from "../../../src/config/sessions/session-accessor.js";
 import {
   disconnectGatewayClient,
@@ -114,7 +114,7 @@ suite.define(() => {
         expect(await gateway.getRequests("models.list", scope)).toHaveLength(1);
         await gateway.emitGatewayEvent("models.snapshot", {
           target,
-          scope: "shortId" in target ? scope : target,
+          scope,
           catalog: {
             models: [current],
             pendingProviders: ["fixture"],
@@ -182,6 +182,21 @@ suite.define(() => {
       const token = "synthetic-catalog-mutation-token";
       const sessionKey = "agent:alpha:session-mutation";
       const frames: unknown[] = [];
+      const cronReady = createDeferred();
+      const cronRuntime = await import("../../../src/gateway/server-runtime-services.js");
+      const scheduleMaintenance = cronRuntime.scheduleGatewayPostReadyMaintenance;
+      let restoreCronStart = () => {};
+      const cronObserver = vi
+        .spyOn(cronRuntime, "scheduleGatewayPostReadyMaintenance")
+        .mockImplementation((params) => {
+          const start = params.cronState.cron.start.bind(params.cronState.cron);
+          const observer = vi.spyOn(params.cronState.cron, "start").mockImplementation(async () => {
+            await start();
+            cronReady.resolve();
+          });
+          restoreCronStart = () => observer.mockRestore();
+          return scheduleMaintenance(params);
+        });
       let gateway: Awaited<ReturnType<typeof startGatewayWithClient>> | undefined;
       try {
         state.applyEnv();
@@ -243,8 +258,11 @@ suite.define(() => {
             },
           },
         });
-        // Startup cron hydration publishes a separate sessions.changed invalidation.
         await gateway.server.startupSettled;
+        // Cron hydration runs after sidecar startup and broadcasts sessions.changed.
+        // Join the real start before connecting the browser so that independent
+        // invalidation cannot overlap this snapshot-ordering scenario.
+        await withTestTimeout(cronReady.promise, 10_000, "Initial cron hydration did not finish");
         const admin = gateway.client;
         await upsertSessionEntryCore(
           { agentId: "alpha", sessionKey },
@@ -255,6 +273,9 @@ suite.define(() => {
             authProfileOverrideSource: "user",
           },
         );
+        // Initial metadata preparation broadcasts chat.metadata.changed independently of
+        // the snapshot-ordering scenario. Join its real read before connecting the browser.
+        await admin.request("chat.metadata", { sessionKey, agentId: "alpha" });
         await suite.withPage(createControlUiE2eContextOptions(), async ({ page }) => {
           let initialSnapshot = createDeferred<{ deliver: () => void; payload: unknown }>();
           const disconnect = createDeferred<() => Promise<void>>();
@@ -440,6 +461,8 @@ suite.define(() => {
           expect(catalogRequests.size).toBe(readsBeforeReopen);
         });
       } finally {
+        cronObserver.mockRestore();
+        restoreCronStart();
         await writeFile(
           path.join(suite.artifactDir, `catalog-mutation-${replacementState}.json`),
           JSON.stringify(frames, null, 2),
