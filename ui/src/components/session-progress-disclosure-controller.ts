@@ -1,6 +1,7 @@
 import { nothing } from "lit";
 import { AsyncDirective } from "lit/async-directive.js";
 import { directive, type ElementPart } from "lit/directive.js";
+import { isMobileNavLayout } from "../app/mobile-nav-layout.ts";
 import {
   subscribeTranscriptScroll,
   type TranscriptScrollObservation,
@@ -84,7 +85,7 @@ class ProgressDisclosureController {
         : remembered;
     return resolveProgressDisclosure(undefined, {
       type: "mount",
-      open: initialOpen,
+      open: initialOpen && !isMobileNavLayout(),
       manualOpen,
       activeRunId: lifecycle?.activeRunId ?? null,
       completedRunId: lifecycle?.completedRunId ?? null,
@@ -103,7 +104,11 @@ class ProgressDisclosureController {
     if (lifecycle?.activeRunId && lifecycle.activeRunId !== this.state.activeRunId) {
       this.resetScrollInput();
       this.cancelDrag();
-      this.dispatch({ type: "run", runId: lifecycle.activeRunId, open: !collapseByDefault });
+      this.dispatch({
+        type: "run",
+        runId: lifecycle.activeRunId,
+        open: !collapseByDefault && !isMobileNavLayout(),
+      });
     }
     const readingHistory = lifecycle?.readingHistory === true;
     if (readingHistory !== this.state.readingHistory) {
@@ -113,7 +118,11 @@ class ProgressDisclosureController {
       this.dispatch({ type: "history", readingHistory });
     }
     if (lifecycle?.completedRunId) {
-      this.dispatch({ type: "complete", runId: lifecycle.completedRunId });
+      this.dispatch({
+        type: "complete",
+        runId: lifecycle.completedRunId,
+        reopen: !isMobileNavLayout(),
+      });
     }
     // A question retains the card but takes over its input surface. Hidden
     // transcript gestures must not change the disclosure restored afterward.
@@ -212,6 +221,9 @@ class ProgressDisclosureController {
   }
 
   private readonly handleTranscriptScroll = (observation: TranscriptScrollObservation) => {
+    if (observation.type === "resize") {
+      return;
+    }
     this.touching = observation.touching;
     if (observation.type === "offset") {
       this.scrolling = observation.scrolling;
