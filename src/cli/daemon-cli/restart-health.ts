@@ -22,6 +22,7 @@ import { hasCommandProcessCleanupError } from "../../process/exec-result.js";
 import { isPidAlive } from "../../shared/pid-alive.js";
 import type { OpenClawStateSchemaReadAdmission } from "../../state/openclaw-state-db-contract.js";
 import { sleep } from "../../utils.js";
+import { createNativeServiceAbsenceCheck } from "./restart-health-absence.js";
 import {
   confirmGatewayReachable,
   readGatewayStartupPhase,
@@ -328,6 +329,8 @@ type GatewayRestartWaitOptions = {
   expectedBuildId?: string | null;
   requireRunningService?: boolean;
   requirePluginHealth?: boolean;
+  /** Strict absence for this exact runtime observation, not an ordinary missing-unit hint. */
+  isServiceAbsent?: (runtime: GatewayServiceRuntime) => boolean;
   supervisorKeepsAlive?: boolean;
   isStartupMigrationActive?: typeof hasActiveStartupMigrationLease;
   probeHosts?: readonly string[];
@@ -435,6 +438,7 @@ export async function waitForGatewayHealthyRestart(
     Math.floor(attempts / 2),
   );
   let migrationActive = false;
+  const inspectServiceAbsence = createNativeServiceAbsenceCheck(params);
   let nextMigrationActivityPollMs = 0;
   let migrationActivity: { owner: string; pid: number; heartbeatAt: number } | undefined;
   let observedRunning = false;
@@ -553,15 +557,39 @@ export async function waitForGatewayHealthyRestart(
     if (snapshot.staleGatewayPids.length > 0 && snapshot.runtime.status !== "running") {
       return withWaitContext(snapshot, "stale-pids", elapsedMs);
     }
-    const stoppedFree =
-      snapshot.runtime.status === "stopped" && snapshot.portUsage.status === "free";
-    const owner = stoppedFree
-      ? readGatewayOwnerLease({ env: params.env, port: params.port })
-      : undefined;
+    let stoppedFree = snapshot.runtime.status === "stopped" && snapshot.portUsage.status === "free";
+    let owner: ReturnType<typeof readGatewayOwnerLease> = undefined;
+    try {
+      owner = stoppedFree
+        ? readGatewayOwnerLease({ env: params.env, port: params.port })
+        : undefined;
+    } catch (error) {
+      if (!params.isServiceAbsent) {
+        throw error;
+      }
+      // Diagnostic absence needs a successful post-probe owner read. Unknown
+      // ownership also blocks the ordinary stopped/free grace exit below.
+      snapshot.runtime = {
+        status: "unknown",
+        detail: "Gateway owner could not be inspected.",
+      };
+      stoppedFree = false;
+    }
     if (owner && owner.state !== "dead") {
       observedOwner = owner.owner;
     } else if (owner?.state === "dead" && owner.owner === observedOwner) {
       return withWaitContext(snapshot, "stopped-free", elapsedMs);
+    }
+    const serviceAbsence = inspectServiceAbsence(snapshot.runtime, stoppedFree, owner);
+    if (serviceAbsence !== undefined) {
+      elapsedMs = Math.max(0, performance.now() - startedAtMs);
+      if (elapsedMs > (boundedDeadlineMs ?? standardDeadlineMs) + settleDurationMs) {
+        // Absence eligibility already guarantees an unhealthy snapshot.
+        return withWaitContext(snapshot, expiredOutcome(elapsedMs, true), elapsedMs);
+      }
+      if (serviceAbsence === "absent") {
+        return withWaitContext(snapshot, "stopped-free", elapsedMs);
+      }
     }
     // A previous crashed owner cannot describe replacement startup. Keep native
     // startup grace for it and for published 2026.9.3 processes without owner rows.

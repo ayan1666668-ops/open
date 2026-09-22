@@ -36,15 +36,17 @@ import { OPENCLAW_STATE_SCHEMA_VERSION } from "../../state/openclaw-state-db-con
 import { resolveOpenClawStateSqlitePath } from "../../state/openclaw-state-db.paths.js";
 import { OPENCLAW_STATE_SCHEMA_SQL } from "../../state/openclaw-state-schema.js";
 import { captureEnv, deleteTestEnvValue, setTestEnvValue } from "../../test-utils/env.js";
-import { withMockedPlatform } from "../../test-utils/vitest-spies.js";
+import { withMockedPlatform, withRestoredMocks } from "../../test-utils/vitest-spies.js";
 import { VERSION } from "../../version.js";
 import { registerGatewayCli } from "../gateway-cli/register.js";
 import { registerDaemonCli } from "./register.js";
 import type { GatewayRestartSnapshot } from "./restart-health.js";
 import { gatherDaemonStatus, renderPortDiagnosticsForCli } from "./status.gather.js";
 import {
+  callArg,
   callGatewayStatusProbe,
   capturePrintedDaemonStatus,
+  createExpiredNativeInspection,
   formatPortDiagnostics,
   inspectPortConnections,
   inspectPortUsage,
@@ -368,14 +370,6 @@ vi.mock("../../plugins/installed-plugin-index-record-reader.js", () => ({
 vi.mock("./restart-health.js", () => ({
   inspectGatewayRestart: (opts: unknown) => inspectGatewayRestart(opts),
 }));
-
-function callArg(mock: { mock: { calls: unknown[][] } }, index = 0): unknown {
-  const call = mock.mock.calls[index];
-  if (!call) {
-    throw new Error(`Expected mock call ${index}`);
-  }
-  return call[0];
-}
 
 function gatherStatus(overrides: Partial<Parameters<typeof gatherDaemonStatus>[0]> = {}) {
   return gatherDaemonStatus({ rpc: {}, probe: true, deep: false, ...overrides });
@@ -1313,24 +1307,23 @@ describe("gatherDaemonStatus", () => {
     "renders Gateway-specific timeout recovery on %s",
     async (platform) =>
       withMockedPlatform(platform, async () => {
-        serviceIsLoaded.mockImplementationOnce(async (args?: { timeoutMs?: number }) => {
-          if (args?.timeoutMs === undefined) {
-            return await new Promise<boolean>(() => {});
-          }
-          throw new Error("systemctl is-enabled timed out");
-        });
-        serviceReadRuntime.mockImplementationOnce(async (_env, opts) => {
-          if (opts?.timeoutMs === undefined) {
-            return await new Promise<{ status: string }>(() => {});
-          }
-          throw new Error("錯誤: 系統找不到指定的檔案。");
-        });
+        const inspection = createExpiredNativeInspection(100);
+        serviceIsLoaded.mockImplementationOnce((args) =>
+          inspection.fail(args?.timeoutMs, "systemctl is-enabled timed out"),
+        );
+        serviceReadRuntime.mockImplementationOnce((_env, opts) =>
+          inspection.fail(opts?.timeoutMs, "錯誤: 系統找不到指定的檔案。"),
+        );
 
-        const status = await gatherStatus({
-          rpc: { timeout: "100", json: true },
-          probe: false,
-          deep: true,
-        });
+        const status = await withRestoredMocks(
+          [vi.spyOn(performance, "now").mockImplementation(inspection.now)],
+          () =>
+            gatherStatus({
+              rpc: { timeout: "100", json: true },
+              probe: false,
+              deep: true,
+            }),
+        );
 
         expect(serviceIsLoaded).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 100 }));
         expect(serviceReadRuntime).toHaveBeenCalledWith(expect.any(Object), { timeoutMs: 100 });

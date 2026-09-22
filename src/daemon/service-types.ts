@@ -7,6 +7,39 @@ import type { GatewayServiceDefinitionTransactionHooks } from "./service-stage.j
 /** Environment map passed to service renderers and platform supervisors. */
 export type GatewayServiceEnv = Record<string, string | undefined>;
 
+/** Platform service adapter contract shared by inspection and lifecycle owners. */
+export type GatewayService = {
+  label: string;
+  loadedText: string;
+  notLoadedText: string;
+  stage: (args: GatewayServiceStageArgs) => Promise<void>;
+  install: (args: GatewayServiceInstallArgs) => Promise<void>;
+  uninstall: (args: GatewayServiceManageArgs) => Promise<void>;
+  start: (args: GatewayServiceControlArgs) => Promise<void>;
+  stop: (args: GatewayServiceControlArgs) => Promise<void>;
+  restart: (args: GatewayServiceControlArgs) => Promise<GatewayServiceRestartResult>;
+  isLoaded: (args: GatewayServiceEnvArgs) => Promise<boolean>;
+  isEnabled?: (args: GatewayServiceEnvArgs) => Promise<boolean>;
+  hasInstalledDefinition?: (args: GatewayServiceEnvArgs) => Promise<boolean>;
+  isAbsent?: (args: GatewayServiceEnvArgs & { strictCommandAbsent?: true }) => Promise<boolean>;
+  readDefinitionMutationCapability?: (
+    args: GatewayServiceEnvArgs & {
+      environment?: GatewayServiceEnv;
+      requireLoaded?: boolean;
+      systemdReadBinding?: GatewayServiceReadOptions["systemdReadBinding"];
+      systemdReadTarget?: GatewayServiceReadOptions["systemdReadTarget"];
+    },
+  ) => Promise<ServiceDefinitionMutationCapability>;
+  readCommand: (
+    env: GatewayServiceEnv,
+    opts?: GatewayServiceReadOptions,
+  ) => Promise<GatewayServiceCommandConfig | null>;
+  readRuntime: (
+    env: GatewayServiceEnv,
+    opts?: GatewayServiceReadOptions,
+  ) => Promise<GatewayServiceRuntime>;
+};
+
 /** Arguments required to render/install a managed gateway service. */
 export type GatewayServiceInstallArgs = {
   /** Required by managed writers when explicit runtime intent is already stored. */
@@ -30,7 +63,7 @@ export type GatewayServiceInstallArgs = {
   definitionTransaction?: GatewayServiceDefinitionTransactionHooks;
 };
 
-export type GatewayServiceStageArgs = GatewayServiceInstallArgs;
+type GatewayServiceStageArgs = GatewayServiceInstallArgs;
 
 export type GatewayServiceManageArgs = {
   env: GatewayServiceEnv;
@@ -110,6 +143,8 @@ export type GatewayServiceEnvArgs = {
   // cannot hang status reads indefinitely. Only status read paths set this;
   // control/install paths leave it unset to preserve their existing behavior.
   timeoutMs?: number;
+  /** Strict observation must retain unavailable definition evidence as unknown. */
+  requireEffective?: boolean;
 };
 
 /** Live recovery custody, never reconstructed from a saved record alone. Loading
