@@ -118,8 +118,8 @@ async function processEvent(params: {
   if (params.abortSignal.aborted) {
     return;
   }
-  const wakeBotUserIds = Array.isArray(params.event.payload?.wake_bot_user_ids)
-    ? params.event.payload.wake_bot_user_ids.filter(
+  const wakeBotUserIds = Array.isArray(params.event.wake_bot_user_ids)
+    ? params.event.wake_bot_user_ids.filter(
         (value): value is string => typeof value === "string" && value.trim().length > 0,
       )
     : undefined;

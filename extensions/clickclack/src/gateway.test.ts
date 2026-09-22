@@ -117,10 +117,16 @@ function emitMessageEvent(
   payload: Record<string, unknown> = {},
 ) {
   const event = createBacklogEvent(index, "message.created");
+  const { wake_bot_user_ids: wakeBotUserIds, ...eventPayload } = payload;
   socket.emit(
     "message",
     Buffer.from(
-      JSON.stringify({ ...event, seq: index + 1, payload: { ...event.payload, ...payload } }),
+      JSON.stringify({
+        ...event,
+        seq: index + 1,
+        payload: { ...event.payload, ...eventPayload },
+        ...(wakeBotUserIds ? { wake_bot_user_ids: wakeBotUserIds } : {}),
+      }),
     ),
   );
 }
