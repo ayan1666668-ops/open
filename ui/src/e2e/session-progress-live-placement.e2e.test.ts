@@ -50,6 +50,91 @@ async function expectInsideProgressBody(item: Locator): Promise<void> {
 const suite = createChatFlowE2eSuite();
 
 suite.define(() => {
+  it("coalesces overlapping reads and rejects a late stale dismissal in Chromium", async () => {
+    const sessionKey = "agent:main:progress-overlap-proof";
+    const cardFor = (revision: number, label: string) => ({
+      revision,
+      sessionKey,
+      steps: [{ status: "completed" as const, step: label }],
+      updatedAt: Date.now() + revision,
+    });
+
+    await suite.withPage(
+      {
+        colorScheme: "dark",
+        locale: "en-US",
+        serviceWorkers: "block",
+        viewport: { height: 800, width: 1100 },
+      },
+      async ({ page }) => {
+        const gateway = await installMockGateway(page, {
+          featureMethods: ["chat.metadata", "chat.startup", "progressCard.get", "progressCard.put"],
+          methodResponses: {
+            "progressCard.get": { card: cardFor(1, "Revision one") },
+            "progressCard.put": { card: null },
+            "sessions.list": chatSessionListResponse([
+              {
+                key: sessionKey,
+                kind: "direct",
+                label: "Progress overlap",
+                updatedAt: Date.now(),
+              },
+            ]),
+          },
+          sessionKey,
+        });
+
+        await page.goto(controlUiSessionUrl(suite.server.baseUrl, sessionKey));
+        const card = page.locator('[data-progress-card-placement="composer"]');
+        await expect.poll(() => card.textContent()).toContain("Revision one");
+        await expect.poll(() => gateway.getRequests("progressCard.get")).toHaveLength(1);
+
+        await gateway.deferNext("progressCard.get");
+        await gateway.emitGatewayEvent("progressCard.changed", { revision: 2, sessionKey });
+        await expect.poll(() => gateway.getRequests("progressCard.get")).toHaveLength(2);
+        await gateway.emitGatewayEvent("progressCard.changed", { revision: 3, sessionKey });
+        await page.waitForTimeout(100);
+        expect(await gateway.getRequests("progressCard.get")).toHaveLength(2);
+
+        await gateway.resolveDeferred("progressCard.get", {
+          card: cardFor(3, "Revision three"),
+        });
+        await expect.poll(() => card.textContent()).toContain("Revision three");
+        expect(await gateway.getRequests("progressCard.get")).toHaveLength(2);
+
+        await gateway.deferNext("progressCard.put");
+        await card.locator("summary").click();
+        await card.getByRole("button", { name: "Dismiss progress card" }).click();
+        await expect.poll(() => gateway.getRequests("progressCard.put")).toHaveLength(1);
+
+        await gateway.deferNext("progressCard.get");
+        await gateway.emitGatewayEvent("progressCard.changed", { revision: 4, sessionKey });
+        await expect.poll(() => gateway.getRequests("progressCard.get")).toHaveLength(3);
+        await gateway.resolveDeferred("progressCard.get", {
+          card: cardFor(4, "Revision four"),
+        });
+        await expect.poll(() => card.textContent()).toContain("Revision four");
+
+        await gateway.resolveDeferred("progressCard.put", {
+          card: cardFor(3, "Stale dismissal"),
+        });
+        await page.waitForTimeout(100);
+        await expect.poll(() => card.textContent()).toContain("Revision four");
+        expect(await card.textContent()).not.toContain("Stale dismissal");
+
+        console.info(
+          "progress-overlap-proof",
+          JSON.stringify({
+            convergedRevision: 4,
+            getRequests: (await gateway.getRequests("progressCard.get")).length,
+            lateDismissalRejected: true,
+            overlappingRevisionThreeRequests: 1,
+          }),
+        );
+      },
+    );
+  });
+
   it("collapses enabled runs and preserves manual disclosure through finals", async () => {
     const sessionKey = "agent:main:progress-final-expand";
     const proofDir = captureUiProofEnabled
