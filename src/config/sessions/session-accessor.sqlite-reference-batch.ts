@@ -87,6 +87,8 @@ const referenceTrackerSchemaVersions = new WeakMap<DatabaseSync, number>();
 function ensureSessionReferenceTracker(database: DatabaseSync): void {
   const schemaRow = /* sqlite-allow-raw: pragma read has no Kysely form. */ database
     .prepare("PRAGMA schema_version")
+    // node:sqlite hands back an untyped row record for a PRAGMA read.
+    // SAFETY: the asserted shape types the column as `unknown`, so the assertion grants no value type; the `typeof` guard below is the only thing that admits it.
     .get() as { schema_version?: unknown };
   if (typeof schemaRow.schema_version !== "number") {
     throw new Error("SQLite did not return a numeric PRAGMA schema_version");
@@ -126,6 +128,8 @@ function readSessionReferenceToken(database: DatabaseSync): SessionReferenceToke
   const row =
     /* sqlite-allow-raw: the generation counter lives in the TEMP schema, outside the generated Kysely types. */ database
       .prepare("SELECT generation FROM temp.openclaw_session_reference_generation WHERE id = 1")
+      // node:sqlite hands back an untyped row record for this TEMP-schema read.
+      // SAFETY: the asserted shape types the column as `unknown`, so the assertion grants no value type; the `typeof` guard below is the only thing that admits it.
       .get() as { generation?: unknown };
   if (typeof row.generation !== "number") {
     throw new Error("SQLite session reference generation is unavailable");
@@ -137,7 +141,7 @@ function readSessionReferenceToken(database: DatabaseSync): SessionReferenceToke
 }
 
 /** Owner collector handed to a priming scan. */
-export type SessionReferenceOwnerSink = {
+type SessionReferenceOwnerSink = {
   add: (candidateSessionId: string, ownerSessionKey: string) => void;
 };
 

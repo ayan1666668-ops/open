@@ -42,6 +42,7 @@ import {
   closeOpenClawAgentDatabasesForTest,
   openOpenClawAgentDatabase,
 } from "../src/state/openclaw-agent-db.js";
+import { cleanupSessionStateForTest } from "../src/test-utils/session-state-cleanup.js";
 
 const HOUR_MS = 3_600_000;
 let assertions = 0;
@@ -61,6 +62,40 @@ function check(label: string, actual: unknown, expected: unknown): void {
 
 function makeStateDir(): string {
   return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "proof-117074-")));
+}
+
+const fixtureRoots: string[] = [];
+
+function makeTrackedStateDir(): string {
+  const stateDir = makeStateDir();
+  fixtureRoots.push(stateDir);
+  return stateDir;
+}
+
+/**
+ * Joins the asynchronous database owners, then removes every fixture root.
+ *
+ * `closeOpenClawAgentDatabasesForTest` only *starts* resource closure; the
+ * reclamation workers a sweep spawned still have to release their durable
+ * leases, and that release reopens the shared state database. Removing a root
+ * first makes every release fail with ENOENT in a loop that only a wall clock
+ * ends. `cleanupSessionStateForTest` is the existing awaited owner: it drains
+ * the store writer queues and file locks, then closes the agent handles and the
+ * shared state database.
+ *
+ * It runs once, after the last scenario, because the drain it performs is
+ * process-wide. Draining between scenarios would leave every later scenario
+ * measuring a cold store rather than the steady state this harness reports.
+ */
+async function releaseFixtureRoots(): Promise<void> {
+  for (const stateDir of fixtureRoots) {
+    await cleanupSessionStateForTest({ stateDir });
+  }
+  closeOpenClawAgentDatabasesForTest();
+  for (const stateDir of fixtureRoots) {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+  fixtureRoots.length = 0;
 }
 
 function openStore(storePath: string, agentId: string) {
@@ -169,7 +204,7 @@ function totalSweptRemnants(
 
 async function scenarioAllAgentsSharedStore(): Promise<void> {
   console.log("\n[1] --all-agents over an exact shared .sqlite locator");
-  const stateDir = makeStateDir();
+  const stateDir = makeTrackedStateDir();
   process.env.OPENCLAW_STATE_DIR = stateDir;
   const storePath = path.join(stateDir, "shared.sqlite");
   const cfg = twoAgentConfig(storePath);
@@ -224,14 +259,11 @@ async function scenarioAllAgentsSharedStore(): Promise<void> {
   check("ops transcript swept", countTranscriptEvents(storePath, "main", "ops-cron-session"), 0);
   check("main transcript archived", countArchives(storePath, "main", "main-cron-session"), 1);
   check("ops transcript archived", countArchives(storePath, "main", "ops-cron-session"), 1);
-
-  closeOpenClawAgentDatabasesForTest();
-  fs.rmSync(stateDir, { recursive: true, force: true });
 }
 
 async function scenarioSingleAgentSharedStore(): Promise<void> {
   console.log("\n[2] --agent main over the same shared store keeps ops isolated");
-  const stateDir = makeStateDir();
+  const stateDir = makeTrackedStateDir();
   process.env.OPENCLAW_STATE_DIR = stateDir;
   const storePath = path.join(stateDir, "shared.sqlite");
   const cfg = twoAgentConfig(storePath);
@@ -272,14 +304,11 @@ async function scenarioSingleAgentSharedStore(): Promise<void> {
     1,
   );
   check("ops not archived", countArchives(storePath, "main", "ops-cron-session"), 0);
-
-  closeOpenClawAgentDatabasesForTest();
-  fs.rmSync(stateDir, { recursive: true, force: true });
 }
 
 async function scenarioAllAgentsPerAgentStores(): Promise<void> {
   console.log("\n[3] --all-agents over per-agent stores sweeps each store once");
-  const stateDir = makeStateDir();
+  const stateDir = makeTrackedStateDir();
   process.env.OPENCLAW_STATE_DIR = stateDir;
   const cfg = twoAgentConfig();
   const mainStorePath = path.join(stateDir, "agents", "main", "sessions", "sessions.json");
@@ -319,15 +348,15 @@ async function scenarioAllAgentsPerAgentStores(): Promise<void> {
     countNodes(opsStorePath, "ops", "agent:ops:cron:job-2:run:run-2"),
     0,
   );
-
-  closeOpenClawAgentDatabasesForTest();
-  fs.rmSync(stateDir, { recursive: true, force: true });
 }
 
 async function main(): Promise<void> {
   await scenarioAllAgentsSharedStore();
   await scenarioSingleAgentSharedStore();
   await scenarioAllAgentsPerAgentStores();
+  // Teardown belongs here, not per scenario: joining the owners is what lets
+  // every fixture root be removed without a lease chasing a deleted file.
+  await releaseFixtureRoots();
   console.log(`\nassertions: ${assertions}, failures: ${failures.length}`);
   if (failures.length > 0) {
     for (const failure of failures) {

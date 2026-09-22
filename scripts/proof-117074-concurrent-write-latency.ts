@@ -79,12 +79,15 @@ import {
   openOpenClawAgentDatabase,
 } from "../src/state/openclaw-agent-db.js";
 import { OPENCLAW_SQLITE_BUSY_TIMEOUT_MS } from "../src/state/openclaw-state-db-contract.js";
+import { cleanupSessionStateForTest } from "../src/test-utils/session-state-cleanup.js";
 
 const HOUR_MS = 3_600_000;
 const WRITER_ROLE_FLAG = "--writer";
 const LIVE_ROWS = Number(process.env.PROOF_LIVE_ROWS ?? 3_000);
 const CANDIDATE_COUNT = Number(process.env.PROOF_CANDIDATES ?? 96);
 const WRITER_INTERVAL_MS = Number(process.env.PROOF_WRITER_INTERVAL_MS ?? 5);
+/** Backstop for joining the writer process; its own drain is far shorter. */
+const WRITER_JOIN_TIMEOUT_MS = 30_000;
 const BASELINE_MS = Number(process.env.PROOF_BASELINE_MS ?? 6_000);
 const TAIL_MS = Number(process.env.PROOF_TAIL_MS ?? 2_000);
 /** Reference batch size used by the sweep; mirrored here only to report batch counts. */
@@ -366,6 +369,46 @@ function makeStateDir(): string {
   );
 }
 
+const fixtureRoots: string[] = [];
+
+function makeTrackedStateDir(): string {
+  const stateDir = makeStateDir();
+  fixtureRoots.push(stateDir);
+  return stateDir;
+}
+
+/**
+ * Joins the asynchronous database owners for one fixture root.
+ *
+ * `closeOpenClawAgentDatabasesForTest` only *starts* resource closure; the
+ * reclamation workers a sweep spawned still have to release their durable
+ * leases, and that release reopens the shared state database.
+ * `cleanupSessionStateForTest` is the existing awaited owner: it drains the
+ * store writer queues and file locks, then closes the agent handles and the
+ * shared state database for this root.
+ */
+async function releaseSessionState(stateDir: string): Promise<void> {
+  await cleanupSessionStateForTest({ stateDir });
+}
+
+/**
+ * Joins every owner this process holds, then removes the fixture roots.
+ *
+ * Called once, after the last scenario, because the drain is process-wide:
+ * running it between scenarios would leave each later scenario measuring a
+ * cold store instead of the steady state this harness reports.
+ */
+async function releaseFixtureRoots(): Promise<void> {
+  for (const stateDir of fixtureRoots) {
+    await releaseSessionState(stateDir);
+  }
+  closeOpenClawAgentDatabasesForTest();
+  for (const stateDir of fixtureRoots) {
+    fs.rmSync(stateDir, { recursive: true, force: true });
+  }
+  fixtureRoots.length = 0;
+}
+
 /** Concurrent writer process: the Gateway-shaped load this sweep runs beside. */
 async function runWriterRole(): Promise<void> {
   const storePath = process.env.PROOF_STORE_PATH;
@@ -408,8 +451,12 @@ async function runWriterRole(): Promise<void> {
     path.join(controlDir, "writer-report.json.part"),
     path.join(controlDir, "writer-report.json"),
   );
-  closeOpenClawAgentDatabasesForTest();
-  process.exit(0);
+  // This process owns real leases on the parent's fixture root. Release them
+  // before exiting: the parent joins this exit and only then removes the root,
+  // so an unjoined close here is what leaves a lease chasing a deleted file.
+  await releaseSessionState(process.env.OPENCLAW_STATE_DIR ?? path.dirname(storePath));
+  // Every owner has drained, so the loop can run dry instead of being cut short.
+  process.exitCode = 0;
 }
 
 type WriterHandle = {
@@ -447,6 +494,11 @@ async function startWriter(stateDir: string, storePath: string): Promise<WriterH
     execArgv: ["--import", path.resolve("scripts/tsx.mjs")],
     stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
+  // Registered at fork time so the exit can never be missed between the report
+  // landing and the join below.
+  const childExit = new Promise<void>((resolve) => {
+    child.once("exit", () => resolve());
+  });
   let childOutput = "";
   child.stdout?.on("data", (chunk: Buffer) => {
     childOutput += chunk.toString("utf8");
@@ -470,7 +522,16 @@ async function startWriter(stateDir: string, storePath: string): Promise<WriterH
       const reportPath = path.join(controlDir, "writer-report.json");
       await waitForFile(reportPath, "writer report", 60_000);
       const report = JSON.parse(fs.readFileSync(reportPath, "utf8")) as WriterReport;
-      child.kill();
+      // Join the writer process before the caller removes the fixture root: it
+      // releases its own database leases on the way out. The kill stays only as
+      // a bounded backstop so a wedged child cannot hang the harness.
+      const killBackstop = setTimeout(() => child.kill(), WRITER_JOIN_TIMEOUT_MS);
+      killBackstop.unref();
+      try {
+        await childExit;
+      } finally {
+        clearTimeout(killBackstop);
+      }
       return report;
     },
   };
@@ -478,7 +539,7 @@ async function startWriter(stateDir: string, storePath: string): Promise<WriterH
 
 async function scenarioQuietSweep(): Promise<{ durationMs: number }> {
   console.log("\n[1] Quiet sweep over the mixed store (no concurrent writer)");
-  const stateDir = makeStateDir();
+  const stateDir = makeTrackedStateDir();
   process.env.OPENCLAW_STATE_DIR = stateDir;
   const storePath = path.join(stateDir, "sessions.sqlite");
   const seedStartedAt = performance.now();
@@ -500,12 +561,9 @@ async function scenarioQuietSweep(): Promise<{ durationMs: number }> {
   await withBatchedSessionReferenceAnalysis(database, probeIds, async () => {
     for (const sessionId of probeIds) {
       const excluded = new Set([`agent:main:cron:job-x:run:run-x`]);
-      const served = resolveBatchedReferencedSessionIds(
-        database.db,
-        database.path,
-        excluded,
-        [sessionId],
-      );
+      const served = resolveBatchedReferencedSessionIds(database.db, database.path, excluded, [
+        sessionId,
+      ]);
       batchedAnswers.push(served ? [...served].toSorted() : null);
     }
     await Promise.resolve();
@@ -542,14 +600,12 @@ async function scenarioQuietSweep(): Promise<{ durationMs: number }> {
       `${round(attributed.workerMs)}ms of worker lifetime ` +
       `(${round((100 * attributed.workerMs) / sweep.durationMs)}% of the sweep, off the main thread)`,
   );
-  closeOpenClawAgentDatabasesForTest();
-  fs.rmSync(stateDir, { recursive: true, force: true });
   return { durationMs: sweep.durationMs };
 }
 
 async function scenarioConcurrentWriter(quietDurationMs: number): Promise<void> {
   console.log("\n[2] Sweep with a separate writer process committing throughout");
-  const stateDir = makeStateDir();
+  const stateDir = makeTrackedStateDir();
   process.env.OPENCLAW_STATE_DIR = stateDir;
   const storePath = path.join(stateDir, "sessions.sqlite");
   const { candidateKeys } = await seedMixedStore(storePath);
@@ -605,14 +661,11 @@ async function scenarioConcurrentWriter(quietDurationMs: number): Promise<void> 
     OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
   );
   check("writer kept making progress during the sweep", during.length > 0, true);
-
-  closeOpenClawAgentDatabasesForTest();
-  fs.rmSync(stateDir, { recursive: true, force: true });
 }
 
 async function scenarioInvalidationRate(): Promise<void> {
   console.log("\n[3] Memo invalidation rate while a writer commits");
-  const stateDir = makeStateDir();
+  const stateDir = makeTrackedStateDir();
   process.env.OPENCLAW_STATE_DIR = stateDir;
   const storePath = path.join(stateDir, "sessions.sqlite");
   await seedMixedStore(storePath);
@@ -628,7 +681,9 @@ async function scenarioInvalidationRate(): Promise<void> {
     await withBatchedSessionReferenceAnalysis(database, probeIds, async () => {
       for (const sessionId of probeIds) {
         for (let question = 0; question < 2; question += 1) {
-          if (resolveBatchedReferencedSessionIds(database.db, database.path, excluded, [sessionId])) {
+          if (
+            resolveBatchedReferencedSessionIds(database.db, database.path, excluded, [sessionId])
+          ) {
             served += 1;
           } else {
             fallback += 1;
@@ -665,9 +720,6 @@ async function scenarioInvalidationRate(): Promise<void> {
     "    note: invalidation deletes the batch for the rest of its run, so a batch is primed at most " +
       "once and can never re-prime in a loop.",
   );
-
-  closeOpenClawAgentDatabasesForTest();
-  fs.rmSync(stateDir, { recursive: true, force: true });
 }
 
 /**
@@ -754,7 +806,7 @@ function maxOf(values: readonly number[]): number {
 
 async function scenarioSameProcessWriter(): Promise<void> {
   console.log("\n[5] Sweep beside an unrelated writer in the same process");
-  const stateDir = makeStateDir();
+  const stateDir = makeTrackedStateDir();
   process.env.OPENCLAW_STATE_DIR = stateDir;
   const storePath = path.join(stateDir, "sessions.sqlite");
   const { candidateKeys } = await seedMixedStore(storePath);
@@ -860,14 +912,11 @@ async function scenarioSameProcessWriter(): Promise<void> {
     round(maxOf(during.map((sample) => sample.durationMs))),
     OPENCLAW_SQLITE_BUSY_TIMEOUT_MS,
   );
-
-  closeOpenClawAgentDatabasesForTest();
-  fs.rmSync(stateDir, { recursive: true, force: true });
 }
 
 async function scenarioUnbatchedCostBound(): Promise<void> {
   console.log("\n[4] Cost of the unbatched read an invalidated batch falls back to");
-  const stateDir = makeStateDir();
+  const stateDir = makeTrackedStateDir();
   process.env.OPENCLAW_STATE_DIR = stateDir;
   const storePath = path.join(stateDir, "sessions.sqlite");
   await seedMixedStore(storePath);
@@ -899,9 +948,6 @@ async function scenarioUnbatchedCostBound(): Promise<void> {
     "    a fully invalidated batch therefore costs the unbatched total plus one priming pass, " +
       "which is the pre-batch cost of this sweep, not a multiple of it.",
   );
-
-  closeOpenClawAgentDatabasesForTest();
-  fs.rmSync(stateDir, { recursive: true, force: true });
 }
 
 async function main(): Promise<void> {
@@ -914,6 +960,9 @@ async function main(): Promise<void> {
   await scenarioInvalidationRate();
   await scenarioUnbatchedCostBound();
   await scenarioSameProcessWriter();
+  // Teardown belongs here, not per scenario: joining the owners is what lets
+  // every fixture root be removed without a lease chasing a deleted file.
+  await releaseFixtureRoots();
   console.log(`\nassertions: ${assertions}, failures: ${failures.length}`);
   if (failures.length > 0) {
     for (const failure of failures) {
