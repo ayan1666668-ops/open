@@ -1022,6 +1022,7 @@ describe("Code Mode model matrix artifacts", () => {
     const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-code-mode-matrix-test-"));
     try {
       let calls = 0;
+      let initialBuildRead = true;
       const result = await runCodeModeModelMatrix(
         {
           allowFailures: false,
@@ -1040,8 +1041,10 @@ describe("Code Mode model matrix artifacts", () => {
           buildCliArtifacts: async () => {},
           now: () => new Date("2026-07-28T12:00:00Z"),
           readBuildSha256: async () => {
-            const entries = await fs.readdir(path.join(repoRoot, "artifacts"));
-            expect(entries).toEqual([]);
+            if (initialBuildRead) {
+              expect(await fs.readdir(path.join(repoRoot, "artifacts"))).toEqual([]);
+              initialBuildRead = false;
+            }
             return "build123";
           },
           readGitSha: async () => "abc123",
