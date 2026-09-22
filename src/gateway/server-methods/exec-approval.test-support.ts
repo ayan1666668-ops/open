@@ -83,7 +83,10 @@ function toExecApprovalRequestContext(context: {
   hasExecApprovalClients?: () => boolean;
   chatAbortedRuns?: Map<string, number>;
 }): ExecApprovalRequestArgs["context"] {
-  return context as unknown as ExecApprovalRequestArgs["context"];
+  return {
+    getRuntimeConfig: () => ({}),
+    ...context,
+  } as unknown as ExecApprovalRequestArgs["context"];
 }
 
 function toExecApprovalResolveContext(context: {
