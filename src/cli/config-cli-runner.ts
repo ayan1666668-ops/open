@@ -6,7 +6,10 @@ import { getDeferredPluginMigrationConfigFacts } from "../config/deferred-plugin
 import { resolveKeyedAgentEntryIncludePreservation } from "../config/include-write-boundary.js";
 import { AUTO_MANAGED_CONFIG_META_PATHS } from "../config/io.meta.js";
 import { coerceConfig } from "../config/io.read-helpers.js";
-import { resolvePersistCandidateForWrite } from "../config/io.write-prepare.js";
+import {
+  prepareConfigWriteValues,
+  resolvePersistCandidateForWrite,
+} from "../config/io.write-prepare.js";
 import { prepareConfigWriteTopology } from "../config/io.write-topology.js";
 import { resolveConfigIncludeWriteBoundary } from "../config/mutate.js";
 import { ConfigMutationConflictError } from "../config/mutation-conflict.js";
@@ -23,6 +26,7 @@ import { formatErrorMessage } from "../infra/errors.js";
 import type { RuntimeEnv } from "../runtime.js";
 import { ExitError, writeRuntimeJson } from "../runtime.js";
 import { toDotPath } from "../shared/dot-path.js";
+import { parseConfigPathArrayIndex } from "../shared/path-array-index.js";
 import {
   formatPluginInstallConfigSetError,
   type ConfigMutationOptions,
@@ -68,6 +72,27 @@ function pathEquals(path: readonly PathSegment[], expected: readonly PathSegment
   return (
     path.length === expected.length && path.every((segment, index) => segment === expected[index])
   );
+}
+
+function remapSuppliedPathsAfterDelete(
+  paths: PathSegment[][],
+  deletedPath: PathSegment[],
+  arrayIndex: number | undefined,
+): PathSegment[][] {
+  const parent = deletedPath.slice(0, -1);
+  return paths.flatMap((path) => {
+    if (pathStartsWith(path, deletedPath)) {
+      return [];
+    }
+    if (arrayIndex === undefined || path.length <= parent.length || !pathStartsWith(path, parent)) {
+      return [path];
+    }
+    const segment = path[parent.length];
+    const index = segment === undefined ? undefined : parseConfigPathArrayIndex(segment);
+    return index !== undefined && index > arrayIndex
+      ? [[...parent, String(index - 1), ...path.slice(parent.length + 1)]]
+      : [path];
+  });
 }
 
 function valueHasAutoManagedChild(value: unknown, childPath: readonly PathSegment[]): boolean {
@@ -320,7 +345,8 @@ export async function runConfigOperations(params: {
   const mutationSchema = await loadMutationSchema();
   const roster = new ConfigMutationAgentRoster(next, snapshot.sourceConfigBeforeMigrations);
   let unsetPaths: PathSegment[][] = [];
-  const explicitSetPaths: PathSegment[][] = [];
+  let explicitSetPaths: PathSegment[][] = [];
+  let suppliedValuePaths: PathSegment[][] = [];
   const appliedOperations: ConfigSetOperation[] = [];
   const recordOperation = (operation: ConfigSetOperation): PathSegment[] => {
     const writePath = roster.writePath(operation.setPath);
@@ -349,6 +375,13 @@ export async function runConfigOperations(params: {
     }
     if (operation.mutation === "delete") {
       const writePath = recordOperation(operation);
+      // Capture identity before the splice changes legacy roster positions.
+      const deletesCanonicalAgent =
+        operation.setPath.length === 3 &&
+        operation.setPath[0] === "agents" &&
+        operation.setPath[1] === "list" &&
+        writePath[1] === "entries";
+      const deletedSegment = operation.setPath.at(-1);
       const unsetResult = unsetAtPath(next, operation.setPath);
       if (!unsetResult.removed && operation.inputMode === "unset") {
         const requestedPath = formatConfigSetPath(operation.requestedPath, operation.pathTokens);
@@ -385,6 +418,33 @@ export async function runConfigOperations(params: {
       if (!unsetResult.removed || unsetResult.leafContainer !== "array") {
         unsetPaths.push(writePath);
       }
+      if (unsetResult.removed) {
+        // Canonical agent IDs (even numeric IDs) are keys, not list indices.
+        const arrayIndex =
+          unsetResult.leafContainer === "array" &&
+          !deletesCanonicalAgent &&
+          deletedSegment !== undefined
+            ? parseConfigPathArrayIndex(deletedSegment)
+            : undefined;
+        suppliedValuePaths = remapSuppliedPathsAfterDelete(
+          suppliedValuePaths,
+          writePath,
+          arrayIndex,
+        );
+        explicitSetPaths = remapSuppliedPathsAfterDelete(explicitSetPaths, writePath, arrayIndex);
+        // Validation follows surviving values after a splice, too. Keep removed
+        // operations in history for deletion policy and preview counts.
+        for (const applied of appliedOperations) {
+          const [survivingPath] = remapSuppliedPathsAfterDelete(
+            [applied.setPath],
+            writePath,
+            arrayIndex,
+          );
+          if (survivingPath) {
+            applied.setPath = survivingPath;
+          }
+        }
+      }
       continue;
     }
     const pathOptions = {
@@ -393,8 +453,9 @@ export async function runConfigOperations(params: {
       quotedNumericSegments: operation.quotedNumericSegments,
       schema: mutationSchema?.schema as JsonSchemaRecord | undefined,
     };
+    let suppliedPaths: PathSegment[][];
     if (merge) {
-      mergeAtPath(next, operation.setPath, operation.value, pathOptions);
+      suppliedPaths = mergeAtPath(next, operation.setPath, operation.value, pathOptions);
     } else {
       assertNonDestructiveReplacement({
         root: next,
@@ -403,7 +464,9 @@ export async function runConfigOperations(params: {
         allowReplace: options.replace || operation.mutation === "replace",
       });
       setAtPath(next, operation.setPath, operation.value, pathOptions);
+      suppliedPaths = [operation.setPath];
     }
+    suppliedValuePaths.push(...suppliedPaths.map((path) => roster.writePath(path)));
     explicitSetPaths.push(recordOperation(operation));
   }
   roster.finish();
@@ -426,59 +489,87 @@ export async function runConfigOperations(params: {
   }
   nextConfig = normalizeConfigMutationModelRefs(nextConfig);
   const normalizedExplicitSetPaths = explicitSetPaths.map(normalizeConfigMutationExplicitSetPath);
+  // Parent merge paths own policy, but inherited children are not caller-authored values.
+  const resolutionEnv = mutationStart.writeOptions.envSnapshotForRestore ?? process.env;
+  const preparedValues = prepareConfigWriteValues({
+    snapshot,
+    nextConfig,
+    explicitSetPaths: suppliedValuePaths.map(normalizeConfigMutationExplicitSetPath),
+    env: resolutionEnv,
+  });
+  const authoredNextConfig = preparedValues.authoredConfig;
+  const preparedPreviousValues = prepareConfigWriteValues({
+    snapshot,
+    nextConfig: currentConfig,
+    env: resolutionEnv,
+  });
+  const authoredPreviousConfig = preparedPreviousValues.authoredConfig;
+  let modelValidation = {
+    config: authoredNextConfig,
+    previousConfig: authoredPreviousConfig,
+    env: preparedValues.resolutionEnv,
+    previousEnv: preparedPreviousValues.resolutionEnv,
+  };
   // Preview-only probe: arms the committing writer's persistence checks so a
   // guarded roster removal is refused before the preview reports success
   // (issue #133895). Built here, but invoked after validation below, mirroring
   // the commit's ordering (validation errors surface before persistence checks).
   let dryRunPersistenceProbe: (() => void) | undefined;
   if (options.dryRun) {
-    // The commit selects the include writer before root topology preparation,
-    // so the routing decision must see the pre-topology candidate and the same
-    // explicit paths the committing write receives.
-    const preTopologyConfig = nextConfig;
     const topology = prepareConfigWriteTopology({
       snapshot,
       pluginMetadataSnapshot: mutationStart.writeOptions.basePluginMetadataSnapshot,
-      nextConfig,
+      nextConfig: authoredNextConfig,
       options: { explicitSetPaths: normalizedExplicitSetPaths },
       unsetPaths: resolveManagedUnsetPathsForWrite(unsetPaths),
-      env: process.env,
+      env: resolutionEnv,
     });
     nextConfig = topology.nextConfig;
+    modelValidation = {
+      config: topology.authoredConfig,
+      previousConfig: authoredPreviousConfig,
+      env: topology.resolutionEnv,
+      previousEnv: preparedPreviousValues.resolutionEnv,
+    };
     dryRunPersistenceProbe = () => {
-      // An edit owned by an authored $include is persisted by the include
-      // writer, so the root writer's persistence projection must not reject it.
-      // Only root-owned writes run the same persistence projection as the
-      // commit. loadValidConfigForWrite guarantees snapshot.valid, so the
-      // projection's roster-retention guard is always armed here.
-      // Route with the same options the committing write receives: the commit
-      // selects the include writer before topology preparation, so a
-      // topology-derived flag (persistCanonicalAgentRoster) must not force root
-      // routing here when the committing CLI never supplies it.
+      // Mirror replaceConfigFileUnlocked: it routes to the include writer on
+      // the pre-topology authored candidate (CLI source writes carry
+      // inputBase "source") before the root writer projects persistence. An
+      // edit owned by an authored $include is persisted by the include
+      // writer, so the root writer's persistence projection must not reject
+      // it. Route with the same options the committing write receives: the
+      // commit selects the include writer before topology preparation, so a
+      // topology-derived flag (persistCanonicalAgentRoster) must not force
+      // root routing here when the committing CLI never supplies it.
       const includeBoundary = resolveConfigIncludeWriteBoundary({
         snapshot,
-        nextConfig: preTopologyConfig,
+        nextConfig: authoredNextConfig,
         persistCanonicalAgentRoster: mutationStart.writeOptions.persistCanonicalAgentRoster,
         explicitSetPaths: normalizedExplicitSetPaths,
       });
       if (includeBoundary) {
         return;
       }
+      // Only root-owned writes run the same persistence projection as the
+      // commit. Mirror writeConfigFileFromContext (io.write.ts): the root
+      // writer arms the roster-retention guard from the topology's authored
+      // projections. loadValidConfigForWrite guarantees snapshot.valid, so
+      // the projection's roster-retention guard is always armed here.
       const keyedAgentEntryIncludes = resolveKeyedAgentEntryIncludePreservation({
         configPath: snapshot.path,
         provenance: snapshot.includeProvenance,
       });
       resolvePersistCandidateForWrite({
-        inputBasis: { kind: "runtime", config: snapshot.config },
-        runtimeConfig: snapshot.config,
-        sourceConfig: snapshot.resolved,
+        inputBasis: { kind: "source", config: topology.authoredSourceConfig },
+        runtimeConfig: topology.authoredRuntimeConfig,
+        sourceConfig: topology.authoredSourceConfig,
         sourceConfigValid: snapshot.valid,
         sourceConfigBeforeMigrations: snapshot.sourceConfigBeforeMigrations,
-        nextConfig,
+        nextConfig: topology.authoredConfig,
         rootAuthoredConfig: snapshot.parsed,
         agentRosterIncludeOwned: snapshot.agentRosterIncludeOwned,
         keyedAgentEntryIncludePaths: keyedAgentEntryIncludes?.includePaths,
-        unsetPaths,
+        unsetPaths: resolveManagedUnsetPathsForWrite(unsetPaths),
         explicitSetPaths: topology.explicitSetPaths,
         explicitSetValueSource: topology.explicitSetValueSource,
         persistCanonicalAgentRoster: topology.persistCanonicalAgentRoster,
@@ -486,9 +577,13 @@ export async function runConfigOperations(params: {
       });
     };
   }
-  const unchanged = params.successMode === "set" && isDeepStrictEqual(currentConfig, nextConfig);
+  const unchanged =
+    params.successMode === "set" &&
+    isDeepStrictEqual(currentConfig, nextConfig) &&
+    isDeepStrictEqual(authoredPreviousConfig, authoredNextConfig);
   const validation = await validateConfigMutation({
     config: nextConfig,
+    modelValidation,
     previousConfig: currentConfig,
     operations: appliedOperations,
     options,
@@ -513,7 +608,7 @@ export async function runConfigOperations(params: {
   }
 
   await replaceConfigFile({
-    sourceConfig: nextConfig,
+    sourceConfig: authoredNextConfig,
     snapshot,
     ...(snapshot.hash !== undefined ? { baseHash: snapshot.hash } : {}),
     writeOptions: {

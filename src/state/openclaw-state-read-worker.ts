@@ -86,6 +86,9 @@ function readPool(): ReadPool {
 }
 
 function captureCommand(command: OpenClawStateReadCommand): OpenClawStateReadCommand {
+  if (command.type === "mcpOAuth.statuses") {
+    return { type: command.type, input: [...command.input] };
+  }
   if (command.type === "conversationBindings.inspect") {
     const { channel, accountId, conversationId, parentConversationId } = command.conversation;
     return {
@@ -110,6 +113,9 @@ function captureCommand(command: OpenClawStateReadCommand): OpenClawStateReadCom
     };
   }
   if (command.type === "devicePairing.bootstrapContext") {
+    return { ...command, input: { ...command.input } };
+  }
+  if (command.type === "operatorApprovals.history") {
     return { ...command, input: { ...command.input } };
   }
   if (command.type === "pluginBlob.lookup") {
@@ -155,11 +161,34 @@ function captureCommand(command: OpenClawStateReadCommand): OpenClawStateReadCom
   if (command.type === "workers.placementProjection") {
     return structuredClone(command);
   }
+  if (command.type === "workerEnvironments.pruneCandidates") {
+    return {
+      type: command.type,
+      input: {
+        ...command.input,
+        cursor: command.input.cursor ? { ...command.input.cursor } : undefined,
+      },
+    };
+  }
+  if (command.type === "workerEnvironments.snapshot") {
+    return { type: command.type, ...(command.ids ? { ids: [...command.ids] } : {}) };
+  }
   return { ...command };
 }
 
 function commandBytes(command: OpenClawStateReadRequest["command"]): number {
   let bytes = Buffer.byteLength(command.type, "utf8");
+  if (command.type === "mcpOAuth.statuses") {
+    return command.input.reduce((total, key) => total + Buffer.byteLength(key, "utf8"), bytes);
+  }
+  if (
+    command.type === "mcpOAuth.readOnly" ||
+    command.type === "mcpOAuth.keys" ||
+    command.type === "mcpOAuth.pending" ||
+    command.type === "mcpOAuth.countPrincipals"
+  ) {
+    return bytes + Buffer.byteLength(command.input, "utf8");
+  }
   if (command.type === "conversationBindings.inspect") {
     return (
       bytes +
@@ -196,6 +225,14 @@ function commandBytes(command: OpenClawStateReadRequest["command"]): number {
   }
   if (command.type === "devicePairing.list") {
     return bytes + 8 + Buffer.byteLength(command.publishedRevision ?? "");
+  }
+  if (command.type === "operatorApprovals.history") {
+    return (
+      bytes +
+      Buffer.byteLength(command.input.cursor ?? "", "utf8") +
+      Buffer.byteLength(command.input.kind ?? "", "utf8") +
+      16
+    );
   }
   if (command.type === "pluginBlob.lookup" || command.type === "pluginBlob.entries") {
     return (
@@ -271,6 +308,19 @@ function commandBytes(command: OpenClawStateReadRequest["command"]): number {
   }
   if (command.type === "workers.placementProjection") {
     return Buffer.byteLength(JSON.stringify(command), "utf8");
+  }
+  if (command.type === "workerEnvironments.pruneCandidates") {
+    return (
+      bytes +
+      8 +
+      (command.input.limit === undefined ? 0 : 8) +
+      (command.input.cursor ? 8 + Buffer.byteLength(command.input.cursor.environmentId, "utf8") : 0)
+    );
+  }
+  if (command.type === "workerEnvironments.snapshot") {
+    return (
+      bytes + (command.ids?.reduce((total, id) => total + Buffer.byteLength(id, "utf8"), 0) ?? 0)
+    );
   }
   return bytes;
 }
