@@ -244,15 +244,20 @@ async function dispatchSpooledPrivateText(
   params: Parameters<typeof makePrivateTextContext>[0] & {
     updateId: number;
     replayUpdate?: "id" | "full";
+    replayLifecycle?: Parameters<typeof runWithTelegramSpooledReplayUpdate>[2];
   },
 ) {
   const ctx = makePrivateTextContext(params);
   const update = ctx.update ?? {};
   const replayUpdate =
     params.replayUpdate === "full" ? Object.assign({}, update, { message: ctx.message }) : update;
-  return await runWithTelegramSpooledReplayUpdate(replayUpdate, async () => {
-    await runTelegramMiddlewareChain({ ctx, finalHandler: messageHandler });
-  });
+  return await runWithTelegramSpooledReplayUpdate(
+    replayUpdate,
+    async () => {
+      await runTelegramMiddlewareChain({ ctx, finalHandler: messageHandler });
+    },
+    params.replayLifecycle,
+  );
 }
 
 function installTelegramTopicStateForTest(): void {
@@ -4290,13 +4295,84 @@ describe("createTelegramBot", () => {
   it("retries a deferred spooled update after its queued turn is abandoned", async () => {
     configureOpenDm();
     let queuedLifecycle: GetReplyOptions["turnAdoptionLifecycle"];
+    const replayOwner = new AbortController();
+    const startedAt = performance.now();
+    const events: { phase: string; elapsedMs: number }[] = [];
+    const record = (phase: string) => {
+      events.push({ phase, elapsedMs: performance.now() - startedAt });
+    };
+    let firstReplayState: "pending" | "resolved" | "rejected" = "pending";
+    let firstReplayValue: Awaited<ReturnType<typeof dispatchSpooledPrivateText>> | undefined;
+    let firstReplayError: unknown;
+    let firstDeferredResult:
+      | Awaited<
+          NonNullable<
+            Awaited<ReturnType<typeof dispatchSpooledPrivateText>>["deferredWork"]
+          >["task"]
+        >
+      | undefined;
+    const describeError = (error: unknown) =>
+      error instanceof Error
+        ? {
+            name: error.name.slice(0, 200),
+            code:
+              "code" in error && typeof error.code === "string"
+                ? error.code.slice(0, 200)
+                : undefined,
+            message: error.message.slice(0, 2_000),
+          }
+        : error === undefined
+          ? null
+          : String(error).slice(0, 2_000);
+    const capture = (stage: string) => {
+      try {
+        console.error(
+          "[queued-replay-diagnostic]",
+          JSON.stringify({
+            stage,
+            elapsedMs: performance.now() - startedAt,
+            dispatcherCalls: dispatchReplyWithBufferedBlockDispatcher.mock.calls.length,
+            replyCalls: replySpy.mock.calls.length,
+            lifecycle: Object.fromEntries(
+              (["onDeferred", "onAdopted", "onAbandoned", "onSettled"] as const).map((key) => [
+                key,
+                typeof queuedLifecycle?.[key],
+              ]),
+            ),
+            firstReplayState,
+            firstReplayError: describeError(firstReplayError),
+            deferredWork: firstReplayValue?.deferredWork
+              ? {
+                  settled: firstReplayValue.deferredWork.isSettled(),
+                  aborted: firstReplayValue.deferredWork.abortSignal.aborted,
+                  result: firstDeferredResult
+                    ? {
+                        kind: firstDeferredResult.kind,
+                        error: describeError(
+                          firstDeferredResult.kind === "failed-retryable"
+                            ? firstDeferredResult.error
+                            : undefined,
+                        ),
+                      }
+                    : "pending",
+                }
+              : null,
+            events,
+          }),
+        );
+      } catch {
+        // Diagnostic output must not replace the original assertion failure.
+      }
+    };
     replySpy
       .mockImplementationOnce(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
         queuedLifecycle = opts?.turnAdoptionLifecycle;
+        record("first reply entered");
         queuedLifecycle?.onDeferred?.();
         return undefined;
       })
       .mockImplementationOnce(async (_ctx: MsgContext, opts?: GetReplyOptions) => {
+        record("retry reply entered");
         await opts?.turnAdoptionLifecycle?.onAdopted?.();
         return { text: "recovered" };
       });
@@ -4309,38 +4385,75 @@ describe("createTelegramBot", () => {
       updateId: 702,
       messageId: 702,
       text: "retry after queued turn abandonment",
+      replayLifecycle: {
+        abortSignal: replayOwner.signal,
+        onAdopted: () => record("owner adopted"),
+        onDeferred: () => record("owner deferred"),
+        onAbandoned: () => record("owner abandoned"),
+      },
     });
-    await vi.waitFor(() => {
-      expect(queuedLifecycle?.onAbandoned).toEqual(expect.any(Function));
-    });
-    queuedLifecycle?.onAbandoned?.();
-    const firstReplay = await firstReplayPromise;
-    const firstDeferredWork = requireValue(firstReplay.deferredWork, "first deferred spooled work");
-    await expect(firstDeferredWork.task).resolves.toMatchObject({ kind: "failed-retryable" });
-    await flushTelegramTestMicrotasks();
-    expect(onUpdateId).not.toHaveBeenCalled();
-
-    const secondReplay = await dispatchSpooledPrivateText(messageHandler, {
-      updateId: 702,
-      messageId: 702,
-      text: "retry after queued turn abandonment",
-    });
-    const secondDeferredWork = requireValue(
-      secondReplay.deferredWork,
-      "second deferred spooled work",
+    const observedFirstReplay = firstReplayPromise.then(
+      (value) => {
+        firstReplayState = "resolved";
+        firstReplayValue = value;
+        record("first replay resolved");
+        return value.deferredWork?.task.then((result) => {
+          firstDeferredResult = result;
+          record("first deferred result observed");
+        });
+      },
+      (error: unknown) => {
+        firstReplayState = "rejected";
+        firstReplayError = error;
+        record("first replay rejected");
+      },
     );
-    await expect(secondDeferredWork.task).resolves.toEqual({ kind: "completed" });
-    await flushTelegramTestMicrotasks();
-    expect(replySpy).toHaveBeenCalledTimes(2);
-    expect(onUpdateId.mock.calls.map((call) => call[0])).toEqual([702]);
+    try {
+      await vi.waitFor(() => {
+        expect(queuedLifecycle?.onAbandoned).toEqual(expect.any(Function));
+      });
+      queuedLifecycle?.onAbandoned?.();
+      const firstReplay = await firstReplayPromise;
+      const firstDeferredWork = requireValue(
+        firstReplay.deferredWork,
+        "first deferred spooled work",
+      );
+      await expect(firstDeferredWork.task).resolves.toMatchObject({ kind: "failed-retryable" });
+      await flushTelegramTestMicrotasks();
+      expect(onUpdateId).not.toHaveBeenCalled();
 
-    const duplicateReplay = await dispatchSpooledPrivateText(messageHandler, {
-      updateId: 702,
-      messageId: 702,
-      text: "retry after queued turn abandonment",
-    });
-    expect(duplicateReplay.deferredWork).toBeUndefined();
-    expect(replySpy).toHaveBeenCalledTimes(2);
+      const secondReplay = await dispatchSpooledPrivateText(messageHandler, {
+        updateId: 702,
+        messageId: 702,
+        text: "retry after queued turn abandonment",
+      });
+      const secondDeferredWork = requireValue(
+        secondReplay.deferredWork,
+        "second deferred spooled work",
+      );
+      await expect(secondDeferredWork.task).resolves.toEqual({ kind: "completed" });
+      await flushTelegramTestMicrotasks();
+      expect(replySpy).toHaveBeenCalledTimes(2);
+      expect(onUpdateId.mock.calls.map((call) => call[0])).toEqual([702]);
+
+      const duplicateReplay = await dispatchSpooledPrivateText(messageHandler, {
+        updateId: 702,
+        messageId: 702,
+        text: "retry after queued turn abandonment",
+      });
+      expect(duplicateReplay.deferredWork).toBeUndefined();
+      expect(replySpy).toHaveBeenCalledTimes(2);
+    } catch (error) {
+      capture("before cleanup");
+      throw error;
+    } finally {
+      // Join exposed replay/participant contracts; the detached dispatch run has no public join.
+      replayOwner.abort(new Error("queued replay diagnostic cleanup"));
+      await observedFirstReplay;
+      await firstReplayValue?.deferredWork?.task;
+      record("exposed replay contracts joined");
+      capture("after cleanup");
+    }
   });
 
   it("skips replayed update ids even when the semantic update key differs", async () => {

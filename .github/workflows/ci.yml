@@ -3,6 +3,11 @@ name: CI
 on:
   workflow_dispatch:
     inputs:
+      temporary_telegram_bundle7:
+        description: Temporary diagnostic only; never merge. Run the original ordered bundle on its original runner class.
+        required: false
+        default: false
+        type: boolean
       target_ref:
         description: Optional branch, tag, or full commit SHA to validate instead of the workflow ref
         required: false
@@ -173,6 +178,27 @@ jobs:
       run_protocol_event_coverage: ${{ steps.manifest.outputs.run_protocol_event_coverage }}
       android_matrix: ${{ steps.manifest.outputs.android_matrix }}
     steps:
+      - name: Validate temporary Telegram diagnostic dispatch
+        if: inputs.temporary_telegram_bundle7 || github.ref == 'refs/heads/test/telegram-bundle7-ci-diagnostic'
+        env:
+          DIAGNOSTIC_INPUTS: ${{ toJson(inputs) }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          inputs = json.loads(os.environ['DIAGNOSTIC_INPUTS'])
+          assert os.environ['GITHUB_REPOSITORY'] == 'openclaw/openclaw'
+          assert os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch'
+          assert os.environ['GITHUB_REF'] == 'refs/heads/test/telegram-bundle7-ci-diagnostic'
+          assert os.environ['GITHUB_RUN_ATTEMPT'] == '1'
+          assert os.environ['GITHUB_SHA'] == os.environ['WORKFLOW_SHA']
+          assert inputs.get('temporary_telegram_bundle7') is True
+          assert inputs.get('dispatch_id') == 'telegram-bundle7-ci-diagnostic'
+          assert inputs.get('release_scope', 'full') == 'full'
+          assert all(not inputs.get(k) for k in ('target_ref', 'release_gate', 'pull_request_number',
+              'historical_target_tag', 'release_candidate_ref', 'target_context_ref', 'capture_ui_proof', 'include_android'))
+          PY
+
       - name: Validate release-gate dispatch
         if: github.event_name == 'workflow_dispatch' && inputs.release_gate
         env:
@@ -1265,6 +1291,7 @@ jobs:
       - name: Build CI manifest
         id: manifest
         env:
+          TEMPORARY_TELEGRAM_BUNDLE7: ${{ inputs.temporary_telegram_bundle7 }}
           OPENCLAW_CI_DOCS_ONLY: ${{ github.event_name == 'workflow_dispatch' && 'false' || steps.docs_scope.outputs.docs_only }}
           OPENCLAW_CI_DOCS_CHANGED: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.docs_scope.outputs.docs_changed }}
           OPENCLAW_CI_RUN_NODE: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.changed_scope.outputs.run_node || 'false' }}
@@ -2168,6 +2195,28 @@ jobs:
           });
           if (hybridHostedEligible) {
             console.log(`Hybrid hosted rows: ${manifest.hybrid_hosted_base_rows} base, ${manifest.hybrid_hosted_total_rows} total; optional offload ${hybridHostedOffload ? "admitted" : "retained on Blacksmith"}; measured checks ${hybridHostedChecks ? "admitted" : "retained on Blacksmith"}; main checks ${hybridHostedMainChecks ? "admitted" : "retained on Blacksmith"}`);
+          }
+
+          // Temporary diagnostic only; never merge. All normal modes keep their original matrices.
+          if (process.env.TEMPORARY_TELEGRAM_BUNDLE7 === "true") {
+            if (eventName !== "workflow_dispatch" || !isCanonicalRepository ||
+                process.env.GITHUB_REF !== "refs/heads/test/telegram-bundle7-ci-diagnostic" ||
+                checkoutRevision !== workflowRevision || checkoutRevision !== process.env.GITHUB_SHA) {
+              throw new Error("Temporary diagnostic source identity mismatch");
+            }
+            for (const key of Object.keys(manifest)) {
+              if (key.startsWith("run_")) manifest[key] = false;
+            }
+            manifest.run_checks_node_core_nondist = true;
+            manifest.checks_node_core_nondist_matrix = { include: [{
+              check_name: "temporary-telegram-bundle-7",
+              shard_name: "changed-extensions-bundle-7",
+              runner: "blacksmith-8vcpu-ubuntu-2404",
+              plan_concurrency: 1,
+              predicted_seconds: 240,
+              test_runtime_policy: "bun-compatible",
+              groups_gzip_base64: "H4sIAAAAAAAAA6WSQUvDQBCF/8ucMwlqQSx4KFpEkbbYoocawjQ7TZYmu2F3kiql/11Iq1UUjPY07LDzvZnHm28gtWapMw/9OQh7iRr9qYT8Imy8tgYrZxut2PlwNxGKhzgANg30NzCeDEdX94OnZDS+Hiaz4XSWPN62ZfBwM03upuMR9GH+DIg+J6cuT6LeM8SwDaB9J4ZKhj6kOZmMFX7oetzJ4QVsg+7bKhJakGdcW7f6trQ2aVErnpAIO9PSDoKRcMGZozLyLo0WVtCQ6IYxtWVJRqHSviJJ81BxoRt2r2ErLh6Cf2GcrUWbrBslTB2TML73se3lZAwXWFkvWLLSdAQs115s16N+JLQbYOZsXaFf6QrX5MxxF+69q3TFhTZ8BKnb5O+/9p6HGQmv6WBX3DnR570/RXrJ2uf11yB3VDo7hW38Bhh5A4PsAwAA",
+            }] };
           }
 
           for (const [key, value] of Object.entries(manifest)) {
@@ -3760,7 +3809,7 @@ jobs:
     needs: [preflight]
     if: needs.preflight.outputs.run_checks_node_core_nondist == 'true'
     # Keep planner capacity; apply only the selected 8-to-16 promotions.
-    runs-on: ${{ vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' && 'ubuntu-24.04' || (vars.OPENCLAW_CI_RUNNER_BACKEND == 'hybrid' && github.run_attempt > 1) && 'ubuntu-24.04' || (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && github.run_attempt > 1)) && 'ubuntu-24.04' || (github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)) && ((matrix.runner == 'blacksmith-8vcpu-ubuntu-2404' && contains(fromJSON('["checks-node-changed-extensions-bundle-16","checks-node-compact-large-9","checks-node-changed-extensions-bundle-25","checks-node-compact-large-5"]'), matrix.check_name)) && 'blacksmith-16vcpu-ubuntu-2404' || matrix.runner || 'blacksmith-4vcpu-ubuntu-2404') || 'ubuntu-24.04') }}
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.temporary_telegram_bundle7) && 'blacksmith-8vcpu-ubuntu-2404' || vars.OPENCLAW_CI_RUNNER_BACKEND == 'github' && 'ubuntu-24.04' || (vars.OPENCLAW_CI_RUNNER_BACKEND == 'hybrid' && github.run_attempt > 1) && 'ubuntu-24.04' || (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && github.run_attempt > 1)) && 'ubuntu-24.04' || (github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || contains(fromJSON('["OWNER","MEMBER","COLLABORATOR","CONTRIBUTOR"]'), github.event.pull_request.author_association)) && ((matrix.runner == 'blacksmith-8vcpu-ubuntu-2404' && contains(fromJSON('["checks-node-changed-extensions-bundle-16","checks-node-compact-large-9","checks-node-changed-extensions-bundle-25","checks-node-compact-large-5"]'), matrix.check_name)) && 'blacksmith-16vcpu-ubuntu-2404' || matrix.runner || 'blacksmith-4vcpu-ubuntu-2404') || 'ubuntu-24.04') }}
     timeout-minutes: ${{ matrix.timeout_minutes || 60 }}
     strategy:
       fail-fast: false
@@ -3770,11 +3819,45 @@ jobs:
       matrix: ${{ fromJson(needs.preflight.outputs.checks_node_core_nondist_matrix) }}
     steps:
       - *linux_node_checkout_step
+      - name: Bind temporary diagnostic source
+        id: diagnostic_source
+        if: inputs.temporary_telegram_bundle7
+        env:
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          out = pathlib.Path('.artifacts/telegram-bundle7-ci-diagnostic')
+          out.mkdir(parents=True, exist_ok=False)
+          receipt = {'temporaryDiagnosticOnly': True, 'sourceChecked': False}
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          try:
+              head = git('rev-parse', 'HEAD')
+              baseline = git('rev-parse', 'HEAD^')
+              assert baseline == '97be50b180ea0219139a87488dfefbaaee8740ff'
+              tree = git('rev-parse', 'HEAD^{tree}')
+              owner = 'extensions/telegram/src/bot.create-telegram-bot.test.ts'
+              receipt.update(head=head, tree=tree, baseline=baseline)
+              receipt['baselineTree'] = git('rev-parse', baseline + '^{tree}')
+              assert head == os.environ['GITHUB_SHA'] == os.environ['WORKFLOW_SHA']
+              assert receipt['baselineTree'] == '0d261f68c654775df418d97698da25071efea1dd'
+              assert [line[7:] for line in git('cat-file', '-p', baseline).split('\n\n', 1)[0].splitlines() if line.startswith('parent ')] == [
+                  '23ce1015576d0fd16303a653b08e95fc449aea2b', '05a0b7be36e7f53d4bf12c4d9672e9fc0a0ef635']
+              assert set(git('diff', '--no-renames', '--name-only', baseline, head).splitlines()) == {'.github/workflows/ci.yml', owner}
+              subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--'], check=True)
+              assert hashlib.sha256(pathlib.Path(owner).read_bytes()).hexdigest() == 'df483f83c03e4e4d89aee0a250232ab388fe7c517659f2903c9e845fc341697e'
+              receipt['sourceChecked'] = True
+          finally:
+              (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+
       - name: Setup Node environment
+        id: diagnostic_setup
         uses: ./.ci-harness/.github/actions/setup-node-env
         with:
           cache-mode: ${{ needs.preflight.outputs.cache_mode }}
-          node-version: "${{ matrix.node_version || '24.x' }}"
+          node-version: "${{ inputs.temporary_telegram_bundle7 && '24.19.0' || matrix.node_version || '24.x' }}"
           install-bun: "false"
           # The trusted warmer seeds Node 24; other versions use the store.
           dependency-cache: ${{ (matrix.node_version == null || matrix.node_version == '24.x') && vars.OPENCLAW_CI_RUNNER_BACKEND != 'github' && runner.environment == 'self-hosted' && github.event_name != 'workflow_dispatch' && github.repository == 'openclaw/openclaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'openclaw/openclaw') && 'true' || 'false' }}
@@ -3906,8 +3989,35 @@ jobs:
           echo "detected cores=$cores plan_concurrency=${SHARD_PLAN_CONCURRENCY:-default} predicted_test_seconds=${PREDICTED_TEST_SECONDS:-unknown} -> workers=$workers"
           echo "OPENCLAW_VITEST_MAX_WORKERS=$workers" >> "$GITHUB_ENV"
 
+      - name: Verify temporary diagnostic resources
+        id: diagnostic_resources
+        if: inputs.temporary_telegram_bundle7
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import os from 'node:os';
+          import { execFileSync } from 'node:child_process';
+          const path = '.artifacts/telegram-bundle7-ci-diagnostic/receipt.json';
+          const receipt = JSON.parse(fs.readFileSync(path, 'utf8'));
+          receipt.resources = { node: process.versions.node, pnpm: execFileSync('pnpm', ['--version'], {encoding:'utf8'}).trim(),
+            platform: process.platform, arch: process.arch, cpu: os.availableParallelism(), memoryBytes: os.totalmem(),
+            workers: process.env.OPENCLAW_VITEST_MAX_WORKERS, originalMemoryBytes: 8220487680,
+            cacheMode: '${{ needs.preflight.outputs.cache_mode }}', dependencyCache: false,
+            cacheDifference: 'Node pin changes transform/compile cache keys; actual restores are recorded in setup logs.' };
+          fs.writeFileSync(path, JSON.stringify(receipt, null, 2) + '\n');
+          assert.equal(receipt.resources.node, '24.19.0');
+          assert.equal(receipt.resources.pnpm, '12.4.0');
+          assert.equal(receipt.resources.platform, 'linux');
+          assert.equal(receipt.resources.arch, 'x64');
+          assert.equal(receipt.resources.cpu, 2, 'Original two-CPU allocation required; do not simulate it');
+          assert.equal(receipt.resources.workers, '2');
+          JS
+
       - name: Run Node test shard
+        id: diagnostic_shard
         env:
+          TEMPORARY_TELEGRAM_BUNDLE7: ${{ inputs.temporary_telegram_bundle7 }}
           NODE_OPTIONS: --max-old-space-size=8192
           OPENCLAW_CI_TEST_RUNTIME_POLICY: ${{ matrix.test_runtime_policy || 'node' }}
           FROZEN_TARGET: ${{ needs.preflight.outputs.frozen_target }}
@@ -3934,7 +4044,71 @@ jobs:
             runner=".ci-workflow/${runner}"
             [[ -f "$runner" ]]
           fi
+          if [[ "$TEMPORARY_TELEGRAM_BUNDLE7" == "true" ]]; then
+            # Preserve the original worker-cache owner; restored bytes still undergo its validation.
+            export OPENCLAW_VITEST_WORKER_CACHE=1
+            set +e
+            { time -p node --import tsx "$runner"; } 2>&1 | tee .artifacts/telegram-bundle7-ci-diagnostic/bundle7.log
+            statuses=("${PIPESTATUS[@]}")
+            set -e
+            echo "exit_code=${statuses[0]}" >> "$GITHUB_OUTPUT"
+            [[ "${statuses[1]}" == "0" ]]
+            exit "${statuses[0]}"
+          fi
           time -p node --import tsx "$runner"
+
+      - name: Record temporary diagnostic outcome
+        if: always() && inputs.temporary_telegram_bundle7
+        env:
+          SOURCE_OUTCOME: ${{ steps.diagnostic_source.outcome }}
+          SETUP_OUTCOME: ${{ steps.diagnostic_setup.outcome }}
+          RESOURCE_OUTCOME: ${{ steps.diagnostic_resources.outcome }}
+          SHARD_OUTCOME: ${{ steps.diagnostic_shard.outcome }}
+          SHARD_EXIT: ${{ steps.diagnostic_shard.outputs.exit_code }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess
+          out = pathlib.Path('.artifacts/telegram-bundle7-ci-diagnostic')
+          out.mkdir(parents=True, exist_ok=True)
+          path = out / 'receipt.json'
+          receipt = json.loads(path.read_text()) if path.exists() else {'temporaryDiagnosticOnly': True, 'sourceChecked': False}
+          receipt['steps'] = {k: os.environ.get(k, '') for k in ('SOURCE_OUTCOME', 'SETUP_OUTCOME', 'RESOURCE_OUTCOME', 'SHARD_OUTCOME', 'SHARD_EXIT')}
+          receipt['run'] = {'id': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'sha': os.environ['GITHUB_SHA']}
+          captures = []
+          log = out / 'bundle7.log'
+          if log.exists():
+              receipt['logSha256'] = hashlib.sha256(log.read_bytes()).hexdigest()
+              for line in re.sub(r'\x1b\[[0-9;]*m', '', log.read_text()).splitlines():
+                  marker = '[queued-replay-diagnostic] '
+                  if marker in line:
+                      try:
+                          captures.append(json.loads(line.split(marker, 1)[1]))
+                      except ValueError:
+                          receipt['captureError'] = 'Malformed diagnostic JSON; retain the raw log'
+          (out / 'diagnostics.json').write_text(json.dumps(captures, indent=2) + '\n')
+          receipt['observation'] = ('target failed; inspect pre-cleanup evidence' if any(c.get('stage') == 'before cleanup' for c in captures)
+              else 'not reproduced; not a product fix' if os.environ['SHARD_OUTCOME'] == 'success'
+              else 'setup/resource refusal or another test failure; inspect step outcomes and log')
+          receipt['sourceUnchangedAfter'] = subprocess.run(['git', 'diff', '--quiet', 'HEAD', '--']).returncode == 0
+          (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          assert 'captureError' not in receipt, receipt.get('captureError')
+          if os.environ['SHARD_OUTCOME'] == 'success':
+              assert receipt['sourceChecked'] and receipt['sourceUnchangedAfter'], 'Source custody failed'
+              assert os.environ['SHARD_EXIT'] == '0' and any(c.get('stage') == 'after cleanup' for c in captures), 'Missing target completion evidence'
+          PY
+
+      - name: Upload temporary diagnostic evidence
+        if: always() && inputs.temporary_telegram_bundle7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: temporary-telegram-bundle7-${{ github.run_id }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            .artifacts/telegram-bundle7-ci-diagnostic/receipt.json
+            .artifacts/telegram-bundle7-ci-diagnostic/diagnostics.json
+            .artifacts/telegram-bundle7-ci-diagnostic/bundle7.log
 
       - &runner_memory_peak_step
         name: Record runner memory peak
@@ -5803,7 +5977,7 @@ jobs:
     # Full manual validation requires both build and screenshot evidence.
     needs: [preflight]
     # PRs and their exact-head release-gate substitutes retain only the build smoke.
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.temporary_telegram_bundle7 && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
     # Keep capture on the same verified hosted image as the iOS build phases.
     runs-on: xcode-27
     timeout-minutes: 90
@@ -5922,7 +6096,7 @@ jobs:
       contents: read
     name: "ios-screenshot-evidence"
     needs: [preflight, ios-screenshot-shard]
-    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.temporary_telegram_bundle7 && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -6371,6 +6545,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - name: Refuse qualification for temporary diagnostic
+        if: inputs.temporary_telegram_bundle7 || github.ref == 'refs/heads/test/telegram-bundle7-ci-diagnostic' || github.head_ref == 'test/telegram-bundle7-ci-diagnostic'
+        run: |
+          echo '::error::Temporary diagnostic only; never merge. This run does not qualify any source for landing.'
+          exit 1
       - name: Verify selected CI lanes
         shell: bash
         env:
@@ -6400,8 +6579,8 @@ jobs:
             macos-node=${{ needs.macos-node.result }}|${{ needs.preflight.outputs.run_macos_node }}
             macos-swift=${{ needs.macos-swift.result }}|${{ needs.preflight.outputs.run_macos_swift }}
             ios-build=${{ needs.ios-build.result }}|${{ needs.preflight.outputs.run_ios_build }}
-            ios-screenshot-shard=${{ needs.ios-screenshot-shard.result }}|${{ github.event_name == 'workflow_dispatch' && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
-            ios-screenshot-evidence=${{ needs.ios-screenshot-evidence.result }}|${{ github.event_name == 'workflow_dispatch' && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
+            ios-screenshot-shard=${{ needs.ios-screenshot-shard.result }}|${{ github.event_name == 'workflow_dispatch' && !inputs.temporary_telegram_bundle7 && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
+            ios-screenshot-evidence=${{ needs.ios-screenshot-evidence.result }}|${{ github.event_name == 'workflow_dispatch' && !inputs.temporary_telegram_bundle7 && !inputs.release_gate && needs.preflight.outputs.release_scope == 'full' && needs.preflight.outputs.compatibility_target != 'true' }}
             android=${{ needs.android.result }}|${{ needs.preflight.outputs.run_android_job }}
             docker-seed-e2e=${{ needs.docker-seed-e2e.result }}|${{ needs.preflight.outputs.run_docker_seed_e2e }}
         run: |
