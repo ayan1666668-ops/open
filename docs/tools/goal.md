@@ -222,6 +222,10 @@ The pill carries inline controls:
 - **Chevron** expands the pill to show the full objective, the latest status
   note, token usage, and elapsed time.
 
+On narrow mobile screens, expand the pill to reveal compact labeled controls
+above the full objective. Collapsing it hides these controls again; token usage
+and elapsed time remain below the objective and status note.
+
 Edit, Pause, and Clear do not send slash commands or add chat turns. Controls
 target the displayed Goal ID, so a stale button cannot change a replacement
 Goal. If a request is interrupted or its acknowledgment does not arrive within
