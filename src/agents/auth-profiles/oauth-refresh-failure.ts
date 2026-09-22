@@ -7,6 +7,7 @@ import { normalizeBoundedOptionalString } from "@openclaw/normalization-core/str
 import { sanitizeForLog } from "../../../packages/terminal-core/src/ansi.js";
 import { formatCliCommand } from "../../cli/command-format.js";
 import { toErrorObject } from "../../infra/errors.js";
+import { resolveGlobalSingleton } from "../../shared/global-singleton.js";
 /**
  * OAuth refresh failure classification and operator hints.
  * Parses provider/reason codes from refresh failures and formats safe login
@@ -43,6 +44,12 @@ type OAuthRefreshFailurePresentation = {
 };
 
 const oauthRefreshCleanupAggregates = new WeakSet<AggregateError>();
+// Duplicated module graphs share provenance without mutating provider-owned errors.
+// Weak keys keep each receipt bound to the lifetime of its owner-created wrapper.
+const settledRefreshFailures = resolveGlobalSingleton(
+  Symbol.for("openclaw.settledOAuthRefreshFailures"),
+  () => new WeakMap<Error, Error>(),
+);
 
 export function appendOAuthRefreshCleanupErrors(
   error: unknown,
@@ -68,31 +75,30 @@ export function appendOAuthRefreshCleanupErrors(
   return aggregate;
 }
 
+function readSettledOAuthRefreshCause(error: unknown): unknown {
+  return error instanceof Error ? (settledRefreshFailures.get(error) ?? error) : error;
+}
+
 function readOAuthRefreshInitiatingError(error: unknown): unknown {
-  return error instanceof AggregateError &&
-    oauthRefreshCleanupAggregates.has(error) &&
-    error.errors.length > 0
-    ? error.errors[0]
-    : error;
+  const cause = readSettledOAuthRefreshCause(error);
+  return cause instanceof AggregateError &&
+    oauthRefreshCleanupAggregates.has(cause) &&
+    cause.errors.length > 0
+    ? readSettledOAuthRefreshCause(cause.errors[0])
+    : cause;
 }
 
 const OAUTH_REFRESH_FAILURE_ERROR_TYPE_MAX_CHARS = 100;
 const OAUTH_REFRESH_FAILURE_SUMMARY_MAX_CHARS = 500;
 
-const settledRefreshFailure = Symbol.for("openclaw.settledOAuthRefreshFailure");
-
 /** The refresh owner records failed external work only after its durable cleanup settles. */
-export function markOAuthRefreshFailureSettled(error: Error): void {
-  Object.defineProperty(error, settledRefreshFailure, { value: true });
+export function markOAuthRefreshFailureSettled(error: Error, initiatingError: Error = error): void {
+  settledRefreshFailures.set(error, initiatingError);
 }
 
 /** Internal provenance survives transformed module graphs without trusting provider metadata. */
 export function isSettledOAuthRefreshFailure(error: unknown): error is Error {
-  return (
-    error instanceof Error &&
-    settledRefreshFailure in error &&
-    error[settledRefreshFailure] === true
-  );
+  return error instanceof Error && settledRefreshFailures.has(error);
 }
 
 function readProviderOAuthRefreshFailure(error: unknown): OAuthRefreshFailurePresentation | null {
@@ -283,7 +289,8 @@ function collectOAuthCredentialSecrets(
   return Array.from(secrets).toSorted((a, b) => b.length - a.length);
 }
 
-function createRedactedOAuthRefreshCause(cause: unknown, secrets: string[]): Error {
+function createRedactedOAuthRefreshCause(value: unknown, secrets: string[]): Error {
+  const cause = readSettledOAuthRefreshCause(value);
   if (cause instanceof AggregateError) {
     const errors = cause.errors.map((error) => createRedactedOAuthRefreshCause(error, secrets));
     const sanitized = new AggregateError(

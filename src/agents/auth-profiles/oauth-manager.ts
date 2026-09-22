@@ -967,7 +967,7 @@ export function createOAuthManager(adapter: OAuthManagerAdapter) {
             message: error.message,
             cause: error,
           });
-          markOAuthRefreshFailureSettled(settled);
+          markOAuthRefreshFailureSettled(settled, error);
           throw settled;
         }
         throw error;

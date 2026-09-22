@@ -795,7 +795,7 @@ describe("markAuthProfileFailure — WHAM-aware Codex cooldowns", () => {
         outcome = "fulfilled";
         settled = true;
       },
-      (error) => {
+      (error: unknown) => {
         observedFailure = error;
         outcome = "rejected";
         settled = true;

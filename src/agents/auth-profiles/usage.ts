@@ -520,12 +520,12 @@ async function runWhamHalfOpenReprobe(params: {
   }
   const claimedStats = claimed?.usageStats?.[params.profileId];
   if (!didClaim || !claimedStats) {
-    return;
+    return undefined;
   }
   const blockGeneration = structuredClone(claimedStats);
   const result = await probeWhamForCooldown(expectedProfile, params.profileId);
   if (!result.available && !result.blockedUntil) {
-    return;
+    return undefined;
   }
   const updated = await updateOwnedAuthProfileUsage(params.store, params.profileId, {
     agentDir: params.agentDir,
@@ -564,11 +564,11 @@ export async function maybeReprobeWhamBlockedProfiles(params: {
     params.profileIds.map(async (profileId) => {
       const shouldProbe = shouldHalfOpenProbeWhamBlock({ ...params, profileId, now });
       if (!shouldProbe && whamReprobesInFlight.size === 0) {
-        return;
+        return undefined;
       }
       const profile = params.store.profiles[profileId];
       if (!isWhamOAuthProfile(profile)) {
-        return;
+        return undefined;
       }
       const ownerAgentDir = resolvePersistedAuthProfileOwnerAgentDir({
         agentDir: params.agentDir,
@@ -581,7 +581,7 @@ export async function maybeReprobeWhamBlockedProfiles(params: {
       let task = whamReprobesInFlight.get(probeKey);
       if (!task) {
         if (!shouldProbe) {
-          return;
+          return undefined;
         }
         task = runWhamHalfOpenReprobe({
           ...params,
