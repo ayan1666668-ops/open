@@ -35,7 +35,7 @@ def hold(role, ready_fd=None):
 
         signal.signal(signal.SIGTERM, terminate)
         request(connection, {"event": "hold", "role": role})
-        request(connection, {"event": "ready", "role": role})
+        connection.sendall(json.dumps({"event": "ready", "role": role}).encode())
         if ready_fd is not None:
             os.write(ready_fd, b"1")
             os.close(ready_fd)
@@ -196,7 +196,6 @@ def supervise(root, script, scenario):
                         selector.register(descriptor, selectors.EVENT_READ, ("exit", pid))
                         reply(connection)
                     elif event == "ready":
-                        reply(connection)
                         if message["role"] == "gateway":
                             gateway_ready = True
                         elif message["role"] == "suite" and scenario == "cancel":
