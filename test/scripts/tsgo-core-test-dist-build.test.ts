@@ -10,6 +10,7 @@ describe("typed runtime declaration preparation", () => {
   it("restores the cleaned runtime artifacts through their canonical owners", () => {
     expect(listRestoredRuntimeSteps().map((step) => step.label)).toEqual([
       "plugins:assets:build",
+      "tsdown-ai",
       "external-plugins:local-dist",
       "plugins:assets:copy",
       "runtime-postbuild",
@@ -52,6 +53,15 @@ describe("typed runtime declaration preparation", () => {
     expect(copyIndex).toBeLessThan(labels.indexOf("runtime-postbuild"));
   });
 
+  it("restores the package build before the postbuild verification loads it", () => {
+    const labels = listRestoredRuntimeSteps().map((step) => step.label);
+    const packageIndex = labels.indexOf("tsdown-ai");
+    // runtime-postbuild verifies the built plugin control-plane modules, which
+    // import @openclaw/ai/dist, so the package build has to come first.
+    expect(packageIndex).toBeGreaterThanOrEqual(0);
+    expect(packageIndex).toBeLessThan(labels.indexOf("runtime-postbuild"));
+  });
+
   it("keeps build-all's own order for the shared asset steps", () => {
     const labels = BUILD_ALL_STEPS.map((step) => step.label);
     expect(labels.indexOf("plugins:assets:build")).toBeLessThan(labels.indexOf("tsdown"));
@@ -76,8 +86,8 @@ describe("typed runtime declaration preparation", () => {
     );
 
     expect(status).toBe(0);
-    // The compile, the four restored owners, and the declaration writer.
-    expect(calls).toHaveLength(6);
+    // The compile, the five restored owners, and the declaration writer.
+    expect(calls).toHaveLength(7);
     for (const call of calls) {
       // A Windows shell routes arguments through cmd.exe, which rejects the
       // percent-encoded file URLs of a checkout path containing spaces.

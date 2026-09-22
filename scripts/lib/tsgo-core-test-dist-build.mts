@@ -37,6 +37,9 @@ const RESTORED_RUNTIME_STEP_LABELS = [
   // after the runtime setup steps and before postbuild records the asset
   // inventory.
   "plugins:assets:build",
+  // runtime-postbuild verifies the built plugin control-plane modules, which
+  // import @openclaw/ai/dist, and the clean removes the package output too.
+  "tsdown-ai",
   "external-plugins:local-dist",
   "plugins:assets:copy",
   "runtime-postbuild",
