@@ -103,6 +103,17 @@ export function overlayCatalogMetadata(
             : {}),
         };
   const applyRoute = !options?.preserveBaseRoute;
+  const compat = options?.preserveBaseCompat
+    ? resolveCatalogOwnedModelCompat({
+        catalogRoute: base,
+        catalogCompat: base.compat,
+        configuredRoute: {
+          api: overlay.api ?? base.api,
+          baseUrl: overlay.baseUrl ?? base.baseUrl,
+        },
+        configuredCompat: overlay.compat,
+      })
+    : mergeCatalogFields(routeBase.compat, overlay.compat);
   return {
     ...selectionNeutralBase,
     ...contextWindowSelection,
@@ -124,16 +135,6 @@ export function overlayCatalogMetadata(
     ...(overlay.statusReason !== undefined ? { statusReason: overlay.statusReason } : {}),
     ...(overlay.replaces !== undefined ? { replaces: overlay.replaces } : {}),
     ...(overlay.replacedBy !== undefined ? { replacedBy: overlay.replacedBy } : {}),
-    compat: options?.preserveBaseCompat
-      ? resolveCatalogOwnedModelCompat({
-          catalogRoute: base,
-          catalogCompat: base.compat,
-          configuredRoute: {
-            api: overlay.api ?? base.api,
-            baseUrl: overlay.baseUrl ?? base.baseUrl,
-          },
-          configuredCompat: overlay.compat,
-        })
-      : mergeCatalogFields(routeBase.compat, overlay.compat),
+    ...(compat ? { compat } : {}),
   };
 }
