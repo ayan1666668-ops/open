@@ -218,6 +218,43 @@ describe("buildXaiRealtimeVoiceProvider", () => {
     await bridge.close();
   });
 
+  it("retires buffered tool calls from an interrupted response when a successor starts", async () => {
+    const onToolCall = vi.fn();
+    const bridge = createTestBridge({ onToolCall });
+    const socket = await openRealtimeBridge(bridge);
+    socket.emitServer({ type: "response.created", response: { id: "interrupted" } });
+    socket.emitServer({
+      type: "response.function_call_arguments.done",
+      response_id: "interrupted",
+      item_id: "item_interrupted",
+      call_id: "call_interrupted",
+      name: "lookup_weather",
+      arguments: JSON.stringify({ city: "Paris" }),
+    });
+    bridge.handleBargeIn?.();
+    socket.emitServer({ type: "response.created", response: { id: "successor" } });
+    socket.emitServer({
+      type: "response.done",
+      response: { id: "interrupted", status: "cancelled" },
+    });
+    socket.emitServer({
+      type: "response.function_call_arguments.done",
+      response_id: "successor",
+      item_id: "item_successor",
+      call_id: "call_successor",
+      name: "lookup_weather",
+      arguments: JSON.stringify({ city: "Tokyo" }),
+    });
+    socket.emitServer({
+      type: "response.done",
+      response: { id: "successor", status: "completed" },
+    });
+    expect(onToolCall).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ callId: "call_successor", args: { city: "Tokyo" } }),
+    );
+    await bridge.close();
+  });
+
   it("ignores a late cancellation error after a successor response starts", async () => {
     const bridge = createTestBridge();
     const socket = await openRealtimeBridge(bridge);

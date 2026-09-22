@@ -76,9 +76,6 @@ it.each([1440, 1600])(
     await new Promise<void>((resolve) => {
       requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
     });
-    await page.screenshot({
-      path: `/Users/admin/.openclaw/tmp/grok-talk-20260922/.artifacts/talk-followup/${Date.now()}-${width}.png`,
-    });
     expect(fixture.querySelectorAll(".agent-chat__voice-turn")).toHaveLength(1);
     const renderedMessages = [...fixture.querySelectorAll(".chat-text")]
       .map((element) => element.textContent)

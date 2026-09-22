@@ -58,6 +58,10 @@ export abstract class XaiRealtimeVoiceEvents extends XaiRealtimeVoiceProtocol {
         this.responseCancelInFlight = false;
       }
       this.outputResponse = { id: responseId, ended: false };
+      // The fence drops a retired response's late terminal, including its buffer
+      // cleanup, so the successor must not inherit the predecessor's tool calls.
+      this.toolCallBuffers.clear();
+      this.finalizedToolCallItems.clear();
       this.outputAudioGeneration += 1;
       this.responseActive = true;
       this.responseCreateInFlight = false;
