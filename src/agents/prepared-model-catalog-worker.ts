@@ -1,13 +1,11 @@
 /** Runs complete model-catalog discovery outside the Gateway event loop. */
-import fs from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { captureClawInstallSchemaVersionFacts } from "../claws/provenance-runtime-read.js";
 import {
   getConfigResolutionFacts,
   serializeConfigResolutionFacts,
 } from "../config/resolution-facts.js";
 import { projectConfigOntoRuntimeSourceSnapshot } from "../config/runtime-source-projection.js";
+import { resolveStateDir } from "../config/state-dir.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { runtimeProcessEntrypoints } from "../infra/runtime-process-entrypoints.js";
 import { resolveRuntimeWorkerUrl } from "../infra/runtime-worker-url.js";
@@ -19,6 +17,7 @@ import {
   getPluginMetadataSnapshotCache,
 } from "../plugins/plugin-cache.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
+import { createPluginSourceCaptureRoot } from "../plugins/plugin-source-capture-directory.js";
 import { captureProviderSyntheticAuthFacts } from "../plugins/provider-runtime.js";
 import type { PreparedSyntheticAuthFacts } from "../plugins/provider-synthetic-auth.js";
 import type { PluginRegistry } from "../plugins/registry-types.js";
@@ -66,6 +65,7 @@ export type PreparedModelCatalogWorkerData = (
   | { kind: "gateway" }
 ) & {
   sourceCaptureDirectory: string;
+  sourceCaptureManagedRoot?: string;
 };
 
 export type PreparedModelCatalogWorkerTask = {
@@ -95,7 +95,6 @@ export type PreparedModelWorkerResult =
       snapshot: ModelCatalogSnapshot;
       runtimeModels: Map<string, Model[]>;
       providerExpiries: Map<string, number>;
-      configuredProviderModelIds: Map<string, readonly string[]>;
       configuredRuntimeModels: PreparedModelRuntimeCatalogFacts["configuredRuntimeModels"];
       credentials: Readonly<AuthStorageData>;
       providerAuthLabels: ModelCatalogAuthLabels;
@@ -122,6 +121,8 @@ export type PreparedModelWorkerResult =
 export const PREPARED_MODEL_CATALOG_WORKER_TIMEOUT_MS = 180_000;
 
 const GATEWAY_CATALOG_WORKERS = 1;
+// Leave room for source loaders and overlapping generations without inheriting the host heap budget.
+const CATALOG_WORKER_HEAP_LIMIT_MB = 512;
 type CatalogPoolInput = PreparedModelWorkerRequest | PreparedModelCatalogWorkerTask;
 type CatalogPool = WorkerTaskPool<CatalogPoolInput, PreparedModelWorkerResult>;
 type CatalogPoolBorrower = {
@@ -224,19 +225,24 @@ async function getGatewayCatalogPool(
       validate: undefined,
       pool: new WorkerTaskPool<CatalogPoolInput, PreparedModelWorkerResult>({
         workerUrl: resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.preparedModelCatalog),
+        workerOptions: { resourceLimits: { maxOldGenerationSizeMb: CATALOG_WORKER_HEAP_LIMIT_MB } },
         maxWorkers: GATEWAY_CATALOG_WORKERS,
         // Source modules belong to this inventory, not to any one agent or idle request.
         idleTimeoutMs: 0,
         restartOnError: false,
         prepareWorker: () => {
           signal.throwIfAborted();
-          const directory = fs.mkdtempSync(path.join(tmpdir(), "openclaw-model-catalog-"));
+          const capture = createPluginSourceCaptureRoot(
+            resolveStateDir(env),
+            "openclaw-model-catalog-",
+          );
           return {
-            temporaryDirectory: directory,
+            releaseResources: capture.release,
             options: {
               workerData: {
                 kind: "gateway",
-                sourceCaptureDirectory: directory,
+                sourceCaptureDirectory: capture.directory,
+                sourceCaptureManagedRoot: capture.managedRoot,
               } satisfies PreparedModelCatalogWorkerData,
               env,
             },
@@ -407,7 +413,6 @@ type PreparedModelCatalogWorker = Readonly<{
     Pick<PreparedModelRuntimeCatalogFacts, "modelCatalog" | "configuredRuntimeModels"> & {
       runtimeModels: Map<string, Model[]>;
       providerExpiries: Map<string, number>;
-      configuredProviderModelIds: Map<string, readonly string[]>;
     }
   >;
 }>;
@@ -476,19 +481,24 @@ export function createPreparedModelCatalogWorker(
   const createPool = () =>
     new WorkerTaskPool<CatalogPoolInput, PreparedModelWorkerResult>({
       workerUrl: resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.preparedModelCatalog),
+      workerOptions: { resourceLimits: { maxOldGenerationSizeMb: CATALOG_WORKER_HEAP_LIMIT_MB } },
       maxWorkers: 1,
       // Recreating this worker would import changed plugin code under the old generation.
       // Only the lifecycle owner may retire it; crashes close the generation permanently.
       idleTimeoutMs: 0,
       restartOnError: false,
       prepareWorker: () => {
-        const directory = fs.mkdtempSync(path.join(tmpdir(), "openclaw-model-catalog-"));
+        const capture = createPluginSourceCaptureRoot(
+          resolveStateDir(workerInput.input.env),
+          "openclaw-model-catalog-",
+        );
         return {
-          temporaryDirectory: directory,
+          releaseResources: capture.release,
           options: {
             workerData: {
               ...workerInput,
-              sourceCaptureDirectory: directory,
+              sourceCaptureDirectory: capture.directory,
+              sourceCaptureManagedRoot: capture.managedRoot,
             } satisfies PreparedModelCatalogWorkerData,
             // Establish state/config environment before module initialization reads process.env.
             env: workerInput.input.env,
@@ -690,7 +700,6 @@ export function createPreparedModelCatalogWorker(
         configuredRuntimeModels: message.configuredRuntimeModels,
         runtimeModels: message.runtimeModels,
         providerExpiries: message.providerExpiries,
-        configuredProviderModelIds: message.configuredProviderModelIds,
       };
     },
     loadAuth: async ({ providerIds, profileIds }) => {
