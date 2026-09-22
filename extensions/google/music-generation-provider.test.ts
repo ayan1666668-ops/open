@@ -250,6 +250,10 @@ describe("google music generation provider", () => {
   it("shares the configured timeout budget across a no-audio retry", async () => {
     mockGoogleAuth();
     vi.spyOn(Date, "now")
+      // buildTimeoutAbortSignal (covering credential preparation) and
+      // createProviderOperationDeadline each read Date.now() before the first
+      // HTTP attempt, so both see the same starting instant.
+      .mockReturnValueOnce(1_000)
       .mockReturnValueOnce(1_000)
       .mockReturnValueOnce(1_000)
       .mockReturnValue(2_500);
@@ -275,6 +279,47 @@ describe("google music generation provider", () => {
     expect(allGoogleGenAIConfigs().map((config) => config.httpOptions?.timeout)).toEqual([
       5_000, 3_500,
     ]);
+  });
+
+  // Regression: when credential preparation is slow (OAuth refresh, profile lock
+  // contention), the time it consumes must be subtracted from the shared
+  // operation budget so the HTTP attempt receives only the remaining time, not
+  // a fresh full timeout. Pre-fix the deadline was created after credential
+  // lookup, so a delayed-but-successful auth granted HTTP a full budget.
+  it("deducts delayed credential preparation from the HTTP timeout budget", async () => {
+    vi.spyOn(Date, "now")
+      // Post-fix: createProviderOperationDeadline reads Date.now() before
+      // credential lookup, establishing deadlineAtMs = start + operationTimeoutMs.
+      // The credential refresh path then reads Date.now() (simulating a real
+      // resolver that timestamps its refresh), advancing the clock.
+      .mockReturnValueOnce(1_000)
+      .mockReturnValueOnce(2_500)
+      // The HTTP attempt reads Date.now() and receives the remaining budget
+      // (6000 - 2500 = 3500), not a fresh full timeout.
+      .mockReturnValue(2_500);
+    vi.spyOn(providerAuthRuntime, "resolveApiKeyForProvider").mockImplementation(async () => {
+      // Simulate slow OAuth refresh / profile lock contention that resolves
+      // successfully after consuming part of the operation budget. A real
+      // resolver timestamps its refresh, which reads Date.now() and advances
+      // the observed clock past the deadline's starting instant.
+      void Date.now();
+      return { apiKey: "google-key", source: "env", mode: "api-key" };
+    });
+    generateContentMock.mockResolvedValueOnce(googleMusicAudioResponse("recovered-audio"));
+
+    await buildGoogleMusicGenerationProvider().generateMusic({
+      provider: "google",
+      model: "lyria-3-clip-preview",
+      prompt: "upbeat synthpop anthem",
+      cfg: {},
+      timeoutMs: 5_000,
+    });
+
+    // Post-fix: deadlineAtMs (1000 + 5000 = 6000) minus the post-credential
+    // instant (2500) leaves 3500ms for the HTTP attempt.
+    // Pre-fix: deadline is created after credential lookup at 2500, so
+    // deadlineAtMs = 7500 and the HTTP attempt receives a full 5000ms.
+    expect(allGoogleGenAIConfigs().map((config) => config.httpOptions?.timeout)).toEqual([3_500]);
   });
 
   it("fails after one retry when Lyria keeps returning no audio", async () => {
@@ -422,4 +467,59 @@ describe("google music generation provider", () => {
       }),
     ).rejects.toThrow("supports mp3 output");
   });
+
+  // Regression: credential preparation (OAuth refresh, profile lock) must share
+  // the request timeout budget. resolveApiKeyForProvider is called before the
+  // operation deadline and must receive an abort signal so a stalled credential
+  // lookup is cancelled within req.timeoutMs instead of hanging indefinitely.
+  it("aborts credential preparation when it exceeds the request timeout", async () => {
+    // Mirrors resolveApiKeyForProviderCore: honors the caller's signal by
+    // rejecting when aborted (the real impl calls throwIfAborted() across the
+    // OAuth refresh path). Without a signal (pre-fix), the wait is unbounded.
+    vi.spyOn(providerAuthRuntime, "resolveApiKeyForProvider").mockImplementation(
+      (params: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          const signal = params.signal;
+          if (!signal) {
+            return;
+          }
+          if (signal.aborted) {
+            reject(new Error("aborted"));
+            return;
+          }
+          signal.addEventListener("abort", () => {
+            reject(new Error("aborted"));
+          });
+        }),
+    );
+
+    // Controlled clock: buildTimeoutAbortSignal arms a setTimeout for the
+    // configured budget. Advancing the fake clock deterministically fires the
+    // timeout, aborting the credential wait without real wall-clock delay.
+    vi.useFakeTimers();
+    try {
+      const promise = buildGoogleMusicGenerationProvider().generateMusic({
+        provider: "google",
+        model: "lyria-3-clip-preview",
+        prompt: "upbeat synthpop anthem",
+        cfg: {},
+        timeoutMs: 200,
+      });
+
+      // Attach the rejection assertion before advancing the clock so the
+      // abort listener's reject is never momentarily unhandled.
+      const assertion = expect(promise).rejects.toThrow(/timed out|aborted/i);
+
+      // Before the timeout fires, credential lookup is still pending and no
+      // HTTP attempt has started.
+      expect(generateContentMock).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(200);
+      await assertion;
+
+      expect(generateContentMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  }, 5_000);
 });
