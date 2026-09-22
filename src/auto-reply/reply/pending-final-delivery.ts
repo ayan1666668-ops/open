@@ -3,9 +3,7 @@ import { normalizeReplyPayloadsForDelivery } from "../../infra/outbound/payloads
 import {
   isMessagePresentationInteractiveBlock,
   normalizeMessagePresentation,
-  renderMessagePresentationChartFallbackText,
-  renderMessagePresentationTableFallbackText,
-  type MessagePresentation,
+  renderMessagePresentationFallbackText,
 } from "../../interactive/payload.js";
 import { getReplyPayloadMetadata, type ReplyPayload } from "../reply-payload.js";
 import { normalizeReplyPayload } from "./normalize-reply.js";
@@ -142,9 +140,11 @@ function collectDurableMediaDirectives(payload: ReplyPayload): string[] {
  *
  * A nonempty `text` field alone is not trusted to carry the presentation's
  * substance: when `presentationTextMode` is not `"fallback"` (the authored
- * complete plain rendering), chart/table fallback text is mirrored into the
- * record with the canonical renderers, exactly as delivery does in
- * `resolveOutboundPayloadMirrorText`.
+ * complete plain rendering), the complete shared presentation fallback
+ * (`renderMessagePresentationFallbackText` — titles, text/context blocks,
+ * chart/table) is used, exactly as Telegram delivery does in
+ * `extensions/telegram/src/interactive-fallback.ts`. This preserves the full
+ * visible reply instead of silently dropping titles/text/context.
  */
 function downgradeRichTextOnlyForRecovery(payload: ReplyPayload): ReplyPayload | undefined {
   const presentation = normalizeMessagePresentation(payload.presentation);
@@ -183,28 +183,18 @@ function downgradeRichTextOnlyForRecovery(payload: ReplyPayload): ReplyPayload |
   if (payload.presentationTextMode === "fallback") {
     return plainPayload;
   }
-  const substanceFallback = renderPresentationSubstanceFallbackText(presentation);
-  if (!substanceFallback) {
+  const completeFallback = renderMessagePresentationFallbackText({
+    presentation,
+    text: payload.text.trim(),
+  });
+  if (!completeFallback.trim()) {
     return plainPayload;
   }
   const { presentationTextMode: _presentationTextMode, ...strippedPayload } = plainPayload;
   return {
     ...strippedPayload,
-    text: `${payload.text.trim()}\n${substanceFallback}`,
+    text: completeFallback,
   };
-}
-
-/** Canonical fallback text for chart/table blocks (delivery renders the same). */
-function renderPresentationSubstanceFallbackText(presentation: MessagePresentation): string {
-  const lines: string[] = [];
-  for (const block of presentation.blocks) {
-    if (block.type === "chart") {
-      lines.push(renderMessagePresentationChartFallbackText(block));
-    } else if (block.type === "table") {
-      lines.push(renderMessagePresentationTableFallbackText(block));
-    }
-  }
-  return lines.filter((line) => line.trim()).join("\n");
 }
 
 function hasUnsupportedDurableRecoveryShape(payload: ReplyPayload): boolean {

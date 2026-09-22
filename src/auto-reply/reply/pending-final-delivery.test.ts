@@ -244,8 +244,8 @@ describe("normalizePendingFinalRecoveryPayloads", () => {
 
   it("mirrors chart/table substance into recovery without an authored fallback", () => {
     // Without `presentationTextMode: "fallback"` the text field may be just a
-    // title, so the canonical chart/table fallback text joins the record —
-    // the same projection delivery uses in resolveOutboundPayloadMirrorText.
+    // title, so the complete shared presentation fallback joins the record —
+    // titles, text/context, chart/table — exactly as Telegram delivery does.
     expect(
       buildRecoverablePendingFinalDeliveryText([
         {
@@ -262,7 +262,7 @@ describe("normalizePendingFinalRecoveryPayloads", () => {
           },
         },
       ]),
-    ).toBe("Quarterly results\nSales (table)\n- Region: North; Total: 10");
+    ).toBe("Quarterly results\n\nSales (table)\n- Region: North; Total: 10");
     expect(
       buildRecoverablePendingFinalDeliveryText([
         {
@@ -279,7 +279,26 @@ describe("normalizePendingFinalRecoveryPayloads", () => {
           },
         },
       ]),
-    ).toBe("Shares\nSplit (pie chart)\n- A: 1");
+    ).toBe("Shares\n\nSplit (pie chart)\n- A: 1");
+  });
+
+  it("preserves presentation titles, text, and context during recovery", () => {
+    // Regression for ClawSweeper P1: a summary `text` plus distinct presentation
+    // title/text/context must all survive as the complete visible reply.
+    expect(
+      buildRecoverablePendingFinalDeliveryText([
+        {
+          text: "Summary",
+          presentation: {
+            title: "Report",
+            blocks: [
+              { type: "text", text: "Actual answer" },
+              { type: "context", text: "Context note" },
+            ],
+          },
+        },
+      ]),
+    ).toBe("Summary\n\nReport\n\nActual answer\n\nContext note");
   });
 
   it("trusts text as complete with an authored fallback presentation", () => {
