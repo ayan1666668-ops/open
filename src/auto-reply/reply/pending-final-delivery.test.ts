@@ -219,6 +219,90 @@ describe("normalizePendingFinalRecoveryPayloads", () => {
     ).toBeUndefined();
   });
 
+  it("refuses presentation buttons/selects without the deprecated interactive field", () => {
+    // Buttons and selects live in `presentation` now; replaying the text
+    // while dropping the controls would present a lossy reply as recovered.
+    expect(
+      buildRecoverablePendingFinalDeliveryText([
+        {
+          text: "Pick one",
+          presentation: { blocks: [{ type: "buttons", buttons: [{ label: "A" }] }] },
+        },
+      ]),
+    ).toBeUndefined();
+    expect(
+      buildRecoverablePendingFinalDeliveryText([
+        {
+          text: "Choose",
+          presentation: {
+            blocks: [{ type: "select", placeholder: "Choose", options: [{ label: "A" }] }],
+          },
+        },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("mirrors chart/table substance into recovery without an authored fallback", () => {
+    // Without `presentationTextMode: "fallback"` the text field may be just a
+    // title, so the canonical chart/table fallback text joins the record —
+    // the same projection delivery uses in resolveOutboundPayloadMirrorText.
+    expect(
+      buildRecoverablePendingFinalDeliveryText([
+        {
+          text: "Quarterly results",
+          presentation: {
+            blocks: [
+              {
+                type: "table",
+                caption: "Sales",
+                headers: ["Region", "Total"],
+                rows: [["North", 10]],
+              },
+            ],
+          },
+        },
+      ]),
+    ).toBe("Quarterly results\nSales (table)\n- Region: North; Total: 10");
+    expect(
+      buildRecoverablePendingFinalDeliveryText([
+        {
+          text: "Shares",
+          presentation: {
+            blocks: [
+              {
+                type: "chart",
+                chartType: "pie",
+                title: "Split",
+                segments: [{ label: "A", value: 1 }],
+              },
+            ],
+          },
+        },
+      ]),
+    ).toBe("Shares\nSplit (pie chart)\n- A: 1");
+  });
+
+  it("trusts text as complete with an authored fallback presentation", () => {
+    expect(
+      buildRecoverablePendingFinalDeliveryText([
+        {
+          text: "North: 10",
+          presentationTextMode: "fallback",
+          presentation: {
+            blocks: [
+              {
+                type: "table",
+                caption: "Sales",
+                headers: ["Region", "Total"],
+                rows: [["North", 10]],
+              },
+            ],
+          },
+        },
+      ]),
+    ).toBe("North: 10");
+  });
+
   it("separates implicit delivery threading from explicit reply semantics", () => {
     expect(
       buildRecoverablePendingFinalDeliveryText([

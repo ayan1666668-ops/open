@@ -1,5 +1,12 @@
 import type { DurableDeliveryCompletion } from "../../infra/outbound/delivery-completion.js";
 import { normalizeReplyPayloadsForDelivery } from "../../infra/outbound/payloads.js";
+import {
+  isMessagePresentationInteractiveBlock,
+  normalizeMessagePresentation,
+  renderMessagePresentationChartFallbackText,
+  renderMessagePresentationTableFallbackText,
+  type MessagePresentation,
+} from "../../interactive/payload.js";
 import { getReplyPayloadMetadata, type ReplyPayload } from "../reply-payload.js";
 import { normalizeReplyPayload } from "./normalize-reply.js";
 import { sanitizePendingFinalDeliveryText } from "./pending-final-delivery-state.js";
@@ -128,12 +135,20 @@ function collectDurableMediaDirectives(payload: ReplyPayload): string[] {
 
 /**
  * Downgrades rich-text-only payloads (visible formatting in `presentation`)
- * to plain text for durable recovery. Buttons (`interactive`), threads,
+ * to plain text for durable recovery. Buttons/selects (`presentation`
+ * interactive blocks, or the deprecated `interactive`), threads,
  * media, voice/video, and delivery directives stay unrecoverable: stripping
  * them would lose actions, not just formatting.
+ *
+ * A nonempty `text` field alone is not trusted to carry the presentation's
+ * substance: when `presentationTextMode` is not `"fallback"` (the authored
+ * complete plain rendering), chart/table fallback text is mirrored into the
+ * record with the canonical renderers, exactly as delivery does in
+ * `resolveOutboundPayloadMirrorText`.
  */
 function downgradeRichTextOnlyForRecovery(payload: ReplyPayload): ReplyPayload | undefined {
-  if (payload.presentation === undefined) {
+  const presentation = normalizeMessagePresentation(payload.presentation);
+  if (presentation === undefined) {
     return undefined;
   }
   if (!payload.text?.trim()) {
@@ -158,8 +173,38 @@ function downgradeRichTextOnlyForRecovery(payload: ReplyPayload): ReplyPayload |
   ) {
     return undefined;
   }
+  // Buttons and select menus live in `presentation` now; `interactive` is only
+  // the deprecated representation. Replaying text:"Pick one" while dropping
+  // its controls would present an incomplete reply as recovered.
+  if (presentation.blocks.some(isMessagePresentationInteractiveBlock)) {
+    return undefined;
+  }
   const { presentation: _presentation, ...plainPayload } = payload;
-  return plainPayload;
+  if (payload.presentationTextMode === "fallback") {
+    return plainPayload;
+  }
+  const substanceFallback = renderPresentationSubstanceFallbackText(presentation);
+  if (!substanceFallback) {
+    return plainPayload;
+  }
+  const { presentationTextMode: _presentationTextMode, ...strippedPayload } = plainPayload;
+  return {
+    ...strippedPayload,
+    text: `${payload.text.trim()}\n${substanceFallback}`,
+  };
+}
+
+/** Canonical fallback text for chart/table blocks (delivery renders the same). */
+function renderPresentationSubstanceFallbackText(presentation: MessagePresentation): string {
+  const lines: string[] = [];
+  for (const block of presentation.blocks) {
+    if (block.type === "chart") {
+      lines.push(renderMessagePresentationChartFallbackText(block));
+    } else if (block.type === "table") {
+      lines.push(renderMessagePresentationTableFallbackText(block));
+    }
+  }
+  return lines.filter((line) => line.trim()).join("\n");
 }
 
 function hasUnsupportedDurableRecoveryShape(payload: ReplyPayload): boolean {
