@@ -29,6 +29,7 @@ import {
   type CronAttentionJob,
   buildSidebarAttentionEntries,
   compareSidebarAttentionEntries,
+  cronOverdueAt,
 } from "./sidebar-attention-items.ts";
 import { resolveSidebarUpdateAttention } from "./sidebar-attention-update.ts";
 
@@ -44,7 +45,7 @@ export class SidebarAttentionStoreController implements StoreController {
   private modelAuthStatus: ModelAuthStatusResult | null = null;
   private modelAuthAgentId: string | null = null;
   private modelAuthRefreshAt?: number;
-  private modelAuthRefreshTimer?: ReturnType<typeof globalThis.setTimeout>;
+  private healthRefreshTimer?: ReturnType<typeof globalThis.setTimeout>;
   private loadedOwner: SidebarAttentionOwner | null = null;
   private loadedClient = this.sources.gateway.snapshot.client;
   private loadedAgentScope = { ...this.sources.agentSelection.state };
@@ -132,24 +133,42 @@ export class SidebarAttentionStoreController implements StoreController {
     this.modelAuthStatus = null;
     this.modelAuthAgentId = null;
     this.modelAuthRefreshAt = undefined;
-    this.scheduleModelAuthRefresh();
+    this.scheduleHealthRefresh();
   }
 
-  private scheduleModelAuthRefresh(): void {
-    globalThis.clearTimeout(this.modelAuthRefreshTimer);
-    this.modelAuthRefreshTimer = undefined;
-    if (this.modelAuthRefreshAt === undefined || document.visibilityState === "hidden") {
+  private scheduleHealthRefresh(): void {
+    globalThis.clearTimeout(this.healthRefreshTimer);
+    this.healthRefreshTimer = undefined;
+    if (
+      this.disposed ||
+      this.sources.gateway.snapshot.phase !== "connected" ||
+      document.visibilityState === "hidden"
+    ) {
       return;
     }
-    const delay = this.modelAuthRefreshAt - Date.now();
-    if (delay <= 0) {
+    const now = Date.now();
+    if (this.modelAuthRefreshAt !== undefined && this.modelAuthRefreshAt <= now) {
       this.modelAuthRefreshAt = undefined;
       this.load(true, false);
       return;
     }
-    this.modelAuthRefreshTimer = globalThis.setTimeout(
-      () => this.scheduleModelAuthRefresh(),
-      Math.min(2_147_483_647, delay),
+    let refreshAt = this.modelAuthRefreshAt ?? Infinity;
+    for (const job of this.cronJobs) {
+      // Overdue uses a strict comparison; notify on the first millisecond after it.
+      const overdueAt = Math.floor(cronOverdueAt(job, this.cronSchedulerEnabled)) + 1;
+      if (overdueAt > now) {
+        refreshAt = Math.min(refreshAt, overdueAt);
+      }
+    }
+    if (!Number.isFinite(refreshAt)) {
+      return;
+    }
+    this.healthRefreshTimer = globalThis.setTimeout(
+      () => {
+        this.onChange();
+        this.scheduleHealthRefresh();
+      },
+      Math.min(2_147_483_647, refreshAt - now),
     );
   }
 
@@ -268,6 +287,7 @@ export class SidebarAttentionStoreController implements StoreController {
         return;
       }
       this.reconcileDismissals(scope);
+      this.scheduleHealthRefresh();
       this.onChange();
     };
     // Deferring dispatch still invalidates the pending inventory: its stale
@@ -354,7 +374,7 @@ export class SidebarAttentionStoreController implements StoreController {
       agentScope.selectedId
     ) {
       this.modelAuthRefreshAt = undefined;
-      this.scheduleModelAuthRefresh();
+      this.scheduleHealthRefresh();
       if (this.modelAuthRefresh?.generation === generation) {
         // Only explicit freshness loads queue auth work; cron events cannot
         // invalidate a pending auth response or schedule another auth request.
@@ -372,7 +392,6 @@ export class SidebarAttentionStoreController implements StoreController {
                 this.modelAuthStatus = status;
                 this.modelAuthAgentId = agentId;
                 this.modelAuthRefreshAt = status ? nextModelAuthStatusRefreshAt(status) : undefined;
-                this.scheduleModelAuthRefresh();
                 publishSource({ cronInventoryComplete: false, modelAuthAgentId: agentId });
               }
             }
@@ -434,15 +453,18 @@ export class SidebarAttentionStoreController implements StoreController {
     }
     this.loadGeneration += 1;
     this.modelAuthRefreshAt = undefined;
-    this.scheduleModelAuthRefresh();
+    this.scheduleHealthRefresh();
     this.load();
   }
 
   private readonly refreshDeferred = () => {
-    this.scheduleModelAuthRefresh();
-    if (document.visibilityState === "visible" && this.cronRefreshNeeded) {
-      // Catch up hidden changes or failed reads without reloading unchanged inventory.
-      this.load(false);
+    this.scheduleHealthRefresh();
+    if (document.visibilityState === "visible") {
+      this.onChange();
+      if (this.cronRefreshNeeded) {
+        // Catch up hidden changes or failed reads without reloading unchanged inventory.
+        this.load(false);
+      }
     }
   };
 
@@ -481,7 +503,7 @@ export class SidebarAttentionStoreController implements StoreController {
     this.disposed = true;
     this.loadGeneration += 1;
     this.modelAuthRefreshAt = undefined;
-    this.scheduleModelAuthRefresh();
+    this.scheduleHealthRefresh();
     this.stopGateway();
     this.stopEvents();
     this.stopSelection();
