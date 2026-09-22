@@ -710,6 +710,62 @@ describe("secret egress proxy", () => {
     );
   });
 
+  it("re-validates a registered grant when the store mutations version advances", async () => {
+    // A grant registered during a staged provider-credential write keeps working
+    // while versions match; after a store mutation (rollback), substitution must
+    // consult the live store and refuse the no-longer-present row.
+    const secret = "staged-grant-secret-value";
+    const sentinel = mintSecretSentinel(secret, { label: "egress-grant" });
+
+    // Register while the staged row exists in the store.
+    const { openOpenClawStateDatabase, closeOpenClawStateDatabaseForTest } =
+      await import("../../state/openclaw-state-db.js");
+    const fsx = await import("node:fs");
+    const osp = await import("node:os");
+    const stateDir = fsx.mkdtempSync(path.join(osp.tmpdir(), "egress-grant-"));
+    process.env.OPENCLAW_STATE_DIR = stateDir;
+    process.env.OPENCLAW_CONFIG_PATH = path.join(stateDir, "openclaw.json");
+    process.env.OPENCLAW_HOME = stateDir;
+    const { writeSecretStoreEntryWithRollback } = await import("../store/secret-store.js");
+    openOpenClawStateDatabase({ env: { OPENCLAW_STATE_DIR: stateDir } });
+    const scope = { kind: "team" } as const;
+    // Stage the row the grant will be registered against (simulates the masked
+    // secrets.request write landing while an exec is between snapshots).
+    const staged = writeSecretStoreEntryWithRollback({
+      scope,
+      name: "SERVICE_API_KEY",
+      value: secret,
+      kind: "secret",
+      allowedHosts: ["localhost"],
+      updatedBy: "grant-test",
+    });
+
+    proxyEnv = registerSentinel({ sentinel, allowedHosts: ["LOCALHOST"] });
+
+    // Version matches registration: substitution succeeds.
+    await expect(
+      requestThroughTunnel({ headers: { Authorization: `Bearer ${sentinel}` } }),
+    ).resolves.toMatchObject({ status: 200 });
+    const originRequestsAfterValidUse = originRequests.length;
+
+    // Roll the staged row back: version advances, grant diverges, substitution refuses.
+    staged.rollback();
+
+    const result = await requestThroughTunnel({
+      headers: { Authorization: `Bearer ${sentinel}` },
+    });
+    expect(result.status).toBe(502);
+    // The refusal must happen before anything new reaches the origin: no further
+    // requests, and none of them carry the compensated credential.
+    expect(originRequests.length).toBe(originRequestsAfterValidUse);
+    expect(auditEvents.at(-1)).toMatchObject({
+      kind: "refused",
+      reason: "destination-not-allowed",
+    });
+    closeOpenClawStateDatabaseForTest();
+    fsx.rmSync(stateDir, { recursive: true, force: true });
+  });
+
   it.each([
     { label: "an unbound host", allowedHosts: ["api.example.com"] },
     { label: "no bound hosts", allowedHosts: [] },

@@ -24,3 +24,33 @@ Substitution itself was not the defect: a manual reproduction with a fixture tok
 - New unit tests `src/secrets/store/secret-store.version.test.ts` cover the counter: write, allowed-hosts update, rollback write, and delete each bump it; reads do not.
 - Focused Vitest: 66 tests across the two new files, the existing egress proxy suite, and the exec security-floor suite, all passing.
 - No configuration, schema, or dependency changes. Feature-off behavior is unchanged.
+
+## Review Fixes (2026-09-21, head d7b14403 and later)
+
+Addressing the ClawSweeper review of `37a71795`:
+
+**[P1] Ordinary environment snapshots stay run-stable.** `resolveStoreEnv` now splits into two layers: ordinary `kind: "env"` rows are read once per tool instance and never refreshed; only the protected-credential layer (sentinels + egress bindings) is keyed on the store mutations version. Ordinary env values no longer change mid-run, including with secret egress disabled.
+
+**[P2] Successful rollbacks advance the mutation version.** A compensated write invalidates cached snapshots, so later commands return to the pre-write state instead of retaining the staged credential.
+
+**[security] Egress grants re-validate on store divergence.** Process grants record the store mutations version at registration. When substitution happens after the version advanced, the grant re-checks the row against the live store (new `lookupSecretStoreBinding`) and refuses if the credential was rolled back/removed or the host binding changed. Lookup failures fail closed (refusal), never fall back to the stale grant.
+
+## Real-path proof (synthetic fixtures, redacted)
+
+Run against the real secret store (SQLite via the real state-db lifecycle) and the real exec-environment read path; all values are fixtures, nothing real:
+
+```text
+[1] before write: META sentinel = (absent)
+[2] after write: version 0 -> 1; sentinel present = true; allowedHosts = ["graph.facebook.com"]
+[3] rollback ok = true; version 2 -> 3 (advanced = true)
+[3] refreshed snapshot contains PROVIDER_TOKEN = (absent - correct)
+[4] META token still valid after unrelated rollback = true
+```
+
+Reproduction: `node --import ./scripts/tsx.mjs proof_store_refresh.mts` (committed at the repo root of the branch).
+
+The proxy forwarding chain (CONNECT -> substitution -> upstream) is covered by the real-socket egress suite: 38 proxy-server tests including the new `re-validates a registered grant when the store mutations version advances`, which registers a grant against a staged row, rolls it back, and asserts the next substitution is refused (`destination-not-allowed`) with no new origin request. Full affected-suite result: 150 tests across 9 files (secret store, egress proxy, exec cache) all passing; the two pre-existing `bash-tools.exec.approval-id.test.ts` follow-up failures reproduce on pristine `37a71795` without these changes and are unrelated (network-dependent follow-up routing).
+
+## Snapshot-scope decision
+
+Per the review recommendation: refresh is narrowed to protected credentials only. Ordinary env rows and host-policy snapshots keep the documented run-stable lifetime; already-running process grants keep their documented lifetime, with the one addition that a store divergence re-validates the grant's bindings at substitution time so compensated credentials cannot be used by commands launched after rollback.

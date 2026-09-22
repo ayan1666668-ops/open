@@ -18,7 +18,7 @@ import {
   resolveSecretSentinel,
   SECRET_SENTINEL_PATTERN,
 } from "../sentinel.js";
-import { getSecretStoreMutationsVersion } from "../store/secret-store.js";
+import { getSecretStoreMutationsVersion, lookupSecretStoreBinding } from "../store/secret-store.js";
 import {
   createSecretEgressCertificates,
   SecretEgressCertificateError,
@@ -158,7 +158,13 @@ function resolveRegisteredSentinel(params: {
   // write was rolled back). On divergence, re-check the row against the live store
   // so compensated credentials stop resolving for new substitutions.
   if (params.registered.storeVersion !== getSecretStoreMutationsVersion()) {
-    const current = lookupSecretStoreBinding(binding.name);
+    // Fail closed: a store read failure must not fall back to the stale grant.
+    let current: { allowedHosts: Set<string> } | undefined;
+    try {
+      current = lookupSecretStoreBinding(binding.name);
+    } catch {
+      current = undefined;
+    }
     if (!current || !current.allowedHosts.has(params.host)) {
       throw new SecretEgressSubstitutionError("destination-not-allowed", {
         host: params.host,
