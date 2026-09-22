@@ -5,6 +5,11 @@ import { useAutoCleanupTempDirTracker } from "../../test/helpers/temp-dir.js";
 import { createDeferredCore } from "../shared/deferred.js";
 import type { OpenClawStateReadOutcome } from "./openclaw-state-read.types.js";
 
+vi.hoisted(() => {
+  // Shared setup can preload the real reader; bind this fixture to its transport mocks.
+  vi.resetModules();
+});
+
 const mock = vi.hoisted(() => ({
   close: vi.fn<() => Promise<void>>(),
   read: vi.fn<() => Promise<OpenClawStateReadOutcome>>(),
@@ -13,14 +18,13 @@ const mock = vi.hoisted(() => ({
   independent: vi.fn(),
   prepareNative: vi.fn(),
   prepareSource: vi.fn(),
+  prepareSourceAsync: vi.fn(),
   excluded: vi.fn<() => boolean>(),
-  mutation: vi.fn<() => (() => void) | undefined>(),
   releaseSourcePin: vi.fn(),
 }));
 vi.mock("../infra/state-database-coordinator.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../infra/state-database-coordinator.js")>()),
   hasStateDatabaseSourceExclusion: mock.excluded,
-  prepareStateDatabaseCanonicalMutation: mock.mutation,
   acquireStateDatabaseHandleLease: () => ({ release: mock.releaseSourcePin }),
 }));
 vi.mock("./openclaw-state-db-cache.js", async (importOriginal) => ({
@@ -38,13 +42,12 @@ vi.mock("./openclaw-state-read-worker.js", () => ({
     read: mock.read,
     validateFresh: async () => {},
     close: mock.close,
-    readFailure: async () => undefined,
   }),
 }));
 vi.mock("../infra/sqlite-snapshot-source.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../infra/sqlite-snapshot-source.js")>()),
   prepareSqliteReadOnlyLocation: mock.prepareSource,
-  prepareSqliteReadOnlyLocationAsync: mock.prepareSource,
+  prepareSqliteReadOnlyLocationAsync: mock.prepareSourceAsync,
 }));
 vi.mock("../infra/sqlite-readonly-location-cleanup.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../infra/sqlite-readonly-location-cleanup.js")>()),
@@ -80,7 +83,6 @@ const tempDirs = useAutoCleanupTempDirTracker((cleanup) =>
 );
 beforeEach(() => {
   mock.excluded.mockReset().mockReturnValue(false);
-  mock.mutation.mockReset().mockReturnValue(undefined);
   mock.releaseSourcePin.mockReset();
   mock.borrow.mockReset();
   mock.independent.mockReset();
@@ -92,6 +94,11 @@ beforeEach(() => {
     location: "/fixture/prepared.sqlite",
     cleanupRoot: "/fixture/prepared",
     cleanup: () => true,
+    cleanupAsync: mock.cleanup,
+  }));
+  mock.prepareSourceAsync.mockReset().mockImplementation(async () => ({
+    location: "/fixture/prepared.sqlite",
+    cleanupRoot: "/fixture/prepared",
     cleanupAsync: mock.cleanup,
   }));
   mock.close.mockReset().mockResolvedValue();
@@ -128,9 +135,10 @@ it("reads independently when native snapshot borrowing refuses a transaction", a
   expect(mock.borrow).not.toHaveBeenCalled();
   expect(mock.prepareNative).not.toHaveBeenCalled();
   expect(mock.prepareSource).not.toHaveBeenCalled();
+  expect(mock.prepareSourceAsync).not.toHaveBeenCalled();
 });
 
-it.each(["ordinary", "excluded", "mutation"] as const)(
+it.each(["ordinary", "excluded"] as const)(
   "prepares %s artifact reads from the retained native source with its cleanup owner",
   async (mode) => {
     const options = source();
@@ -138,7 +146,6 @@ it.each(["ordinary", "excluded", "mutation"] as const)(
     const observe = vi.fn();
     const release = vi.fn();
     mock.excluded.mockReturnValue(mode === "excluded");
-    mock.mutation.mockReturnValue(mode === "mutation" ? () => {} : undefined);
     mock.borrow.mockReturnValue({ database, assertCurrent() {}, observe, release });
     await expect(
       withArtifactPreservingStateReads(() =>
@@ -196,6 +203,70 @@ it("retains the borrowed source through pending preparation and failed published
   expect(release).toHaveBeenCalledOnce();
 });
 
+it("joins the cold snapshot query transport before producer cleanup", async () => {
+  const options = source();
+  const stopping = createDeferredCore();
+  const stopped = createDeferredCore();
+  const events: string[] = [];
+  mock.read.mockImplementation(async () => {
+    events.push("query completed");
+    return { value: { ok: true, type: "fleet.list", sourceAdmitted: true, cells: [] } };
+  });
+  mock.close.mockImplementationOnce(async () => {
+    events.push("transport closing");
+    stopping.resolve();
+    await stopped.promise;
+    events.push("transport stopped");
+  });
+  mock.cleanup.mockImplementation(async () => {
+    events.push("producer snapshot cleaned");
+    return true;
+  });
+  const result = withArtifactPreservingStateReads(() =>
+    executeExistingOpenClawStateRead(options, { type: "fleet.list" }),
+  );
+  try {
+    await stopping.promise;
+    expect(mock.prepareSourceAsync).toHaveBeenCalledExactlyOnceWith(options.path, {
+      preserveSourceArtifacts: true,
+      signal: expect.any(AbortSignal),
+    });
+    expect(mock.prepareSource).not.toHaveBeenCalled();
+    expect(mock.prepareNative).not.toHaveBeenCalled();
+    expect(mock.independent).not.toHaveBeenCalled();
+    expect(mock.read).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        location: "/fixture/prepared.sqlite",
+        snapshotRoot: "/fixture/prepared",
+        checkFreshAdmission: true,
+        expectedIdentity: undefined,
+      }),
+      expect.objectContaining({
+        assertCurrent: expect.any(Function),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(events).toEqual(["query completed", "transport closing"]);
+    expect(mock.cleanup).not.toHaveBeenCalled();
+  } finally {
+    stopped.resolve();
+  }
+  await expect(result).resolves.toEqual({
+    ok: true,
+    type: "fleet.list",
+    sourceAdmitted: true,
+    cells: [],
+  });
+  expect(events).toEqual([
+    "query completed",
+    "transport closing",
+    "transport stopped",
+    "producer snapshot cleaned",
+  ]);
+  expect(mock.close).toHaveBeenCalledOnce();
+  expect(mock.cleanup).toHaveBeenCalledOnce();
+});
+
 it("preserves native transaction refusal for artifact reads without independent fallback", async () => {
   const options = source();
   const failure = new Error(
@@ -213,6 +284,7 @@ it("preserves native transaction refusal for artifact reads without independent 
   expect(mock.independent).not.toHaveBeenCalled();
   expect(mock.prepareNative).not.toHaveBeenCalled();
   expect(mock.prepareSource).not.toHaveBeenCalled();
+  expect(mock.prepareSourceAsync).not.toHaveBeenCalled();
   expect(mock.read).not.toHaveBeenCalled();
 });
 

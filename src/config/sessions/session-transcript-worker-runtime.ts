@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { expectDefined } from "@openclaw/normalization-core";
 import { toErrorObject } from "@openclaw/normalization-core/error-coercion";
-import type { SessionCostUsageCacheReadResult } from "../../infra/session-cost-usage-cache-read.js";
 import {
   UsageCostWorkerReplyError,
   type UsageCostWorkerInput,
@@ -18,7 +17,6 @@ import { resolveStateDir } from "../state-dir.js";
 import { loadSessionEntryReadOnlyInScope } from "./session-accessor.sqlite-entry.js";
 import { resolveSqliteScope, toDatabaseOptions } from "./session-accessor.sqlite-scope.js";
 import type { SessionAccessScope } from "./session-accessor.types.js";
-import type { SessionHistoryWorkerResult } from "./session-history-types.js";
 import {
   sessionHistoryCleanupError,
   unwrapSessionTranscriptWorkerReply,
@@ -43,32 +41,14 @@ import {
   type SessionDatabaseCleanup,
 } from "./session-transcript-worker-resources.js";
 import type {
-  SessionTranscriptHistoryWorkerInput,
+  SessionHistoryWorkerDatabase,
+  SessionHistoryWorkerInput,
+  SessionHistoryWorkerPreparedInput,
   SessionRowPresenceWorkerInput,
-  SessionMembersWorkerInput,
-  SessionEntryListWorkerInput,
-  SessionEntryListWorkerResult,
-  SessionUsageCacheWorkerInput,
+  SessionTranscriptWorkerValues,
 } from "./session-transcript-worker.types.js";
 
-export type SessionHistoryWorkerDatabase = {
-  generation: number;
-  assertCurrent: () => void;
-  run: (
-    prepare: () => Omit<SessionTranscriptHistoryWorkerInput, "database">,
-    inputBytes: number,
-  ) => Promise<SessionHistoryWorkerResult>;
-  readEntryPresence: (scope: SessionRowPresenceWorkerInput["scope"]) => Promise<boolean>;
-  readEntries: (
-    scope: SessionEntryListWorkerInput["scope"],
-  ) => Promise<SessionEntryListWorkerResult["entries"]>;
-  readMembers: (
-    input: Omit<SessionMembersWorkerInput, "kind" | "database">,
-  ) => Promise<SessionMember[]>;
-  readUsageCache: (
-    input: Omit<SessionUsageCacheWorkerInput, "kind" | "database">,
-  ) => Promise<SessionCostUsageCacheReadResult>;
-};
+export type { SessionHistoryWorkerDatabase } from "./session-transcript-worker.types.js";
 
 type SessionCostUsageWorkerOptions = Pick<
   WorkerTaskOptions<UsageCostWorkerInput>,
@@ -157,21 +137,9 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
   try {
     assertCurrent();
     const runRequest = async <TResult>(
-      prepare: () =>
-        | Omit<SessionTranscriptHistoryWorkerInput, "database">
-        | Omit<SessionRowPresenceWorkerInput, "database">
-        | Omit<SessionMembersWorkerInput, "database">
-        | Omit<SessionEntryListWorkerInput, "database">
-        | Omit<SessionUsageCacheWorkerInput, "database">,
+      prepare: () => SessionHistoryWorkerPreparedInput,
       inputBytes: number,
-      receive: (
-        value:
-          | SessionHistoryWorkerResult
-          | boolean
-          | SessionMember[]
-          | SessionEntryListWorkerResult
-          | SessionCostUsageCacheReadResult,
-      ) => TResult,
+      receive: (value: SessionTranscriptWorkerValues[SessionHistoryWorkerInput["kind"]]) => TResult,
     ): Promise<TResult> => {
       assertCurrent();
       let sequence = 0;
@@ -188,13 +156,7 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
           { inputBytes, timeoutMs: 60_000 },
         );
         const value = receive(
-          unwrapSessionTranscriptWorkerReply<
-            | "history-page"
-            | "session-row-presence"
-            | "session-members"
-            | "session-entry-list"
-            | "usage-cache"
-          >(reply),
+          unwrapSessionTranscriptWorkerReply<SessionHistoryWorkerInput["kind"]>(reply),
         );
         if (reply.ok && reply.closedHistoryDatabase) {
           // A later dispatched request may already hold this target's next native custody.
@@ -214,6 +176,21 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
       }
     };
     const owner: SessionHistoryWorkerDatabase = {
+      searchTranscripts: async (params) =>
+        await runRequest(
+          () => ({ kind: "transcript-search", params }),
+          JSON.stringify(params).length * 2,
+          (value) => {
+            if (
+              typeof value === "boolean" ||
+              Array.isArray(value) ||
+              value.kind !== "transcript-search"
+            ) {
+              throw new Error("Session history worker returned another result instead of search");
+            }
+            return value.result;
+          },
+        ),
       generation: owned.generation,
       assertCurrent,
       run: async (prepare, inputBytes) =>
@@ -221,13 +198,55 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
           if (
             typeof value === "boolean" ||
             Array.isArray(value) ||
+            value.kind === "session-preview" ||
+            value.kind === "session-title-fields" ||
             value.kind === "session-entry-list" ||
+            value.kind === "session-exact-entries" ||
+            value.kind === "session-store-target" ||
+            value.kind === "session-target-inventory" ||
+            value.kind === "session-target-registry-required" ||
+            value.kind === "session-identity-evidence" ||
+            value.kind === "transcript-search" ||
             value.kind === "usage-refresh-lock"
           ) {
             throw new Error("Session history worker returned metadata instead of history");
           }
           return value;
         }),
+      readPreview: async (input) =>
+        await runRequest(
+          () => ({ kind: "session-preview", ...input }),
+          JSON.stringify(input).length * 2,
+          (value) => {
+            if (
+              typeof value === "boolean" ||
+              Array.isArray(value) ||
+              value.kind !== "session-preview"
+            ) {
+              throw new Error(
+                "Session history worker returned another result instead of a preview",
+              );
+            }
+            return value.items;
+          },
+        ),
+      readTitleFields: async (input) =>
+        await runRequest(
+          () => ({ kind: "session-title-fields", ...input }),
+          JSON.stringify(input).length * 2,
+          (value) => {
+            if (
+              typeof value === "boolean" ||
+              Array.isArray(value) ||
+              value.kind !== "session-title-fields"
+            ) {
+              throw new Error(
+                "Session history worker returned another result instead of title fields",
+              );
+            }
+            return value.fields;
+          },
+        ),
       readUsageCache: async (input) =>
         await runRequest(
           () => ({ kind: "usage-cache", ...input }),
@@ -269,6 +288,23 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
             return value;
           },
         ),
+      readExactEntries: async (input) =>
+        await runRequest(
+          () => ({ kind: "session-exact-entries", ...input }),
+          JSON.stringify(input).length * 2,
+          (value) => {
+            if (
+              typeof value === "boolean" ||
+              Array.isArray(value) ||
+              value.kind !== "session-exact-entries"
+            ) {
+              throw new Error(
+                "Session history worker returned another result instead of exact entries",
+              );
+            }
+            return value;
+          },
+        ),
       readEntries: async (scope) =>
         await runRequest(
           () => ({ kind: "session-entry-list", scope }),
@@ -282,6 +318,23 @@ function retainSessionHistoryWorkerDatabase(options: OpenClawAgentDatabaseOption
               throw new Error("Session history worker returned another result instead of entries");
             }
             return value.entries;
+          },
+        ),
+      readIdentityEvidence: async (input) =>
+        await runRequest(
+          () => ({ kind: "session-identity-evidence", ...input }),
+          JSON.stringify(input).length * 2,
+          (value) => {
+            if (
+              typeof value === "boolean" ||
+              Array.isArray(value) ||
+              value.kind !== "session-identity-evidence"
+            ) {
+              throw new Error(
+                "Session history worker returned another result instead of identity evidence",
+              );
+            }
+            return value.evidence;
           },
         ),
     };
