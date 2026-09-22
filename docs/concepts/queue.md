@@ -45,6 +45,16 @@ Same-turn steering is the default. A prompt that arrives mid-run is injected int
 
 For runtime-specific timing and dependency behavior, see [Steering queue](/concepts/queue-steering). For the explicit `/steer <message>` command, see [Steer](/tools/steer).
 
+Gateway input retains its authenticated operator and original scope ceiling while
+queued or delegated to a child. Collecting messages or steering an active run
+requires compatible operator sources and tool permissions; other input waits in
+FIFO order instead of borrowing the active or newest sender's permissions.
+
+An accepted turn can continue after its request returns or its client disconnects.
+That does not extend revoked device authority or permissions removed by a current
+[operator role](/gateway/operator-scopes#named-operator-roles). Subsequent actions
+still check the original source, including work held by an accepted child.
+
 Configure globally or per channel via `messages.queue`:
 
 ```json5
@@ -153,7 +163,7 @@ In `collect` mode, appending the combined
 turn and marking its source inputs consumed happen in one transaction. A browser
 reconnect can reconcile those source inputs even if it missed their final events.
 
-The chat displays recorded client sources separately from the sender, for example `Alice · via CLI`.
+The chat displays recorded non-Web client sources separately from the sender, for example `Alice · via CLI`. Web sources are omitted from these labels, including in collected messages that also contain input from another client.
 Reported app names describe the submitting client; they do not establish a human identity or grant permissions.
 Collected messages retain their contributing client sources, and older messages without recorded sources keep their existing attribution.
 
