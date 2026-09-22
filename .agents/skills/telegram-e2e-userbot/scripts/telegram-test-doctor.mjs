@@ -8,6 +8,7 @@ import { acquireTelegramTestCredential } from "./telegram-test-credential.mjs";
 
 const SKILL_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const USER_DRIVER_PATH = path.join(SKILL_DIR, "scripts", "user-driver.py");
+const MISSING_GROUP_DIAGNOSTIC = "[credential_state_missing_group]";
 
 export async function runTelegramTestDoctor({
   acquireCredential = acquireTelegramTestCredential,
@@ -34,9 +35,18 @@ export async function runTelegramTestDoctor({
         timeoutMs: 30_000,
       },
     );
+    if (
+      status.status !== 0 &&
+      !status.timedOut &&
+      status.stderr.includes(MISSING_GROUP_DIAGNOSTIC)
+    ) {
+      throw new Error(
+        "TDLib Test Server configured group is missing from cold-restored state. Disable and republish this credential.",
+      );
+    }
     if (status.status !== 0 || status.timedOut) {
       throw new Error(
-        "TDLib Test Server credential is unauthorized or its configured group is missing from cold-restored state. Disable and republish this credential.",
+        "TDLib readiness failed. Check the existing uv launcher and TDLib runtime before requesting session repair.",
       );
     }
     const driver = JSON.parse(status.stdout);

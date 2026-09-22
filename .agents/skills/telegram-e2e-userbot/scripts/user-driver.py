@@ -41,10 +41,23 @@ TDLIB_CACHE_ROOT = Path(
     or (Path.home() / ".cache/openclaw/telegram-e2e-userbot/tdlib")
 ).expanduser()
 
+# Propagated across the subprocess boundary so the doctor can distinguish a
+# stale credential archive from launcher, timeout, and unrelated TDLib failures.
+CREDENTIAL_STATE_MISSING_GROUP = "credential_state_missing_group"
+
 
 class DriverError(RuntimeError):
-    def __init__(self, message, *, tdlib_code=None, tdlib_message="", tdlib_method=""):
+    def __init__(
+        self,
+        message,
+        *,
+        diagnostic_code="",
+        tdlib_code=None,
+        tdlib_message="",
+        tdlib_method="",
+    ):
         super().__init__(message)
+        self.diagnostic_code = diagnostic_code
         self.tdlib_code = tdlib_code
         self.tdlib_message = tdlib_message
         self.tdlib_method = tdlib_method
@@ -508,7 +521,8 @@ class UserDriver:
             ):
                 raise
             raise DriverError(
-                f"Chat {chat} is missing from the cold-restored TDLib state. Disable and republish the pooled credential with a snapshot where getChat(groupId) succeeds."
+                f"Chat {chat} is missing from the cold-restored TDLib state. Disable and republish the pooled credential with a snapshot where getChat(groupId) succeeds.",
+                diagnostic_code=CREDENTIAL_STATE_MISSING_GROUP,
             ) from error
 
     def formatted_text(self, text):
@@ -1198,7 +1212,8 @@ def main():
     try:
         args.func(args)
     except DriverError as error:
-        print(str(error), file=sys.stderr)
+        code = f"[{error.diagnostic_code}] " if error.diagnostic_code else ""
+        print(f"{code}{error}", file=sys.stderr)
         sys.exit(1)
 
 

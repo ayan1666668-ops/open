@@ -104,7 +104,8 @@ test("doctor rejects a cold-restored credential without its configured group", a
       runCommandImpl: async () => ({
         status: 1,
         stdout: "",
-        stderr: "Chat -1001 is missing from the cold-restored TDLib state.",
+        stderr:
+          "[credential_state_missing_group] Chat -1001 is missing from the cold-restored TDLib state.",
         timedOut: false,
       }),
       startProxy: async () => {
@@ -115,3 +116,39 @@ test("doctor rejects a cold-restored credential without its configured group", a
   );
   assert.equal(released, true);
 });
+
+for (const [name, result] of [
+  ["launcher failure", { status: null, stdout: "", stderr: "spawn uv ENOENT", timedOut: false }],
+  ["timeout", { status: 1, stdout: "", stderr: "", timedOut: true }],
+  [
+    "unrelated TDLib failure",
+    { status: 1, stdout: "", stderr: "Timed out waiting for getMe", timedOut: false },
+  ],
+]) {
+  test(`doctor preserves ${name} as a runtime diagnostic`, async () => {
+    let released = false;
+    const credential = {
+      driverEnv: {},
+      groupId: "-1001",
+      whenLeaseUnhealthy: new Promise(() => {}),
+      assertLeaseHealthy: () => {},
+      release: async () => {
+        released = true;
+      },
+    };
+
+    await assert.rejects(
+      runTelegramTestDoctor({
+        acquireCredential: async () => credential,
+        runCommandImpl: async () => result,
+        startProxy: async () => {
+          throw new Error("proxy must not start after TDLib readiness failure");
+        },
+      }),
+      (error) =>
+        /Check the existing uv launcher and TDLib runtime/u.test(error.message) &&
+        !/Disable and republish/u.test(error.message),
+    );
+    assert.equal(released, true);
+  });
+}
