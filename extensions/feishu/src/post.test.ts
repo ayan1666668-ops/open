@@ -188,6 +188,7 @@ describe("parsePostContent", () => {
           kind: "file",
           key: "file_v3_0015l_1a389bce-aabb-ccdd-eeff-1234567890ab",
           fileName: "amount-2026-08-01_2026-08-31.csv",
+          origin: "top-level",
         },
       ],
       mentionedOpenIds: [],
@@ -222,8 +223,18 @@ describe("parsePostContent", () => {
     });
 
     expect(parsePostContent(multiFile).attachments).toEqual([
-      { kind: "file", key: "file_v3_zip_aug", fileName: "usage_data_2026-08-01_2026-08-31.zip" },
-      { kind: "file", key: "file_v3_zip_sep", fileName: "usage_data_2026-09-01_2026-09-18.zip" },
+      {
+        kind: "file",
+        key: "file_v3_zip_aug",
+        fileName: "usage_data_2026-08-01_2026-08-31.zip",
+        origin: "top-level",
+      },
+      {
+        kind: "file",
+        key: "file_v3_zip_sep",
+        fileName: "usage_data_2026-09-01_2026-09-18.zip",
+        origin: "top-level",
+      },
     ]);
 
     expect(
@@ -244,7 +255,19 @@ describe("parsePostContent", () => {
           },
         }),
       ).attachments,
-    ).toEqual([{ kind: "file", key: "file_v3_locale", fileName: "locale.csv" }]);
+    ).toEqual([
+      { kind: "file", key: "file_v3_locale", fileName: "locale.csv", origin: "top-level" },
+    ]);
+
+    expect(
+      parsePostContent(
+        JSON.stringify({
+          title: "",
+          content: [[]],
+          files: [{ file_key: "file_pdf" }],
+        }),
+      ).attachments,
+    ).toEqual([{ kind: "file", key: "file_pdf", origin: "top-level" }]);
   });
 
   it("does not duplicate top-level files[] already present as media tags", () => {

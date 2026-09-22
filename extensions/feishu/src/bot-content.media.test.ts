@@ -131,6 +131,68 @@ describe("resolveFeishuMediaList post files[]", () => {
     ]);
   });
 
+  it("keeps unnamed top-level post files as documents when download supplies the filename", async () => {
+    saveMessageResourceFeishu.mockImplementation(async () => ({
+      saved: {
+        id: "report.pdf",
+        path: "/tmp/report.pdf",
+        size: 12,
+        contentType: "application/pdf",
+      },
+      fileName: "report.pdf",
+      contentType: "application/pdf",
+    }));
+
+    const media = await resolveFeishuMediaList({
+      cfg,
+      messageId: "msg-post-unnamed-file",
+      messageType: "post",
+      content: JSON.stringify({
+        title: "",
+        content: [[]],
+        files: [{ file_key: "file_pdf" }],
+      }),
+      maxBytes: 1024,
+    });
+
+    expect(saveMessageResourceFeishu).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messageId: "msg-post-unnamed-file",
+        fileKey: "file_pdf",
+        type: "file",
+      }),
+    );
+    expect(saveMessageResourceFeishu.mock.calls[0]?.[0].originalFilename).toBeUndefined();
+    expect(media).toEqual([
+      {
+        path: "/tmp/report.pdf",
+        contentType: "application/pdf",
+        kind: "document",
+      },
+    ]);
+  });
+
+  it("keeps unnamed inline post media on the video fallback", async () => {
+    const media = await resolveFeishuMediaList({
+      cfg,
+      messageId: "msg-post-unnamed-media",
+      messageType: "post",
+      content: JSON.stringify({
+        title: "",
+        content: [[{ tag: "media", file_key: "file_inline" }]],
+      }),
+      maxBytes: 1024,
+    });
+
+    expect(media).toEqual([
+      {
+        path: "/tmp/file_inline",
+        contentType: "video/mp4",
+        kind: "video",
+      },
+    ]);
+  });
+
   it("keeps standalone file messages on the document download path", async () => {
     const media = await resolveFeishuMediaList({
       cfg,

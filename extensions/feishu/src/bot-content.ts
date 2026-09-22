@@ -274,15 +274,14 @@ function resolveFeishuMediaKind(messageType: string): FeishuMediaInfo["kind"] {
   }
 }
 
-function resolvePostAttachmentMediaKind(attachment: {
-  kind: "image" | "file";
-  fileName?: string;
-}): FeishuMediaInfo["kind"] {
+function resolvePostAttachmentMediaKind(
+  attachment: ReturnType<typeof parsePostContent>["attachments"][number],
+): FeishuMediaInfo["kind"] {
   if (attachment.kind === "image") {
     return "image";
   }
   if (!attachment.fileName) {
-    return "video";
+    return attachment.origin === "top-level" ? "document" : "video";
   }
   const inferred = mediaKindFromMime(mimeTypeFromFilePath(attachment.fileName));
   return inferred && inferred !== "unknown" ? inferred : "document";

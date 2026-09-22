@@ -7,11 +7,17 @@ import { normalizeFeishuExternalKey } from "./external-keys.js";
 const FALLBACK_POST_TEXT = "[Rich text message]";
 const MARKDOWN_SPECIAL_CHARS = /([\\`*_{}[\]()#+\-!|>~])/g;
 
+type PostFileAttachment = {
+  kind: "file";
+  key: string;
+  fileName?: string;
+  // Top-level files[] are documents even without file_name; inline media is not.
+  origin?: "top-level";
+};
+
 type PostParseResult = {
   textContent: string;
-  attachments: Array<
-    { kind: "image"; key: string } | { kind: "file"; key: string; fileName?: string }
-  >;
+  attachments: Array<{ kind: "image"; key: string } | PostFileAttachment>;
   mentionedOpenIds: string[];
 };
 
@@ -190,7 +196,12 @@ function appendTopLevelPostFiles(
     }
     seenFileKeys.add(fileKey);
     const fileName = toStringOrEmpty(entry.file_name) || undefined;
-    attachments.push({ kind: "file", key: fileKey, ...(fileName ? { fileName } : {}) });
+    attachments.push({
+      kind: "file",
+      key: fileKey,
+      origin: "top-level",
+      ...(fileName ? { fileName } : {}),
+    });
   }
 }
 
