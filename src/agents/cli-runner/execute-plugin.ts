@@ -16,7 +16,10 @@ import type {
   CliBackendUserInputResult,
 } from "../../plugins/cli-backend.types.js";
 import type { RunExit, TerminationReason } from "../../process/supervisor/types.js";
-import { runBeforeToolCallHook } from "../agent-tools.before-tool-call.js";
+import {
+  recordAdjustedParamsForToolCall,
+  runBeforeToolCallHook,
+} from "../agent-tools.before-tool-call.js";
 import type { CliTerminalInterruption } from "../cli-output-contracts.js";
 import { resolveExecDefaults } from "../exec-defaults.js";
 import { FailoverError, isSignalTimeoutReason } from "../failover-error.js";
@@ -209,6 +212,7 @@ function createPluginToolPermissionHandler(params: {
     const currentGrants = getCliLiveSessionApprovalGrants(params.context) ?? grants;
     if (plan === "allow" || (permission.ask !== "always" && currentGrants.has(toolName))) {
       assertActive();
+      recordAdjustedParamsForToolCall(request.toolCallId, toolInput, run.runId);
       return { behavior: "allow", updatedInput: toolInput };
     }
 
@@ -257,7 +261,9 @@ function createPluginToolPermissionHandler(params: {
     if (outcome.grantAlways) {
       currentGrants.add(toolName);
     }
-    return { behavior: "allow", updatedInput: outcome.updatedInput ?? toolInput };
+    const updatedInput = outcome.updatedInput ?? toolInput;
+    recordAdjustedParamsForToolCall(request.toolCallId, updatedInput, run.runId);
+    return { behavior: "allow", updatedInput };
   };
 }
 
