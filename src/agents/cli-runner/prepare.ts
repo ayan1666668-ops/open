@@ -1981,6 +1981,7 @@ async function prepareCliRunContextWithinReadFence(
           channel: runtimeChannel,
           accountId: params.agentAccountId,
           clientCaps: params.clientCaps,
+          ...(params.clientId ? { clientId: params.clientId } : {}),
         });
     const builtSystemPrompt = isControlOperation
       ? ""

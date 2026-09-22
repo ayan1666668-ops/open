@@ -437,6 +437,7 @@ export async function buildPreparedCompactionRuntime(
       channel: runtimeChannel,
       accountId: params.agentAccountId,
       clientCaps: params.clientCaps,
+      ...(params.clientId ? { clientId: params.clientId } : {}),
     });
     const reactionGuidance =
       runtimeChannel && params.config

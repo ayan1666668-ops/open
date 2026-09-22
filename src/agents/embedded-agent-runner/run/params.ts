@@ -338,6 +338,7 @@ export type EmbeddedForegroundPromptContext = Pick<
   | "messageChannel"
   | "messageProvider"
   | "clientCaps"
+  | "clientId"
   | "gatewayUiCommandTarget"
   | "toolBindings"
   | "chatType"

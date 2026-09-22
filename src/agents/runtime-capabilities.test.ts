@@ -21,20 +21,32 @@ describe("collectRuntimeChannelCapabilities", () => {
     ).toBeUndefined();
   });
 
-  it("keeps disclosure guidance for a legacy webchat client that sends no capability list", () => {
-    expect(collectRuntimeChannelCapabilities({ channel: "webchat" })).toEqual(["markdownDetails"]);
+  it("does not grant disclosure guidance to a webchat client that omits its capability list", () => {
+    expect(collectRuntimeChannelCapabilities({ channel: "webchat" })).toBeUndefined();
     expect(
       collectRuntimeChannelCapabilities({
         channel: "webchat",
         clientCaps: [],
       }),
-    ).toEqual(["markdownDetails"]);
+    ).toBeUndefined();
     expect(
       collectRuntimeChannelCapabilities({
         channel: "webchat",
         clientCaps: null,
       }),
-    ).toEqual(["markdownDetails"]);
+    ).toBeUndefined();
+  });
+
+  it("keeps disclosure guidance for installed native clients that predate the flag", () => {
+    for (const clientId of ["openclaw-macos", "openclaw-ios", "openclaw-android"]) {
+      expect(
+        collectRuntimeChannelCapabilities({
+          channel: "webchat",
+          clientId,
+          clientCaps: ["agent-kind", "inline-widgets"],
+        }),
+      ).toEqual(["markdownDetails"]);
+    }
   });
 
   it("does not advertise markdown details for a plugin-less non-webchat channel", () => {

@@ -4,15 +4,25 @@
  * Agent startup uses this to merge configured channel capabilities with prompt
  * tools and thread-bound spawn features that depend on channel policy.
  */
-import { GATEWAY_CLIENT_CAPS, hasGatewayClientCap } from "@openclaw/gateway-protocol/client-info";
+import {
+  GATEWAY_CLIENT_CAPS,
+  GATEWAY_CLIENT_IDS,
+  hasGatewayClientCap,
+  normalizeGatewayClientId,
+} from "@openclaw/gateway-protocol/client-info";
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import { normalizeStringEntriesLower } from "@openclaw/normalization-core/string-normalization";
 import { supportsThreadBindingSpawn } from "../channels/conversation-resolution.js";
 import { resolveThreadBindingSpawnPolicy } from "../channels/thread-bindings-policy.js";
 import { resolveChannelCapabilities } from "../config/channel-capabilities.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
-import { INTERNAL_MESSAGE_CHANNEL } from "../utils/message-channel-constants.js";
 import { resolveChannelPromptCapabilities } from "./channel-tools.js";
+
+const NATIVE_DISCLOSURE_CLIENT_IDS = new Set<string>([
+  GATEWAY_CLIENT_IDS.MACOS_APP,
+  GATEWAY_CLIENT_IDS.IOS_APP,
+  GATEWAY_CLIENT_IDS.ANDROID_APP,
+]);
 
 const THREAD_BOUND_SUBAGENT_SPAWN_CAPABILITY = "threadbound-subagent-spawn";
 const THREAD_BOUND_ACP_SPAWN_CAPABILITY = "threadbound-acp-spawn";
@@ -42,16 +52,18 @@ export function collectRuntimeChannelCapabilities(params: {
   channel?: string | null;
   accountId?: string | null;
   clientCaps?: string[] | null;
+  clientId?: string | null;
 }): string[] | undefined {
   if (!params.channel) {
     return undefined;
   }
-  // An explicit handshake list is authoritative. Omitted or empty caps are
-  // legacy clients; only those still receive the webchat disclosure grant.
-  const advertisedClientCaps = Array.isArray(params.clientCaps) && params.clientCaps.length > 0;
+  // The handshake flag is authoritative for browser clients. Installed macOS,
+  // iOS, and Android apps render disclosures but predate that flag, so their
+  // client id still grants it. An explicit list without the flag does not.
+  const clientId = normalizeGatewayClientId(params.clientId);
   const internalChannelCapabilities =
     hasGatewayClientCap(params.clientCaps, GATEWAY_CLIENT_CAPS.MARKDOWN_DETAILS) ||
-    (!advertisedClientCaps && params.channel === INTERNAL_MESSAGE_CHANNEL)
+    (clientId != null && NATIVE_DISCLOSURE_CLIENT_IDS.has(clientId))
       ? ["markdownDetails"]
       : [];
   const threadSpawnCapabilities: string[] = [];

@@ -24,6 +24,7 @@ export async function resolveAgentRuntimePrompt(params: {
   channel?: string;
   accountId?: string | null;
   clientCaps?: string[] | null;
+  clientId?: string | null;
   chatType?: ChatType;
 }) {
   const runtimeChannel = normalizeMessageChannel(params.channel);
@@ -32,6 +33,7 @@ export async function resolveAgentRuntimePrompt(params: {
     channel: runtimeChannel,
     accountId: params.accountId,
     clientCaps: params.clientCaps,
+    ...(params.clientId ? { clientId: params.clientId } : {}),
   };
   const runtimeCapabilities = collectRuntimeChannelCapabilities(channelPromptContext);
   const reactionGuidance =
