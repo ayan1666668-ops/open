@@ -217,8 +217,7 @@ describe("shared missing skill ancestors", () => {
   let captureFailure: ((stage: "before test teardown" | "afterEach fallback") => void) | undefined;
   const roots = useAutoCleanupTempDirTracker((cleanup) =>
     afterEach(async ({ task }) => {
-      // Setup/teardown failures may bypass the operation catch. Test teardown
-      // may already have run; never replace an earlier snapshot.
+      // afterEach may follow the body's cleanup; retain any earlier snapshot.
       if (task.result?.state === "fail") {
         captureFailure?.("afterEach fallback");
       }
@@ -271,10 +270,7 @@ describe("shared missing skill ancestors", () => {
         }
       >();
       captureFailure = (captureStage) => {
-        if (failureSnapshot !== undefined) {
-          return;
-        }
-        failureSnapshot = JSON.stringify({
+        failureSnapshot ??= JSON.stringify({
           captureStage,
           ancestor,
           phase,
