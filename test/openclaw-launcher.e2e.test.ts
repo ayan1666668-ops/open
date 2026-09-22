@@ -1,20 +1,29 @@
 // OpenClaw launcher E2E tests validate launcher process behavior.
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import fs from "node:fs/promises";
+import { builtinModules } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { build as esbuild } from "esbuild";
 import { afterEach, describe, expect, it } from "vitest";
 import { parseNodeReleaseVersion } from "../node-version.mjs";
+import { resolveTestNodeExecPath } from "../src/test-utils/node-process.js";
 import { NODE_RELEASE_VERSION_CASES } from "./helpers/node-version-cases.js";
 import { cleanupTempDirs, makeTempDir } from "./helpers/temp-dir.js";
+
+// Node version fixtures must enter Node admission even when Vitest runs under Bun.
+const testNodeExecPath = resolveTestNodeExecPath();
 
 async function makeLauncherFixture(fixtureRoots: string[]): Promise<string> {
   const fixtureRoot = makeTempDir(fixtureRoots, "openclaw-launcher-");
   await fs.copyFile(
     path.resolve(process.cwd(), "openclaw.mjs"),
     path.join(fixtureRoot, "openclaw.mjs"),
+  );
+  await fs.copyFile(
+    path.resolve(process.cwd(), "node-host-launcher.mjs"),
+    path.join(fixtureRoot, "node-host-launcher.mjs"),
   );
   await fs.copyFile(
     path.resolve(process.cwd(), "node-version.mjs"),
@@ -27,6 +36,18 @@ async function makeLauncherFixture(fixtureRoots: string[]): Promise<string> {
   await fs.copyFile(
     path.resolve(process.cwd(), "node-runtime-recovery.mjs"),
     path.join(fixtureRoot, "node-runtime-recovery.mjs"),
+  );
+  await fs.copyFile(
+    path.resolve(process.cwd(), "cli-root-options.mjs"),
+    path.join(fixtureRoot, "cli-root-options.mjs"),
+  );
+  await fs.copyFile(
+    path.resolve(process.cwd(), "gateway-run-argv.mjs"),
+    path.join(fixtureRoot, "gateway-run-argv.mjs"),
+  );
+  await fs.copyFile(
+    path.resolve(process.cwd(), "gateway-shutdown-budget.mjs"),
+    path.join(fixtureRoot, "gateway-shutdown-budget.mjs"),
   );
   await fs.copyFile(
     path.resolve(process.cwd(), "node-sqlite.mjs"),
@@ -165,6 +186,114 @@ describe("openclaw launcher", () => {
     cleanupTempDirs(fixtureRoots);
   });
 
+  describe("browser native transport dispatch", () => {
+    it("uses only the fixed native artifact before pending package repair or ordinary CLI startup", async () => {
+      const root = await makeLauncherFixture(fixtureRoots);
+      const native = path.join(root, "dist", "extensions", "browser", "native-host-entry.js");
+      await fs.mkdir(path.dirname(native), { recursive: true });
+      await fs.writeFile(native, 'setTimeout(() => process.stdout.write("native-frame"), 10);');
+      await fs.writeFile(
+        path.join(root, "dist", "entry.js"),
+        'throw new Error("ordinary CLI must not load");',
+      );
+      await fs.writeFile(path.join(root, ".openclaw-lifecycle-pending"), "pending");
+      const child = spawnSync(
+        process.execPath,
+        [path.join(root, "openclaw.mjs"), "browser", "extension", "native-host"],
+        {
+          encoding: "utf8",
+          timeout: 20_000,
+          env: launcherEnv({ HOME: root, OPENCLAW_CONTAINER: "not-a-native-target" }),
+        },
+      );
+      expect(child.status, child.stderr).toBe(0);
+      expect(child.stdout).toBe("native-frame");
+      expect(await fs.readFile(path.join(root, ".openclaw-lifecycle-pending"), "utf8")).toBe(
+        "pending",
+      );
+    });
+
+    it("refuses an unsupported native runtime without installing or entering the CLI", async () => {
+      const root = await makeLauncherFixture(fixtureRoots);
+      const preload = path.join(root, "unsupported-node.mjs");
+      await fs.writeFile(
+        preload,
+        'Object.defineProperty(process.versions, "node", { value: "20.0.0" });',
+      );
+      await fs.writeFile(
+        path.join(root, "dist", "entry.js"),
+        'throw new Error("ordinary CLI must not load");',
+      );
+      const child = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          pathToFileURL(preload).href,
+          path.join(root, "openclaw.mjs"),
+          "browser",
+          "extension",
+          "native-host",
+        ],
+        {
+          encoding: "utf8",
+          timeout: 20_000,
+          env: launcherEnv({ HOME: root }),
+        },
+      );
+      expect(child.status).toBe(1);
+      expect(child.stdout).toBe("");
+      await expect(fs.stat(path.join(root, ".openclaw"))).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    it.each(["missing", "broken"])(
+      "does not fall through when the native artifact is %s",
+      async (kind) => {
+        const root = await makeLauncherFixture(fixtureRoots);
+        await fs.writeFile(
+          path.join(root, "dist", "entry.js"),
+          'process.stdout.write("ordinary CLI");',
+        );
+        if (kind === "broken") {
+          const native = path.join(root, "dist", "extensions", "browser", "native-host-entry.js");
+          await fs.mkdir(path.dirname(native), { recursive: true });
+          await fs.writeFile(native, 'throw new Error("private native diagnostic");');
+        }
+        const child = spawnSync(
+          process.execPath,
+          [path.join(root, "openclaw.mjs"), "browser", "extension", "native-host"],
+          {
+            encoding: "utf8",
+            timeout: 20_000,
+            env: launcherEnv({ HOME: root }),
+          },
+        );
+        expect(child.status).toBe(1);
+        expect(child.stdout).toBe("");
+        expect(child.stderr).not.toContain("private native diagnostic");
+      },
+    );
+
+    it.each([
+      ["browser", "extension", "status"],
+      ["browser", "extension", "setup", "--action", "inspect"],
+      ["browser", "extension", "native-host-extra"],
+      ["browser", "status"],
+    ])("keeps sibling %j on ordinary CLI startup", async (...args) => {
+      const root = await makeLauncherFixture(fixtureRoots);
+      await fs.writeFile(
+        path.join(root, "dist", "entry.js"),
+        'process.stdout.write("ordinary CLI");',
+      );
+      const child = spawnSync(process.execPath, [path.join(root, "openclaw.mjs"), ...args], {
+        encoding: "utf8",
+        timeout: 20_000,
+        env: launcherEnv({ HOME: root }),
+      });
+      expect(child.status, child.stderr).toBe(0);
+      expect(child.stdout).toBe("ordinary CLI");
+    });
+  });
+
   describe.skipIf(process.platform === "win32")("Node.js update recovery", () => {
     async function prepareRecovery(
       params: {
@@ -189,7 +318,7 @@ describe("openclaw launcher", () => {
       );
       if (params.cached) {
         await fs.mkdir(path.dirname(nodePath), { recursive: true });
-        await fs.symlink(process.execPath, nodePath);
+        await fs.symlink(testNodeExecPath, nodePath);
       }
       const installLog = path.join(root, "installer.json");
       const preload = path.join(root, "legacy-node.mjs");
@@ -249,7 +378,7 @@ describe("openclaw launcher", () => {
       }
       const run = (input: string, args = ["status"], env: NodeJS.ProcessEnv = {}, cwd = root) =>
         spawnSync(
-          process.execPath,
+          testNodeExecPath,
           ["--import", pathToFileURL(preload).href, path.join(root, "openclaw.mjs"), ...args],
           {
             cwd,
@@ -486,7 +615,10 @@ describe("openclaw launcher", () => {
     });
 
     it("keeps a supported active Node even when a private runtime exists", async () => {
-      const fixture = await prepareRecovery({ cached: true, version: process.versions.node });
+      const version = execFileSync(testNodeExecPath, ["--print", "process.versions.node"], {
+        encoding: "utf8",
+      }).trim();
+      const fixture = await prepareRecovery({ cached: true, version });
       const result = fixture.run("");
       expect(result.status, result.stderr).toBe(17);
       expect(result.stderr).not.toContain("Node.js");
@@ -555,7 +687,7 @@ describe("openclaw launcher", () => {
       'Object.defineProperty(process.versions, "node", { value: "22.23.2" });',
     );
     const result = spawnSync(
-      process.execPath,
+      testNodeExecPath,
       ["--import", pathToFileURL(preload).href, path.join(root, "openclaw.mjs"), ...args],
       {
         cwd: root,
@@ -588,7 +720,7 @@ describe("openclaw launcher", () => {
       );
 
       const result = spawnSync(
-        process.execPath,
+        testNodeExecPath,
         [
           "--import",
           pathToFileURL(mockNodeVersionPath).href,
@@ -628,7 +760,7 @@ describe("openclaw launcher", () => {
     );
 
     const result = spawnSync(
-      process.execPath,
+      testNodeExecPath,
       ["--import", pathToFileURL(legacyRuntimePath).href, path.join(fixtureRoot, "openclaw.mjs")],
       {
         cwd: fixtureRoot,
@@ -1597,6 +1729,128 @@ describe("openclaw launcher", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain(path.join("node-compile-cache", "openclaw", "2026.4.29"));
     expect(result.stdout).not.toContain(path.join(runCwd, "openclaw"));
+  });
+
+  it.each([
+    "owned",
+    "direct",
+    "foreign",
+    "source",
+    "disabled-zero",
+    "disabled-empty",
+    "cache-empty",
+  ])("shares the first-success compile cache base with bundled helpers: %s", async (mode) => {
+    const fixtureRoot = await makeLauncherFixture(fixtureRoots);
+    const tmpRoot = makeTempDir(fixtureRoots, "openclaw-launcher-cache-");
+    await fs.writeFile(path.join(fixtureRoot, "package.json"), '{"version":"2026.9.6"}\n');
+    if (mode === "source") {
+      await addGitMarker(fixtureRoot);
+    }
+    // Separate compiled copies exercise the same cross-chunk boundary as runtime
+    // entry/worker consumers, without reading or seeding a private owner slot.
+    for (const [entryPoint, name, exportName] of [
+      ["src/infra/node-compile-cache-env.ts", "cache-a.mjs", "resolveNodeCompileCacheEnv"],
+      ["src/infra/node-compile-cache-env.ts", "cache-b.mjs", "resolveNodeCompileCacheEnv"],
+      ["src/entry.compile-cache.ts", "cache-owner.mjs", "enableOpenClawCompileCache"],
+    ] as const) {
+      const built = await esbuild({
+        bundle: true,
+        metafile: true,
+        stdin: {
+          contents: `export { ${exportName} } from ${JSON.stringify(path.resolve(entryPoint))};`,
+          resolveDir: process.cwd(),
+          sourcefile: "compile-cache-owner-fixture.ts",
+          loader: "ts",
+        },
+        format: "esm",
+        outfile: path.join(fixtureRoot, "dist", name),
+        platform: "node",
+        target: "node24",
+      });
+      if (!built.metafile) {
+        throw new Error("Compile-cache fixture bundle metadata is missing");
+      }
+      for (const output of Object.values(built.metafile.outputs)) {
+        for (const imported of output.imports) {
+          expect(
+            imported.path.startsWith("node:") || builtinModules.includes(imported.path),
+            `Fixture must own its nonbuiltin dependencies: ${imported.path}`,
+          ).toBe(true);
+        }
+      }
+    }
+    await fs.writeFile(
+      path.join(fixtureRoot, "dist", "entry.js"),
+      `import assert from "node:assert/strict";
+         import { getCompileCacheDir } from "node:module";
+         import { Worker } from "node:worker_threads";
+         import { once } from "node:events";
+         import { resolveNodeCompileCacheEnv as resolveA } from "./cache-a.mjs";
+         import { resolveNodeCompileCacheEnv as resolveB } from "./cache-b.mjs";
+         import { enableOpenClawCompileCache } from "./cache-owner.mjs";
+         const before = { ...process.env };
+         // First enable for direct entry; ALREADY_ENABLED after the real launcher.
+         enableOpenClawCompileCache({ installRoot: ${JSON.stringify(fixtureRoot)} });
+         const parentDirectory = getCompileCacheDir() ?? null;
+         const a = resolveA();
+         const b = resolveB();
+         assert.deepEqual(a, b, "separate built helpers must share the launcher fact");
+         if (["owned", "direct"].includes(${JSON.stringify(mode)})) {
+           assert.ok(parentDirectory);
+           assert.equal(process.env.NODE_COMPILE_CACHE, undefined);
+         } else if (${JSON.stringify(mode)} === "foreign") {
+           assert.ok(parentDirectory);
+           assert.equal(process.env.NODE_COMPILE_CACHE, undefined);
+           assert.equal(process.env.OPENCLAW_PACKAGED_COMPILE_CACHE_RESPAWNED, "1");
+           assert.strictEqual(a, process.env, "foreign first enable has no owned base");
+         } else {
+           assert.strictEqual(a, process.env, "authored policy or absent ownership wins");
+         }
+         const worker = new Worker(
+           'const { parentPort } = require("node:worker_threads"); parentPort.postMessage(require("node:module").getCompileCacheDir() ?? null);',
+           { eval: true, execArgv: [], env: b },
+         );
+         const exited = once(worker, "exit");
+         const [directory] = await once(worker, "message");
+         const [code] = await exited;
+         assert.equal(code, 0);
+         assert.equal(directory, ["owned", "direct"].includes(${JSON.stringify(mode)}) ? parentDirectory : null);
+         assert.deepEqual({ ...process.env }, before);
+         process.stdout.write("cache-base:verified");`,
+    );
+    const args = [path.join(fixtureRoot, mode === "direct" ? "dist/entry.js" : "openclaw.mjs")];
+    if (mode === "foreign") {
+      const preload = path.join(fixtureRoot, "foreign.mjs");
+      await fs.writeFile(
+        preload,
+        `import assert from "node:assert/strict";
+           import { enableCompileCache, constants } from "node:module";
+           assert.equal(enableCompileCache(${JSON.stringify(path.join(tmpRoot, "foreign"))}).status,
+             constants.compileCacheStatus.ENABLED);`,
+      );
+      args.unshift("--import", pathToFileURL(preload).href);
+    }
+    const result = spawnSync(testNodeExecPath, args, {
+      cwd: fixtureRoot,
+      env: launcherEnv({
+        HOME: tmpRoot,
+        TMP: tmpRoot,
+        TEMP: tmpRoot,
+        TMPDIR: tmpRoot,
+        NODE_OPTIONS: undefined,
+        NODE_DISABLE_COMPILE_CACHE:
+          mode === "disabled-zero" ? "0" : mode === "disabled-empty" ? "" : undefined,
+        NODE_COMPILE_CACHE: mode === "cache-empty" ? "" : undefined,
+        // This negative control must retain its foreign first enable in the same
+        // Node instance; all ordinary launch modes scrub inherited sentinels.
+        OPENCLAW_PACKAGED_COMPILE_CACHE_RESPAWNED: mode === "foreign" ? "1" : undefined,
+        OPENCLAW_COMPILE_CACHE_DISABLED_RESPAWNED: undefined,
+      }),
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("cache-base:verified");
   });
 
   it("enables compile cache for packaged launchers", async () => {

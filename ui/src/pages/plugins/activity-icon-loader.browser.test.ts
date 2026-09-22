@@ -1,6 +1,6 @@
 import type { ImportGlobFunction } from "vite/types/importGlob.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchPluginActivityIconBlobUrl } from "./icon-loader.ts";
+import { fetchPluginActivityIconBlobUrl, fetchPluginThemeArtworkBlobUrl } from "./icon-loader.ts";
 
 declare global {
   interface ImportMeta {
@@ -28,10 +28,15 @@ afterEach(() => {
 });
 
 describe.runIf("__vitest_browser__" in globalThis)("plugin activity icon decoder", () => {
-  it("decodes every shipped glyph through the bounded SVG loader into a transparent PNG mask", async () => {
-    const assets = Object.entries(bundledActivityIcons);
+  const assets = Object.entries(bundledActivityIcons);
+
+  it("includes shipped activity glyphs", () => {
     expect(assets.length).toBeGreaterThan(0);
-    for (const [path, source] of assets) {
+  });
+
+  it.each(assets)(
+    "decodes %s through the bounded SVG loader into a transparent PNG mask",
+    async (path, source) => {
       vi.stubGlobal(
         "fetch",
         vi.fn(
@@ -48,7 +53,7 @@ describe.runIf("__vitest_browser__" in globalThis)("plugin activity icon decoder
       });
       expect(url, path).not.toBeNull();
       if (!url) {
-        continue;
+        return;
       }
       try {
         const blob = await (await nativeFetch(url)).blob();
@@ -78,8 +83,8 @@ describe.runIf("__vitest_browser__" in globalThis)("plugin activity icon decoder
       } finally {
         URL.revokeObjectURL(url);
       }
-    }
-  });
+    },
+  );
 
   it("authenticates the distinct activity route and preserves exact tool names", async () => {
     const fetch = vi
@@ -118,6 +123,37 @@ describe.runIf("__vitest_browser__" in globalThis)("plugin activity icon decoder
         URL.revokeObjectURL(url);
       }
     }
+  });
+
+  it("rasterizes plugin theme artwork once per content URL, including concurrent callers", async () => {
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="#ff0000" d="M4 4h16v16H4Z"/></svg>',
+          { headers: { "content-type": "image/svg+xml" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetch);
+    const params = { ...common, url: "/__openclaw__/plugin-theme-art/test/theme/hat/beret?v=1" };
+    const [first, concurrent] = await Promise.all([
+      fetchPluginThemeArtworkBlobUrl(params),
+      fetchPluginThemeArtworkBlobUrl(params),
+    ]);
+    expect(first).not.toBeNull();
+    expect(concurrent).toBe(first);
+    expect(await fetchPluginThemeArtworkBlobUrl(params)).toBe(first);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const blob = await (await nativeFetch(first!)).blob();
+    expect(blob.type).toBe("image/png");
+    const bitmap = await createImageBitmap(blob);
+    expect([bitmap.width, bitmap.height]).toEqual([256, 256]);
+    bitmap.close();
+    const second = await fetchPluginThemeArtworkBlobUrl({
+      ...params,
+      url: params.url.replace("v=1", "v=2"),
+    });
+    expect(second).not.toBe(first);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it.each([
