@@ -7,19 +7,14 @@ import { resolveSessionWorkerPlacementContext } from "../session-worker-placemen
 import { createAgentRuntimeAuthorityGuard } from "./agent-runtime-authority.js";
 import { emitSessionArchived, emitSessionsChanged } from "./session-change-event.js";
 import { resolveOperatorSessionCreation } from "./session-creation-provenance.js";
+import { readGatewayRequestMutationAuthority } from "./session-mutation-guards.js";
 import { launchSessionRecoveryContinuation } from "./session-recovery-continuation.js";
 import type { GatewayRequestHandlers } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
 export const sessionRecoverHandlers: GatewayRequestHandlers = {
-  "sessions.recover": async ({
-    req,
-    params,
-    respond,
-    client,
-    context,
-    sessionMutationAuthorization,
-  }) => {
+  "sessions.recover": async (options) => {
+    const { req, params, respond, client, context, sessionMutationAuthorization } = options;
     if (!assertValidParams(params, validateSessionsRecoverParams, "sessions.recover", respond)) {
       return;
     }
@@ -53,6 +48,7 @@ export const sessionRecoverHandlers: GatewayRequestHandlers = {
           ...(commitGuard ? { commitGuard } : {}),
           context,
           req,
+          sessionScope: readGatewayRequestMutationAuthority(options).sessionScope,
         }),
     }).catch((error: unknown) => authority.handleClosedError(error));
     if (!recovered) {

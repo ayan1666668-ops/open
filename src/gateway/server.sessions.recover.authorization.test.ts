@@ -1,0 +1,225 @@
+import { afterEach, expect, test, vi } from "vitest";
+import { getRuntimeConfig } from "../config/io.js";
+import { loadSessionEntry, loadTranscriptEvents } from "../config/sessions/session-accessor.js";
+import { addSessionMember } from "../config/sessions/session-sharing-store.js";
+import { closeOpenClawStateDatabaseForTest } from "../state/openclaw-state-db.js";
+import { createDirectChatContext } from "./server-chat.agent-events.test-helpers.js";
+import { handleGatewayRequest } from "./server-methods.js";
+import { roleClient, rolePolicyConfig } from "./session-sharing.test-utils.js";
+import { writeSessionStore } from "./test-helpers.js";
+import {
+  seedSessionTranscript,
+  sessionStoreEntry,
+  setupGatewaySessionsHandlerTestHarness,
+} from "./test/server-sessions.test-helpers.js";
+
+const { createSessionStoreDir } = setupGatewaySessionsHandlerTestHarness();
+
+afterEach(() => {
+  closeOpenClawStateDatabaseForTest();
+});
+
+async function seedRecoverableSession(params: {
+  sourceKey: string;
+  sourceSessionId: string;
+  storePath: string;
+  ownerProfileId: string;
+}) {
+  await writeSessionStore({
+    entries: {
+      [params.sourceKey]: sessionStoreEntry(params.sourceSessionId, {
+        status: "failed",
+        abortedLastRun: true,
+        mainRestartRecovery: {
+          cycleId: `cycle-${params.sourceSessionId}`,
+          revision: 1,
+          chargedAttempts: 3,
+          tombstone: { reason: "automatic recovery exhausted" },
+        },
+        createdActor: {
+          type: "human",
+          source: "profile",
+          id: params.ownerProfileId,
+        },
+      }),
+    },
+  });
+  await seedSessionTranscript({
+    agentId: "main",
+    sessionId: params.sourceSessionId,
+    sessionKey: params.sourceKey,
+    storePath: params.storePath,
+    messages: [{ role: "user", content: "finish the interrupted work" }],
+  });
+}
+
+async function registeredSessionRecover(params: {
+  client: Parameters<typeof handleGatewayRequest>[0]["client"];
+  context: Parameters<typeof handleGatewayRequest>[0]["context"];
+  id: string;
+  key: string;
+}) {
+  let response:
+    | {
+        ok: boolean;
+        payload?: { key?: string; sessionId?: string; continuation?: Record<string, unknown> };
+        error?: { code?: string; message?: string };
+      }
+    | undefined;
+  await handleGatewayRequest({
+    req: {
+      type: "req",
+      id: params.id,
+      method: "sessions.recover",
+      params: { agentId: "main", key: params.key },
+    },
+    client: params.client,
+    context: params.context,
+    respond: (ok, payload, error) => {
+      response = { ok, payload: payload as typeof response.payload, error };
+    },
+    isWebchatConnect: () => false,
+  });
+  if (!response) {
+    throw new Error("registered sessions.recover did not respond");
+  }
+  return response;
+}
+
+function recoveryConfig(storePath: string) {
+  const cfg = getRuntimeConfig();
+  return {
+    ...cfg,
+    gateway: { ...cfg.gateway, roles: rolePolicyConfig().gateway!.roles },
+    session: { ...cfg.session, store: storePath },
+  };
+}
+
+test("sessions.recover denies a narrow continuation into a linked foreign successor", async () => {
+  const { storePath } = await createSessionStoreDir();
+  const sourceKey = "agent:main:dashboard:linked-foreign-recovery";
+  const sourceSessionId = "linked-foreign-recovery-source";
+  const sourceOwner = roleClient("view", "linked-recovery-owner");
+  sourceOwner.connect.scopes = ["operator.sessions.write"];
+  const broadWriter = roleClient("write", "linked-recovery-writer");
+  broadWriter.connect.scopes = ["operator.write"];
+  const cfg = recoveryConfig(storePath);
+  const revokedRole = rolePolicyConfig().gateway!.roles!;
+  revokedRole.definitions.write.sessions = { others: "view" };
+  const revokedCfg = { ...cfg, gateway: { ...cfg.gateway, roles: revokedRole } };
+  await seedRecoverableSession({
+    sourceKey,
+    sourceSessionId,
+    storePath,
+    ownerProfileId: sourceOwner.authenticatedUserProfile!.profileId,
+  });
+  const context = createDirectChatContext({
+    getRuntimeConfig: () =>
+      loadSessionEntry({ agentId: "main", sessionKey: sourceKey, storePath })?.mainRestartRecovery
+        ?.tombstone?.recoveredSessionKey
+        ? revokedCfg
+        : cfg,
+  });
+
+  const initial = await registeredSessionRecover({
+    client: broadWriter,
+    context,
+    id: "linked-recovery-create",
+    key: sourceKey,
+  });
+  expect(initial.ok, JSON.stringify(initial)).toBe(true);
+  expect(initial).toMatchObject({
+    ok: true,
+    payload: { key: expect.any(String), continuation: { status: "rejected" } },
+  });
+  const successorKey = initial.payload?.key ?? "";
+  const successorSessionId = initial.payload?.sessionId ?? "";
+  const successorScope = { agentId: "main", sessionKey: successorKey, storePath };
+  expect(loadSessionEntry(successorScope)?.createdActor).toEqual({
+    type: "human",
+    source: "profile",
+    id: broadWriter.authenticatedUserProfile!.profileId,
+  });
+  const transcriptBefore = await loadTranscriptEvents({
+    ...successorScope,
+    sessionId: successorSessionId,
+  });
+  const runCountBefore = vi.mocked(context.addChatRun).mock.calls.length;
+
+  const retried = await registeredSessionRecover({
+    client: sourceOwner,
+    context,
+    id: "linked-recovery-narrow-retry",
+    key: sourceKey,
+  });
+
+  expect(retried).toMatchObject({
+    ok: true,
+    payload: {
+      key: successorKey,
+      sessionId: successorSessionId,
+      continuation: {
+        status: "rejected",
+        error: { code: "FORBIDDEN", message: "Session-scoped writes require your own session." },
+      },
+    },
+  });
+  expect(vi.mocked(context.addChatRun).mock.calls.length).toBe(runCountBefore);
+  await expect(
+    loadTranscriptEvents({ ...successorScope, sessionId: successorSessionId }),
+  ).resolves.toEqual(transcriptBefore);
+
+  addSessionMember(successorScope, {
+    identityId: sourceOwner.authenticatedUserProfile!.profileId,
+    addedBy: broadWriter.authenticatedUserProfile!.profileId,
+    expectedSessionId: successorSessionId,
+  });
+  sourceOwner.connect.scopes = ["operator.write"];
+  const granted = await registeredSessionRecover({
+    client: sourceOwner,
+    context: createDirectChatContext({ getRuntimeConfig: () => cfg }),
+    id: "linked-recovery-explicit-member",
+    key: sourceKey,
+  });
+  expect(granted).toMatchObject({
+    ok: true,
+    payload: {
+      key: successorKey,
+      sessionId: successorSessionId,
+      continuation: { status: "started" },
+    },
+  });
+});
+
+test("sessions.recover starts a registered narrow continuation in its own successor", async () => {
+  const { storePath } = await createSessionStoreDir();
+  const sourceKey = "agent:main:dashboard:narrow-own-recovery";
+  const sourceSessionId = "narrow-own-recovery-source";
+  const owner = roleClient("view", "narrow-recovery-owner");
+  owner.connect.scopes = ["operator.sessions.write"];
+  await seedRecoverableSession({
+    sourceKey,
+    sourceSessionId,
+    storePath,
+    ownerProfileId: owner.authenticatedUserProfile!.profileId,
+  });
+
+  const recovered = await registeredSessionRecover({
+    client: owner,
+    context: createDirectChatContext({ getRuntimeConfig: () => recoveryConfig(storePath) }),
+    id: "narrow-own-recovery",
+    key: sourceKey,
+  });
+
+  expect(recovered).toMatchObject({
+    ok: true,
+    payload: { key: expect.any(String), continuation: { status: "started" } },
+  });
+  expect(
+    loadSessionEntry({
+      agentId: "main",
+      sessionKey: recovered.payload?.key ?? "",
+      storePath,
+    })?.createdActor,
+  ).toEqual({ type: "human", source: "profile", id: owner.authenticatedUserProfile!.profileId });
+});
