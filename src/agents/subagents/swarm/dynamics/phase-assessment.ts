@@ -140,8 +140,7 @@ export function assessLocalPhase(observation: LocalDynamicsObservation): LocalPh
     candidateEntropy <= PHASE_HEURISTICS.frozenEntropyMax &&
     coherence >= PHASE_HEURISTICS.frozenCoherenceMin &&
     evidenceCompleteness >= PHASE_HEURISTICS.frozenEvidenceMin &&
-    (acceptanceProgress === null ||
-      acceptanceProgress >= PHASE_HEURISTICS.frozenAcceptanceMin) &&
+    (acceptanceProgress === null || acceptanceProgress >= PHASE_HEURISTICS.frozenAcceptanceMin) &&
     verifierDisagreement <= PHASE_HEURISTICS.frozenDisagreementMax
   ) {
     phase = "crystal";
