@@ -324,7 +324,7 @@ mod tests {
         use crate::chrome_setup::{run, Action};
         use serde_json::json;
         use std::fs;
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::symlink;
         use std::process::Command;
 
         struct Fixture(PathBuf);
@@ -338,22 +338,12 @@ mod tests {
         );
         fs::create_dir_all(&fixture.0).unwrap();
         let executable = fixture.0.join("openclaw");
-        fs::write(
+        // A concurrent test's fork can inherit a script writer and make execve fail with ETXTBSY.
+        symlink(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chrome-setup-cli.sh"),
             &executable,
-            r#"#!/bin/sh
-root=$(dirname "$0")
-if test "$1" = "--version"; then printf 'OpenClaw 2026.9.4 (fixture)\n'; exit 0; fi
-test "$OPENCLAW_NO_RESPAWN" = "1" || exit 2
-printf '%s\n' "$*" >> "$root/calls"
-if test -f "$root/fail"; then
-  printf 'fixture-private-diagnostic\n' >&2
-  exit 1
-fi
-cat "$root/result.json"
-"#,
         )
         .unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
         let cli = OpenClawCli::new(executable, fixture.0.clone());
         let spawn = |command: &mut Command| command.spawn().map_err(|error| error.to_string());
         assert!(cli.matches_version("2026.9.4"));

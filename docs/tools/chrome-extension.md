@@ -170,7 +170,11 @@ or browser node. JSON output never includes a relay key or pairing string.
 ## Shared setup controller
 
 CLI, native desktop adapters, and the terminal setup flow use the same Browser-owned
-controller on the machine that hosts Chrome:
+controller on the machine that hosts Chrome.
+
+Setup's installation status describes Google Chrome. The
+`openclaw browser extension install` and `openclaw browser extension status`
+commands also support Chromium and Chrome for Testing.
 
 ```bash
 openclaw browser extension setup --action inspect --json
