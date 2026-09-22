@@ -2263,6 +2263,12 @@ importers:
         specifier: workspace:*
         version: link:../..
 
+  extensions/tool-prefilter:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
   extensions/tts-local-cli:
     devDependencies:
       '@openclaw/plugin-sdk':
