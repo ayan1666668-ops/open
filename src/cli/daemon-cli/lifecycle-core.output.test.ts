@@ -42,8 +42,10 @@ vi.mock("../../runtime.js", () => ({
 }));
 
 vi.mock("../../infra/restart-intent.js", () => ({
+  prepareGatewayRestartIntentLegacyProcess: async () => undefined,
   clearGatewayRestartIntentSync: () => clearGatewayRestartIntentSync(),
   writeGatewayRestartIntentSync: (opts: unknown) => writeGatewayRestartIntentSync(opts),
+  writeGatewayServiceRestartIntentSync: (opts: unknown) => writeGatewayRestartIntentSync(opts),
 }));
 
 vi.mock("./lifecycle-audit.js", () => ({
@@ -199,7 +201,9 @@ describe("runServiceRestart token drift", () => {
     lifecycleTestRuntime.exit.mockClear();
     lifecycleTestRuntime.writeJson.mockClear();
     service.isLoaded.mockResolvedValue(row.loaded);
-    service.readCommand.mockResolvedValue(null);
+    service.readCommand.mockResolvedValue(
+      row.loaded ? { programArguments: [], environment: {} } : null,
+    );
     let result: unknown;
     if (row.route === "start-recovery") {
       service.isLoaded.mockResolvedValue(false);
